@@ -1,7 +1,7 @@
 ---
 name: friction-retro
 description: >-
-  Agent-only procedure for turning one task's repeated friction into at most one durable owner update.
+  Agent-only procedure for turning one task's repeated friction into bounded durable owner updates, at most one per distinct repeatable failure.
   Load before recording completion on a task whose own evidence shows two or more corrective steers, a costly failed validation loop, a verified safety or quality incident, or an explicit captain postmortem request.
   Distinguishes one-off judgment from repeatable failure and routes only the repeatable part to an existing owner.
 user-invocable: false
@@ -11,7 +11,7 @@ metadata:
 
 # friction-retro
 
-This skill is the single procedure owner for turning verified task friction into at most one durable update to an existing owner.
+This skill is the single procedure owner for turning verified task friction into bounded durable updates to existing owners, at most one per distinct repeatable failure.
 Skip it for an ordinary task; running it after every trivial task is exactly the noise it exists to avoid.
 
 ## When to run
