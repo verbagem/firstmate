@@ -3,7 +3,7 @@ name: firstmate-coding-guidelines
 description: >-
   Agent-only reference for changing firstmate's shared, tracked material per AGENTS.md section 1.
   Use before editing any of that material, whether working as firstmate directly or as a crewmate briefed on a firstmate-repo task.
-  Covers the knowledge-placement decision tree, the one-owner rule for contracts, the inline-stub pattern for content moved into a skill, AGENTS.md size discipline, trigger hygiene for new skills, and repo style rules (one sentence per line, plain dash, no agent co-author, shellcheck-clean bin scripts, colocated tests, and maintainer-verification evidence).
+  Covers the knowledge-placement decision tree, the one-owner rule for contracts, the inline-stub pattern for content moved into a skill, AGENTS.md size discipline, trigger hygiene for new skills, repo style rules (one sentence per line, plain dash, no agent co-author, shellcheck-clean bin scripts, colocated tests, and maintainer-verification evidence), and the agent-native CLI/AXI interface checklist.
 user-invocable: false
 metadata:
   internal: true
@@ -110,7 +110,7 @@ Triggering change: new agent-facing CLI, material update to tool output format, 
 Checklist for agent-efficient tools:
 
 - Default output is token-efficient and skimmable; avoid verbose JSON or prose wrappers.
-- JSON or structured fields are optional; agent needs prose-first readability by default.
+- Compact plain text is the default; JSON or richer structured output is an opt-in flag.
 - Default schema is minimal; extra fields and advanced options are opt-in flags.
 - Commands compose with pipes and file paths; avoid requiring GUI, redirects, or shell wrappers.
 - Long output supports query/filter/range controls so agents request only needed data.
