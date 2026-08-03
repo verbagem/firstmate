@@ -101,3 +101,18 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
 - A maintainer-verification record under `docs/verification/` records active empirical facts, not assumptions or task chronology.
 - Include the date, version, exact commands run, and exact output needed to support the current guarantee.
 - Keep incident chronology and delivery evidence in private task reports or PR evidence unless a concise rationale is required to maintain a current safety boundary.
+
+## Agent-native CLI/AXI interface checklist
+
+Load this before designing or changing a CLI tool primarily consumed by agents.
+Triggering change: new agent-facing CLI, material update to tool output format, schema change, or help text rewrite.
+
+Checklist for agent-efficient tools:
+
+- Default output is token-efficient and skimmable; avoid verbose JSON or prose wrappers.
+- JSON or structured fields are optional; agent needs prose-first readability by default.
+- Default schema is minimal; extra fields and advanced options are opt-in flags.
+- Commands compose with pipes and file paths; avoid requiring GUI, redirects, or shell wrappers.
+- Long output supports query/filter/range controls so agents request only needed data.
+- Help text shows one-line usage plus concrete examples; avoid walls of prose.
+- Benchmark meaningful changes by success rate, turns to completion, token/cost ratio, and wall-clock duration.
