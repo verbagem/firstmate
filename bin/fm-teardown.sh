@@ -2386,6 +2386,13 @@ if [ "$KIND" != secondmate ]; then
   conclude_task_no_mistakes_run "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 fi
+# Per-task build temp is independent of endpoint identity once leaked processes
+# under it have been reaped. Remove it before best-effort endpoint cleanup can
+# return early, leaving the final state-removal path as a no-op backstop.
+if [ -n "$TASK_TMP" ]; then
+  rm -rf "$TASK_TMP"
+  TASK_TMP=
+fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
 # pruned code root. Best effort - a sweep failure never blocks this teardown.

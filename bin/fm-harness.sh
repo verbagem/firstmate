@@ -81,6 +81,7 @@ detect_own() {
       echo cursor
       return
     fi
+    args=$(ps -o args= -p "$pid" 2>/dev/null || true)
     case "$(basename -- "$comm")" in
       *claude*) echo claude; return ;;
       *codex*) echo codex; return ;;
@@ -95,9 +96,13 @@ detect_own() {
       muse|muse-bin-*) echo muse; return ;;
       pi-signed) echo pi; return ;;
       pi) echo pi; return ;;
+    esac
+    case "$(basename -- "${args%% *}")" in
+      muse|muse-bin-*) echo muse; return ;;
+    esac
+    case "$(basename -- "$comm")" in
       node*|python*)
         # Bare interpreter: match the harness name in its script path.
-        args=$(ps -o args= -p "$pid" 2>/dev/null)
         case "$args" in
           *claude*) echo claude; return ;;
           *codex*) echo codex; return ;;

@@ -694,14 +694,19 @@ test_scout_and_secondmate_load_decision_hold_policy() {
 # run the relevant eval(s) via evals/run_eval.sh before reporting done, and
 # make clear a FAIL means loop and fix rather than reporting done anyway.
 test_ship_modes_include_eval_step() {
-  local home id brief
+  local home id brief id_proj_mode rest proj mode
   home="$TMP_ROOT/eval-step-home"
   write_registry "$home"
 
-  for id_proj in "brief-eval-nomistakes-e1:no-registry-proj" "brief-eval-directpr-e2:direct-proj" "brief-eval-localonly-e3:local-proj"; do
-    id=${id_proj%%:*}
-    proj=${id_proj##*:}
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1
+  for id_proj_mode in \
+    "brief-eval-nomistakes-e1:no-registry-proj:no-mistakes" \
+    "brief-eval-directpr-e2:direct-proj:direct-PR" \
+    "brief-eval-localonly-e3:local-proj:local-only"; do
+    id=${id_proj_mode%%:*}
+    rest=${id_proj_mode#*:}
+    proj=${rest%%:*}
+    mode=${rest##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --mode "$mode" >/dev/null 2>&1
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "run_eval.sh" "$brief" \

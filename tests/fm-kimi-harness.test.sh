@@ -288,13 +288,12 @@ test_kimi_hook_remove_preserves_owned_newline_boundary() {
   } > "$expected"
   cmp -s "$expected" "$config" \
     || fail "removal did not preserve appended captain config on its own line"
-  "$PYTHON_BIN" - "$config" <<'PY' || fail "config with appended captain TOML did not parse after removal"
-import sys
-import tomllib
-
-with open(sys.argv[1], "rb") as stream:
-    tomllib.load(stream)
-PY
+  HOME="$home" "$KIMI_HOOK" install >/dev/null 2>&1 \
+    || fail "config with appended captain TOML did not validate after removal"
+  HOME="$home" "$KIMI_HOOK" remove >/dev/null 2>&1 \
+    || fail "cleanup removal after validation install failed"
+  cmp -s "$expected" "$config" \
+    || fail "validation install/remove did not preserve appended captain config"
   pass "Kimi hook removal preserves owned newline boundaries and pristine bytes"
 }
 
