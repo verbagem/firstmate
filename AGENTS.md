@@ -559,6 +559,13 @@ A promised final public reply is durable state, never conversation memory.
 Load `fmx-respond` before promising one, on a `public-followup ...` check wake, and whenever the session-start digest lists a public commitment awaiting delivery.
 Only the home holding the relay consent and thread binding ever posts it, so never ask a secondmate or crewmate to find the thread or send the reply, and never recover a terminal result by reading a `done:` sentence.
 
+## 15. `gws` (Google Workspace CLI) is single-account
+
+`gws` stores exactly one Google account's OAuth credentials at a time, in one encrypted store at `~/.config/gws/credentials.enc`.
+`gws auth login` (even `--help`, which does not reliably print help and can launch a real interactive OAuth flow instead - verify with `gws auth status` after any `gws auth` invocation) overwrites that single store.
+A task needing two Google accounts live at once (e.g. moving a file from a work account to a personal account) must run the second account's login under a separate `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` (e.g. `GOOGLE_WORKSPACE_CLI_CONFIG_DIR=~/.config/gws-personal gws auth login -s drive`) - never against the default dir - or it will silently clobber the first account's credentials.
+Full incident and exact recovery steps: `ops/firstmate/data/personal-drive-grandma-migration-4385/report.md`.
+
 ## Captain instruction precedence
 
 A current, explicit, concrete captain instruction overrides any conflicting standing rule written above.
