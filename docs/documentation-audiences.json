@@ -201,12 +201,44 @@
       "audience": "public-product"
     },
     {
+      "path": "Plans/bubbly-stargazing-quilt.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "README.md",
       "audience": "public-product"
     },
     {
       "path": "VISION.md",
       "audience": "public-product"
+    },
+    {
+      "path": "evals/README.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/completeness-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/principles-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/publish-safety-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/task-definition-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/tov-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/visual-asset-eval.md",
+      "audience": "agent-runtime"
     },
     {
       "path": "docs/agent-control.md",
