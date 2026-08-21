@@ -1,0 +1,19 @@
+=== fm-wake-drain.sh --captain-work-pending CLI transcript (fresh scratch state) ===
+# 1. nothing captain-relevant pending:
+$ fm-wake-drain.sh --captain-work-pending
+quiet
+# 2. a crewmate writes an unread note: line:
+$ fm-wake-drain.sh --captain-work-pending
+pending
+# 3. peek again (must not have consumed the note):
+pending
+# 4. real drain still presents the note to the captain:
+$ fm-wake-drain.sh
+UNREAD STATUS (new since last drain, not re-printed after this presentation):
+task1 note: captain said use REST not RPC
+# 5. after presentation, peek returns to quiet:
+$ fm-wake-drain.sh --captain-work-pending
+quiet
+# 6. durable queued wake row => pending:
+$ fm-wake-drain.sh --captain-work-pending
+pending

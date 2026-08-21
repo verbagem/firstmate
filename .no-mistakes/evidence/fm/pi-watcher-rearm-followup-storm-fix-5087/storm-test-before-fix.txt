@@ -1,0 +1,12 @@
+=== New storm regression test vs BASE (pre-fix) extension @1cb900c — expected to FAIL ===
+HARNESS OUTPUT:
+file:///Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M0GT7YWQ3136H3ZB7S0FR97K/[eval1]:29
+if (prompts !== 0) throw new Error(`empty rearm emitted ${prompts} follow-ups`);
+                         ^
+
+Error: empty rearm emitted 17 follow-ups
+    at file:///Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M0GT7YWQ3136H3ZB7S0FR97K/[eval1]:29:26
+
+Node.js v24.12.0
+not ok - Pi empty rearm-resurface cycles must not create follow-up storms: expected exit 0, got 1
+exit=1

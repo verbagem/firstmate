@@ -1,0 +1,3 @@
+=== storm regression test vs TARGET (fixed) extension @4375fed ===
+ok - Pi empty rearm-resurface cycles stay silent while a successor remains owned
+exit=0
