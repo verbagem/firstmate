@@ -2631,12 +2631,15 @@ if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_META_PATH=$SPAWN_META_TMP
 else
   if [ -e "$SPAWN_META_FINAL" ] || [ -L "$SPAWN_META_FINAL" ]; then
-    if [ -d "$SPAWN_META_FINAL" ] && [ ! -L "$SPAWN_META_FINAL" ]; then
+    if [ -f "$SPAWN_META_FINAL" ] && [ ! -L "$SPAWN_META_FINAL" ]; then
+      :
+    elif [ -d "$SPAWN_META_FINAL" ] && [ ! -L "$SPAWN_META_FINAL" ]; then
       echo "error: could not publish task metadata at $SPAWN_META_FINAL: Is a directory" >&2
+      exit 1
     else
       echo "error: could not publish task metadata at $SPAWN_META_FINAL: path already exists" >&2
+      exit 1
     fi
-    exit 1
   fi
   SPAWN_META_TMP="$STATE/.$ID.meta.spawn.${BASHPID:-$$}"
   SPAWN_META_PATH=$SPAWN_META_TMP
