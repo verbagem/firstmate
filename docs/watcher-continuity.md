@@ -25,9 +25,14 @@ After the configured retry bound is exhausted, it delivers the original wake wit
 This is deliberate Option B ordering: the fleet is protected before the model handles the wake whenever restoration succeeds, but the model is never left blind when it does not.
 
 Claude's Stop hook starts the successor arm at the next Stop after the handling turn, rather than before notification as Pi and OpenCode do.
-The durable wake queue preserves actionable events during the residual active-turn window, and the unchanged bounded turn-end guard enforces recovery at Stop when no watcher or auto-arm claim is present.
-No PreToolUse hook denies fleet commands based on watcher status.
+The durable wake queue preserves actionable events during the residual active-turn window, and the bounded turn-end guard enforces recovery at Stop when no watcher or auto-arm claim is present.
+For every supported arm path, a successor that observes an accepted down stretch emits `check: rearm-resurface` through the ordinary durable handling path before settling into its live wait.
+When a recovery prompt is delivered, the drain's recovery presentation includes all unacknowledged queue rows, the cursor-folded OPEN DECISIONS set, and still-unread informational status lines.
+The Pi adapter treats `check: rearm-resurface` as an extension-owned continuity handoff, silently confirms the successor's handling state, and sends no follow-up only when `bin/fm-wake-drain.sh --captain-work-pending` reports quiet: an empty durable wake queue, no open decisions, and no unread informational status lines.
+If any durable queue row, open decision, or unread `note:` line is pending, or the successor cannot be verified, or the quiet peek itself fails, Pi still delivers exactly one typed follow-up.
+The adapter re-runs the quiet peek after silently confirming handling, and delivers a follow-up if a durable row raced in between the peek and the confirmation, so a wake appended in that window is presented instead of waiting for the next unrelated event.
 The model no longer re-arms after ordinary wakes.
+No PreToolUse hook denies fleet commands based on watcher status.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 Codex retains its bounded foreground checkpoint protocol.
 Grok retains its tracked background-task notification protocol.
@@ -53,6 +58,7 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 ## Regression coverage
 
 `tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops, then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, blocks prompt delivery to prove the successor launches first, verifies single-flight behavior, changes the session lock before close to prove ownership is rechecked, and hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
+It also drives many quiet `check: rearm-resurface` closes through the Pi adapter and proves zero synthetic follow-ups, while separately proving one delivery for real `signal`, `stale`, `check`, `heartbeat`, and queued recovery reasons, and one delivery when an empty-queue re-arm coincides with an open decision or an unread `note:` line.
 The same suite covers ordinary same-process session replacement for `/new`, `/resume`, and `/fork`, same-instance shutdown-plus-start, stale prior-generation callbacks, repeated transitions with exactly one live cycle, disappearance of the shutting-down refusal after a valid replacement activates, and terminal quit still refusing late rearm.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, the typed self-eviction failure, bounded and successor-linked lifecycle rows, and a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination.
 `tests/fm-subagent-pretool-check.test.sh` proves Claude retains only the non-status Bash seatbelts.

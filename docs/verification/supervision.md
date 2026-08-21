@@ -93,7 +93,47 @@ The same run proved the Claude-compatible Stop entries stay inert under `GROK_AG
 
 The secondmate-home scope and manual-repair wake path were measured with Claude Code 2.1.207 on 2026-07-12, when a native background completion re-invoked the idle model with no human input.
 The current Stop-owned main/secondmate inclusion and child-worktree exclusion are covered deterministically by `tests/fm-claude-stop-autoarm.test.sh`.
-On 2026-07-28 with Claude Code 2.1.205, `fm_harness_ancestry_pid()` in `bin/fm-session-lock-lib.sh` was fixed to resolve the outermost pid of a contiguous nested-harness run instead of the first match, so the Stop auto-arm correctly reaches the session's true lock owner through Claude Code's multi-level `bg-spare` hook worker chain.
+Session-lock ownership in `bin/fm-session-lock-lib.sh` is decided against a session's whole contiguous harness ancestry rather than one chosen pid, so the Stop auto-arm reaches its lock owner wherever that owner sits: the outermost pid of Claude Code's multi-level `bg-spare` hook worker chain, or an inner pid when a harness-named daemon parents the session.
+Harness identity is read from the executable path and `argv[0]` as well as the command basename, because Claude Code's native installer names the per-session executable by its version (`.../share/claude/versions/2.1.220`): `ps -o comm=` reports that path on macOS and the bare version string on Linux, and neither basename names a harness.
+`tests/fm-session-lock-ancestry.test.sh` pins both platforms' reporting semantics behind a deterministic process table and runs the real Stop auto-arm in version-named, daemon-parented, and combined real process trees.
+`tests/fm-watch-arm.test.sh` runs real watcher and arm cycles against durable on-disk state to verify that a delivered reason survives until post-handling acknowledgement and stops replaying after acknowledgement, while an unrelated queue append cannot make a watcher cycle that delivered nothing look successful.
+The same suite ingests a keyed remote-secondmate parent reply through the real adapter, establishes the incremental OPEN DECISIONS cursor, interrupts supervision, and proves re-arm replays every unacknowledged queue row plus the still-open decision through the ordinary drain path.
+It also covers decision-only recovery, interrupted handling, handling-window generation reuse, non-fatal moved-generation acknowledgement with sequence-bounded consumption, and a persistent successor remaining live after recovery is acknowledged.
+### Pi rearm follow-up storm regression (2026-08-20)
+
+A live Pi restart is still necessary after this fix lands: the already-enqueued Pi follow-up messages are outside Firstmate's durable wake queue, and the current Pi process has already loaded the old extension code.
+The restart should happen only after the landed extension fix is available, and this verification did not perform that restart.
+Validation limits are up front: one combined four-suite runner invocation had an intermittent `tests/fm-watch-arm.test.sh` failure that did not reproduce in immediate direct and single-runner reruns, and `tests/fm-pi-primary-types.test.sh` self-skipped because `tsc` is absent in this worktree.
+`tests/fm-pi-watch-extension.test.sh` verified that a quiet Pi `check: rearm-resurface` continuity handoff — one where `bin/fm-wake-drain.sh --captain-work-pending` reports an empty durable wake queue, no open decisions, and no unread informational status lines — produces zero follow-ups across repeated child-close cycles, while real `signal`, `stale`, `check`, `heartbeat`, queued recovery, open-decision, and unread-note re-arm reasons still deliver exactly once through the real drain peek.
+`tests/fm-turnend-guard.test.sh` verified that repeated healthy Pi `agent_settled` turn boundaries remain silent while unhealthy boundaries still inject one bounded guard follow-up.
+Acceptance criteria for that regression were: stop Pi follow-up storms from empty `check: rearm-resurface` recovery handoffs, preserve exactly-one delivery for real durable wake rows and explicit failure or unhealthy repair conditions, keep session-generation and duplicate-owner behavior intact, and state whether a live Pi restart is still needed for already-enqueued messages.
+The focused command `tests/fm-pi-watch-extension.test.sh` exited 0 and included these new pass lines:
+
+```text
+ok - Pi empty rearm-resurface cycles stay silent while a successor remains owned
+ok - Pi real signal, stale, check, heartbeat, queued recovery, open-decision, and unread-note reasons still deliver once
+ok - Pi session transitions use a generation owner across /new /resume /fork, stale callbacks, and quit
+```
+
+The focused command `tests/fm-turnend-guard.test.sh` exited 0 and included these pass lines:
+
+```text
+ok - .pi primary extension: no-tool and multi-tool runs each inject exactly one guard follow-up
+ok - .pi primary extension: healthy settled turns stay silent across repeated assistant turns
+ok - .pi primary extension: delivery failure resets the logical-run latch
+```
+
+The focused command `tests/fm-wake-drain-unread-status.test.sh` exited 0 and included these new pass lines covering the shared `--captain-work-pending` peek contract:
+
+```text
+ok - the captain-work peek reports queue rows, open decisions, and unread notes without consuming them
+ok - fresh-state peeks before the first drain leave the unread note presentable
+```
+
+The focused command `tests/fm-watch-arm.test.sh` exited 0 directly and exited 0 through `bin/fm-test-run.sh tests/fm-watch-arm.test.sh`, preserving the shared durable recovery contract.
+A combined `bin/fm-test-run.sh tests/fm-pi-watch-extension.test.sh tests/fm-turnend-guard.test.sh tests/fm-watch-arm.test.sh tests/fm-pi-primary-types.test.sh` run first failed once in `tests/fm-watch-arm.test.sh` with `not ok - re-arm stayed live instead of surfacing durable wakes and the still-open remote decision`; immediate direct and single-runner reruns of `tests/fm-watch-arm.test.sh` both passed, so the failure is recorded as intermittent rather than hidden.
+`tests/fm-pi-primary-types.test.sh` self-skipped with `skip: tsc not found for Pi extension typecheck` in this worktree environment.
+`bin/fm-doc-audience-check.sh`, `PATH="$PWD/.validation-bin:$PATH" bin/fm-lint.sh` with local pinned `actionlint` 1.7.12, and `git diff --check` all exited 0.
 
 The Claude product live path ran with Claude Code 2.1.219 on 2026-07-24:
 
