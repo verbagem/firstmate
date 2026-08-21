@@ -366,7 +366,7 @@ const pi = {
   },
   sendUserMessage: async () => {
     rowsAtDelivery = existsSync(process.env.FM_ARM_LOG)
-      ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").length
+      ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter((row) => row.startsWith("arm=")).length
       : 0;
     deliveryStarted = true;
     await deliveryBlocked;
@@ -384,22 +384,23 @@ for (let i = 0; i < 250; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 const rows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
-if (rows.length !== 2) throw new Error(`expected one successor arm, got ${rows.length}: ${rows.join(" | ")}`);
+const armRows = rows.filter((row) => row.startsWith("arm="));
+if (armRows.length !== 2) throw new Error(`expected one successor arm, got ${armRows.length}: ${rows.join(" | ")}`);
 if (!deliveryStarted) throw new Error("wake delivery did not begin");
 if (rowsAtDelivery !== 2) throw new Error(`wake delivery began before successor establishment (${rowsAtDelivery} arm rows)`);
-if (!/predecessor=[0-9]+/.test(rows[1])) throw new Error(`successor did not receive predecessor identity: ${rows[1]}`);
+if (!/predecessor=[0-9]+/.test(armRows[1])) throw new Error(`successor did not receive predecessor identity: ${armRows[1]}`);
+if (!rows.some((row) => row.startsWith("confirmed generation=fixture-generation"))) {
+  throw new Error(`handling delivery was not confirmed before the follow-up: ${rows.join(" | ")}`);
+}
 await new Promise((resolve) => setTimeout(resolve, 100));
 const stableRows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
-if (stableRows.length !== 2) throw new Error(`delivery was confirmed before the prompt succeeded: ${stableRows.join(" | ")}`);
+if (stableRows.filter((row) => row.startsWith("arm=")).length !== 2) {
+  throw new Error(`blocked follow-up started extra arm work: ${stableRows.join(" | ")}`);
+}
+if (stableRows.filter((row) => row.startsWith("confirmed ")).length !== 1) {
+  throw new Error(`successful prompt delivery was not confirmed exactly once: ${stableRows.join(" | ")}`);
+}
 releaseDelivery();
-for (let i = 0; i < 100; i += 1) {
-  if (readFileSync(process.env.FM_ARM_LOG, "utf8").includes("confirmed generation=fixture-generation")) break;
-  await new Promise((resolve) => setTimeout(resolve, 10));
-}
-const confirmedRows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
-if (confirmedRows.filter((row) => row.startsWith("confirmed ")).length !== 1) {
-  throw new Error(`successful prompt delivery was not confirmed exactly once: ${confirmedRows.join(" | ")}`);
-}
 writeFileSync(process.env.FM_STOP_FILE, "stop\n");
 process.exit(0);
 EOF
@@ -1952,7 +1953,7 @@ const client = {
   session: {
     promptAsync: async () => {
       rowsAtPrompt = existsSync(process.env.FM_ARM_LOG)
-        ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").length
+        ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter((row) => row.startsWith("arm=")).length
         : 0;
       prompts += 1;
       await promptBlocked;
@@ -1975,22 +1976,23 @@ for (let i = 0; i < 250; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 const rows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
-if (rows.length !== 2) throw new Error(`expected one successor arm, got ${rows.length}: ${rows.join(" | ")}`);
+const armRows = rows.filter((row) => row.startsWith("arm="));
+if (armRows.length !== 2) throw new Error(`expected one successor arm, got ${armRows.length}: ${rows.join(" | ")}`);
 if (prompts !== 1) throw new Error(`expected one blocked wake prompt, got ${prompts}`);
 if (rowsAtPrompt !== 2) throw new Error(`wake prompt began before successor establishment (${rowsAtPrompt} arm rows)`);
-if (!/predecessor=[0-9]+/.test(rows[1])) throw new Error(`successor did not receive predecessor identity: ${rows[1]}`);
+if (!/predecessor=[0-9]+/.test(armRows[1])) throw new Error(`successor did not receive predecessor identity: ${armRows[1]}`);
+if (!rows.some((row) => row.startsWith("confirmed generation=fixture-generation"))) {
+  throw new Error(`handling delivery was not confirmed before the follow-up: ${rows.join(" | ")}`);
+}
 await new Promise((resolve) => setTimeout(resolve, 100));
 const stableRows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
-if (stableRows.length !== 2) throw new Error(`delivery was confirmed before the prompt succeeded: ${stableRows.join(" | ")}`);
+if (stableRows.filter((row) => row.startsWith("arm=")).length !== 2) {
+  throw new Error(`blocked follow-up started extra arm work: ${stableRows.join(" | ")}`);
+}
+if (stableRows.filter((row) => row.startsWith("confirmed ")).length !== 1) {
+  throw new Error(`successful prompt delivery was not confirmed exactly once: ${stableRows.join(" | ")}`);
+}
 releasePrompt();
-for (let i = 0; i < 100; i += 1) {
-  if (readFileSync(process.env.FM_ARM_LOG, "utf8").includes("confirmed generation=fixture-generation")) break;
-  await new Promise((resolve) => setTimeout(resolve, 10));
-}
-const confirmedRows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
-if (confirmedRows.filter((row) => row.startsWith("confirmed ")).length !== 1) {
-  throw new Error(`successful prompt delivery was not confirmed exactly once: ${confirmedRows.join(" | ")}`);
-}
 writeFileSync(process.env.FM_STOP_FILE, "stop\n");
 EOF
   )
