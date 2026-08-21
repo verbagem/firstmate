@@ -30,7 +30,8 @@
     "docs/herdr-backend.md",
     "docs/zellij-backend.md",
     "docs/orca-backend.md",
-    "docs/cmux-backend.md"
+    "docs/cmux-backend.md",
+    "docs/remote-secondmates.md"
   ],
   "requiredOwnerPointers": [
     {
@@ -100,6 +101,10 @@
     {
       "source": "docs/codex-app-backend.md",
       "target": "docs/verification/runtime-backends.md"
+    },
+    {
+      "source": "docs/trace-context.md",
+      "target": "docs/verification/trace-context.md"
     }
   ],
   "surfaces": [
@@ -156,6 +161,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/process-event-sources/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/project-management/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -192,8 +201,52 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "GROK_BOT.md",
+      "audience": "public-product"
+    },
+    {
+      "path": "Plans/bubbly-stargazing-quilt.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "README.md",
       "audience": "public-product"
+    },
+    {
+      "path": "VISION.md",
+      "audience": "public-product"
+    },
+    {
+      "path": "evals/README.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/completeness-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/principles-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/publish-safety-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/task-definition-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/tov-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/visual-asset-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/agent-control.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/architecture.md",
@@ -264,6 +317,10 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/remote-secondmates.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/scripts.md",
       "audience": "operator-current"
     },
@@ -281,6 +338,10 @@
     },
     {
       "path": "docs/supervision-protocols/codex.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/supervision-protocols/cursor.md",
       "audience": "agent-runtime"
     },
     {
@@ -304,15 +365,43 @@
       "audience": "operator-current"
     },
     {
+      "path": "docs/trace-context.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/turnend-guard.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/muse.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/process-event-sources.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/public-followup.md",
+      "audience": "maintainer-verification"
     },
     {
       "path": "docs/verification/runtime-backends.md",
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/stow-memory.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/supervision.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/trace-context.md",
       "audience": "maintainer-verification"
     },
     {
