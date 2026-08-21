@@ -352,6 +352,14 @@ fi
 # delivery mode, validated above. The generated DOD opens with the fixed
 # "Delivery contract: mode=<mode>" line that bin/fm-spawn.sh checks against its own
 # explicit --mode before launching.
+RUN_EVAL=$(shell_quote "$FM_ROOT/evals/run_eval.sh")
+IFS= read -r -d '' EVAL_STEP <<EOF || true
+Before reporting done, run the relevant eval(s) against your deliverable, e.g. \`$RUN_EVAL completeness <path>\`.
+\`completeness\` applies to every task before Done; add \`tov\` for anything written in Brandon's voice, \`principles\` for a plan/research/recommendation deliverable, \`visual-asset\` for generated imagery, and \`publish-safety\` (last) for anything customer-facing or public.
+A FAIL means loop and fix - never report done anyway.
+EOF
+EVAL_STEP=${EVAL_STEP%$'\n'}
+
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -361,6 +369,7 @@ case "$MODE" in
 Delivery contract: mode=direct-PR
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+$EVAL_STEP
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
@@ -374,6 +383,7 @@ Delivery contract: mode=local-only
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+$EVAL_STEP
 When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
@@ -386,6 +396,7 @@ EOF
 # Definition of done
 Delivery contract: mode=no-mistakes
 The task is complete only when committed on your branch.
+$EVAL_STEP
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 

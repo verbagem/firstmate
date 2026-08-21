@@ -237,6 +237,6 @@ fm_cursor_process_matches() {  # <comm> <args> [argv0]
   esac
   # A version-named or otherwise renamed executable still identifies through
   # its install path.
-  case "$comm" in */*) fm_cursor_path_is_cursor "$comm" && return 0 ;; esac
-  return 1
+case "$comm" in */*) fm_cursor_path_is_cursor "$comm" && return 0 ;; esac
+return 1
 }

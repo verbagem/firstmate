@@ -690,6 +690,33 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# Every ship delivery mode's Definition of done must instruct the crewmate to
+# run the relevant eval(s) via evals/run_eval.sh before reporting done, and
+# make clear a FAIL means loop and fix rather than reporting done anyway.
+test_ship_modes_include_eval_step() {
+  local home id brief id_proj_mode rest proj mode
+  home="$TMP_ROOT/eval-step-home"
+  write_registry "$home"
+
+  for id_proj_mode in \
+    "brief-eval-nomistakes-e1:no-registry-proj:no-mistakes" \
+    "brief-eval-directpr-e2:direct-proj:direct-PR" \
+    "brief-eval-localonly-e3:local-proj:local-only"; do
+    id=${id_proj_mode%%:*}
+    rest=${id_proj_mode#*:}
+    proj=${rest%%:*}
+    mode=${rest##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    assert_grep "run_eval.sh" "$brief" \
+      "$id: Definition of done is missing the run_eval.sh eval step"
+    assert_grep "A FAIL means loop and fix" "$brief" \
+      "$id: eval step lost the loop-and-fix-on-FAIL instruction"
+  done
+  pass "fm-brief.sh: every ship mode's Definition of done wires in the eval step"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -716,6 +743,7 @@ test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_ship_modes_include_eval_step
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

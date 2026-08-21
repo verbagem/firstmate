@@ -736,7 +736,9 @@ fm_lock_try_acquire() {
   # Compare against ${BASHPID:-$$} inline, never via a command substitution:
   # $() forks a subshell whose BASHPID is not this frame's pid.
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
-  if [ -n "$pid" ] && [ "$pid" = "${BASHPID:-$$}" ]; then
+  if [ -n "$pid" ] \
+    && [ "$pid" = "${BASHPID:-$$}" ] \
+    && [ "${BASH_SUBSHELL:-0}" -eq 0 ]; then
     # The recorded holder is THIS very process. Single-threaded bash can only
     # observe that when an interrupting trap abandoned the frame that held the
     # lock mid-critical-section (e.g. TERM inside a recovery-marker section,

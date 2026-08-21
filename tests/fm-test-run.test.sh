@@ -120,11 +120,16 @@ init_changed_fixture_repo() {
   printf '# .claude/settings.json\n# .pi/extensions/fm-primary-turnend-guard.ts\n' \
     >>"$repo/tests/fm-cd-pretool-check.test.sh"
   printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
-  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.pi/extensions" "$repo/src"
+  mkdir -p "$repo/.agents/skills/example" "$repo/.claude" "$repo/.pi/extensions" \
+    "$repo/src" "$repo/evals" "$repo/Plans"
   : >"$repo/.agents/skills/example/SKILL.md"
   : >"$repo/.claude/settings.json"
   : >"$repo/.pi/extensions/fm-primary-pi-watch.ts"
   : >"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
+  : >"$repo/evals/README.md"
+  : >"$repo/GROK_BOT.md"
+  : >"$repo/VISION.md"
+  : >"$repo/Plans/bubbly-stargazing-quilt.md"
   : >"$repo/src/unmapped.ts"
   git -C "$repo" init -q
   git -C "$repo" add .
@@ -169,6 +174,20 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "Pi source selects watcher coverage"
   git -C "$repo" add .agents .claude .pi
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm non-bin-source-change
+
+  printf '\n' >>"$repo/evals/README.md"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-brief.test.sh" "eval runtime docs select pure contract coverage"
+  git -C "$repo" add evals/README.md
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm eval-doc-change
+
+  printf '\n' >>"$repo/GROK_BOT.md"
+  printf '\n' >>"$repo/VISION.md"
+  printf '\n' >>"$repo/Plans/bubbly-stargazing-quilt.md"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  [ -z "$listed" ] || fail "public and planning prose should not select tests: $listed"
+  git -C "$repo" add GROK_BOT.md VISION.md Plans/bubbly-stargazing-quilt.md
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm prose-doc-change
 
   printf '\n' >>"$repo/src/unmapped.ts"
   set +e

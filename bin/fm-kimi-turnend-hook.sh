@@ -34,7 +34,7 @@ if [ -z "${HOME:-}" ]; then
   exit 1
 fi
 if ! command -v python3 >/dev/null 2>&1; then
-  printf 'fm-kimi-turnend-hook: refused: python3 with tomllib is required to validate config.toml.\n' >&2
+  printf 'fm-kimi-turnend-hook: refused: python3 is required to validate config.toml.\n' >&2
   exit 1
 fi
 if [ "$ACTION" = install ] && ! command -v jq >/dev/null 2>&1; then
@@ -53,11 +53,59 @@ import tempfile
 try:
     import tomllib
 except ImportError:
-    print(
-        "fm-kimi-turnend-hook: refused: python3 with tomllib is required to validate config.toml.",
-        file=sys.stderr,
-    )
-    raise SystemExit(1)
+    try:
+        import tomli as tomllib
+    except ImportError:
+        class MinimalToml:
+            class TOMLDecodeError(ValueError):
+                pass
+
+            @classmethod
+            def loads(cls, text: str):
+                data = {}
+                current = data
+                for raw in text.splitlines():
+                    line = raw.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    if line.startswith("[[") and line.endswith("]]"):
+                        name = line[2:-2].strip()
+                        if not name:
+                            raise cls.TOMLDecodeError("empty array table")
+                        existing = data.setdefault(name, [])
+                        if not isinstance(existing, list):
+                            raise cls.TOMLDecodeError(f"{name} already defined")
+                        current = {}
+                        existing.append(current)
+                        continue
+                    if line.startswith("[") and line.endswith("]"):
+                        name = line[1:-1].strip()
+                        if not name:
+                            raise cls.TOMLDecodeError("empty table")
+                        existing = data.setdefault(name, {})
+                        if not isinstance(existing, dict):
+                            raise cls.TOMLDecodeError(f"{name} already defined")
+                        current = existing
+                        continue
+                    if "=" not in line:
+                        raise cls.TOMLDecodeError(f"expected key/value: {raw}")
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if not key or not value:
+                        raise cls.TOMLDecodeError(f"malformed key/value: {raw}")
+                    if value.startswith('"') and value.endswith('"'):
+                        current[key] = value[1:-1]
+                    elif value in ("true", "false"):
+                        current[key] = value == "true"
+                    else:
+                        try:
+                            current[key] = int(value)
+                        except ValueError:
+                            raise cls.TOMLDecodeError(f"unsupported value: {raw}")
+                return data
+
+        tomllib = MinimalToml
 
 ACTION = sys.argv[1]
 CONFIG_DIR = sys.argv[2]
