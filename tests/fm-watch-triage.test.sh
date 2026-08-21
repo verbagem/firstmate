@@ -1613,11 +1613,11 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
-  wait_numeric_file "$state/.stale-since-$key" 30 || { reap "$pid"; fail "matching stale suppressor with missing timer did not initialize stale-since"; }
-  if ! kill -0 "$pid" 2>/dev/null; then
-    wait "$pid" 2>/dev/null || true
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"
     fail "watcher exited while repairing a missing stale-since timer: $(cat "$out")"
   fi
+  wait_numeric_file "$state/.stale-since-$key" 5 || { reap "$pid"; fail "matching stale suppressor with missing timer did not initialize stale-since"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "missing stale-since repair enqueued a wake"; }
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional missing-timer repair stop"
@@ -1628,7 +1628,11 @@ test_nonterminal_stale_repairs_missing_or_corrupt_timer() {
     FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
-  wait_numeric_file "$state/.stale-since-$key" 30 || { reap "$pid"; fail "matching stale suppressor with corrupt timer did not repair stale-since"; }
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"
+    fail "watcher exited while repairing a corrupt stale-since timer: $(cat "$out")"
+  fi
+  wait_numeric_file "$state/.stale-since-$key" 5 || { reap "$pid"; fail "matching stale suppressor with corrupt timer did not repair stale-since"; }
   since=$(cat "$state/.stale-since-$key" 2>/dev/null || true)
   [ "$since" != "corrupt" ] || { reap "$pid"; fail "corrupt stale-since value was left in place"; }
   [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "corrupt stale-since repair enqueued a wake"; }

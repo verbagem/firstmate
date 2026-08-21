@@ -2621,12 +2621,24 @@ fi
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 SPAWN_GEN="s$(date +%s).${BASHPID:-$$}.$RANDOM"
-SPAWN_META_PATH="$STATE/$ID.meta"
+SPAWN_META_FINAL="$STATE/$ID.meta"
+SPAWN_META_PATH=$SPAWN_META_FINAL
 if [ "$RELAUNCH" -eq 1 ]; then
-  SPAWN_META_LOCK=$(fm_meta_lock_path "$STATE/$ID.meta") || exit 1
+  SPAWN_META_LOCK=$(fm_meta_lock_path "$SPAWN_META_FINAL") || exit 1
   fm_lock_acquire_wait "$SPAWN_META_LOCK"
   SPAWN_META_LOCK_HELD=1
   SPAWN_META_TMP="$STATE/.$ID.meta.relaunch.${BASHPID:-$$}"
+  SPAWN_META_PATH=$SPAWN_META_TMP
+else
+  if [ -e "$SPAWN_META_FINAL" ] || [ -L "$SPAWN_META_FINAL" ]; then
+    if [ -d "$SPAWN_META_FINAL" ] && [ ! -L "$SPAWN_META_FINAL" ]; then
+      echo "error: could not publish task metadata at $SPAWN_META_FINAL: Is a directory" >&2
+    else
+      echo "error: could not publish task metadata at $SPAWN_META_FINAL: path already exists" >&2
+    fi
+    exit 1
+  fi
+  SPAWN_META_TMP="$STATE/.$ID.meta.spawn.${BASHPID:-$$}"
   SPAWN_META_PATH=$SPAWN_META_TMP
 fi
 preserve_relaunch_meta() {
@@ -2638,7 +2650,7 @@ preserve_relaunch_meta() {
     !($1 in owned)
   ' "$RELAUNCH_META"
 }
-{
+if ! {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
   echo "worktree=$WT"
@@ -2686,15 +2698,26 @@ preserve_relaunch_meta() {
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
   fi
-} > "$SPAWN_META_PATH"
+} > "$SPAWN_META_PATH"; then
+  echo "error: could not write task metadata at $SPAWN_META_PATH" >&2
+  exit 1
+fi
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_META_PUBLISH_STARTED=1
-  mv -f "$SPAWN_META_TMP" "$STATE/$ID.meta"
+  if ! mv -f "$SPAWN_META_TMP" "$SPAWN_META_FINAL"; then
+    echo "error: could not publish task metadata at $SPAWN_META_FINAL" >&2
+    exit 1
+  fi
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
   fm_lock_release "$SPAWN_META_LOCK"
   SPAWN_META_LOCK_HELD=0
+elif ! mv -f "$SPAWN_META_TMP" "$SPAWN_META_FINAL"; then
+  echo "error: could not publish task metadata at $SPAWN_META_FINAL" >&2
+  exit 1
+else
+  SPAWN_META_TMP=
 fi
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
   # The record is published, so this task is now part of the set a teardown
