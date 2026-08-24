@@ -1,0 +1,29 @@
+================================================================
+SCENARIO A  live agent declares 'paused: waiting on an external dependency'
+            expected: the captain is interrupted ONCE, immediately
+================================================================
+  watcher exited -> captain re-armed on a live external-decision gate
+
+  wake queue as the captain reads it (live declared pause):
+    [stale] stale: demo:fm-gate
+
+================================================================
+SCENARIO B  the same declared pause after its agent has EXITED
+            expected: absorbed; at most one bounded recheck over 6 polls
+================================================================
+  6 unchanged polls of an exited paused pane -> 1 captain interruption(s)
+
+  wake queue as the captain reads it (exited declared pause):
+    [stale] stale: demo:fm-held (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+================================================================
+SCENARIO C  TWO paused panes go stale in the SAME scan
+            expected: ONE watcher interruption, BOTH records queued
+================================================================
+  watcher exits: 1 interruption line(s) emitted
+    watcher stdout: stale: paused recheck batch (2): demo:fm-held-alpha, demo:fm-held-beta
+
+  wake queue as the captain reads it (two paused rechecks batched):
+    [stale] stale: demo:fm-held-alpha (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+    [stale] stale: demo:fm-held-beta (paused 501s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+

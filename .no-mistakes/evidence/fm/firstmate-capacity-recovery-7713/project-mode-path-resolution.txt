@@ -1,0 +1,28 @@
+# fm-project-mode.sh: resolving an external project by canonical path
+
+Registry (data/projects.md):
+    # Registered projects
+    
+    - in-home-app [direct-PR] - lives under projects/ (added 2026-01-01)
+    - widget-shop [local-only path=/private/tmp/fmdemo.SzrFEz/external/checkout-dir] - external checkout whose directory basename is "checkout-dir" (added 2026-02-01)
+
+The project directory is $FM_HOME-external and its basename ('checkout-dir')
+does not match its registry name ('widget-shop'). Its registered posture is local-only.
+
+--- BEFORE (base commit 3d125ad): name lookup by directory basename ---
+$ fm-project-mode.sh checkout-dir
+    warn: project "checkout-dir" not in registry; defaulting to no-mistakes off
+    no-mistakes off
+$ fm-project-mode.sh --path /private/tmp/fmdemo.SzrFEz/external/checkout-dir   # flag does not exist yet
+    warn: project "--path" not in registry; defaulting to no-mistakes off
+    no-mistakes off
+    exit=0
+
+--- AFTER (target commit fb85100): canonical-path resolution ---
+$ fm-project-mode.sh --with-name --path /private/tmp/fmdemo.SzrFEz/external/checkout-dir
+    widget-shop local-only off
+$ fm-project-mode.sh --with-name --path /tmp/fmdemo.SzrFEz/home/projects/in-home-app   # canonical projects/<name>
+    in-home-app direct-PR off
+$ fm-project-mode.sh --with-name --path /tmp/not-registered            # unknown path keeps the safe default
+    warn: no project registered for path "/tmp/not-registered"; defaulting not-registered to no-mistakes off
+    not-registered no-mistakes off

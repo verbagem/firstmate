@@ -1,0 +1,12 @@
+# fm-fleet-sync.sh: the local-only posture of an external project is now honoured
+
+Same registry as project-mode-path-resolution.txt: 'widget-shop [local-only path=/private/tmp/fmdemo.SzrFEz/external/checkout-dir]'.
+The clone's directory basename is 'checkout-dir', so basename lookup never found it.
+
+--- BEFORE (base commit 3d125ad) ---
+$ fm-fleet-sync.sh /private/tmp/fmdemo.SzrFEz/external/checkout-dir
+    /private/tmp/fmdemo.SzrFEz/external/checkout-dir: skipped: no origin remote
+
+--- AFTER (target commit fb85100) ---
+$ fm-fleet-sync.sh /private/tmp/fmdemo.SzrFEz/external/checkout-dir
+    widget-shop: skipped: local-only project

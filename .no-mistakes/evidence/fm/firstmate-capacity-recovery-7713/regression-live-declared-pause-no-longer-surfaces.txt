@@ -1,0 +1,23 @@
+# Regression: a LIVE declared pause no longer surfaces immediately
+
+Test: tests/fm-watch-triage.test.sh, sub-case 'alive-decision-gate' inside
+test_exited_declared_pause_is_bounded_but_live_gate_surfaces (renamed on the
+branch to test_declared_pause_and_exited_captain_hold_use_bounded_cadence).
+
+The BASE test file is used unchanged in both runs, so the only variable is bin/.
+
+== base tests + base bin/ (commit 3d125ad) ==
+ok - a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated
+ok - exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once
+
+== base tests + TARGET bin/ (commit fb85100) ==
+ok - a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated
+not ok - live external-decision gate did not surface immediately
+
+The same failure reproduces with the branch's own adapted test file, and it is
+not a timing artifact: widening the watcher-exit budget from 10s to 60s does not
+change the outcome - the watcher never exits, it absorbs the pause instead.
+
+=== SUPERSEDED (round 2) ===
+This regression was fixed in 05370dc. Live declared pauses surface once again;
+see paused-monitoring-demo.txt scenario A for the current behavior.

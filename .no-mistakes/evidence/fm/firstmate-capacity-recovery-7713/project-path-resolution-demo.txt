@@ -1,0 +1,27 @@
+registry (data/projects.md):
+  # Projects
+  - command-center [no-mistakes-prod-only +yolo] - the operator home (added 2026-01-01)
+  - firstmate [no-mistakes] - the fleet supervisor (added 2026-01-01)
+  - ledger-svc [direct-PR path=/var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/elsewhere/checkout-dir-named-nothing-like-the-project] - external service (added 2026-02-01)
+
+$ fm-project-mode.sh --with-name --path /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/elsewhere/checkout-dir-named-nothing-like-the-project
+  # external project resolved by its registered path= annotation, NOT the basename
+  ledger-svc direct-PR off
+
+$ fm-project-mode.sh --with-name --path /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/projects/firstmate
+  # in-home project resolved by its canonical projects/<name> path
+  firstmate no-mistakes off
+
+$ fm-project-mode.sh --with-name --path /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/projects/command-center
+  # conditional policy maps to its most rigorous leg for mechanical callers
+  command-center no-mistakes on
+
+$ fm-project-mode.sh --raw --with-name --path /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/projects/command-center
+  # ...and --raw shows the conditional policy itself, unmapped
+  command-center no-mistakes-prod-only on
+
+$ fm-project-mode.sh --with-name --path /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/elsewhere/not-registered
+  # an unregistered path keeps the safe default posture and warns, never silently drops the gate
+  warn: no project registered for path "/var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/tmp.er55HHrlNk/elsewhere/not-registered"; defaulting not-registered to no-mistakes off
+  not-registered no-mistakes off
+

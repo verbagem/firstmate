@@ -1,0 +1,24 @@
+ok - multiple paused stale rechecks from one scan produce one watcher interruption with both durable records queued
+ok - paused last-status panes wake once for PR-ready or failed run outcomes
+### 1. Batched paused rechecks: two paused panes come due in one scan
+--- watcher stdout (one interruption) ---
+stale: paused recheck batch (2): test:fm-held-alpha, test:fm-held-beta
+--- durable wake queue (both panes still recorded) ---
+stale	test:fm-held-alpha	stale: test:fm-held-alpha (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+stale	test:fm-held-beta	stale: test:fm-held-beta (paused 502s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds)
+
+### 2. A paused pane whose validation run reaches an actionable outcome
+--- ready: drained wake the captain receives ---
+stale	test:fm-paused-outcome-ready	stale: test:fm-paused-outcome-ready
+--- ready: once-per-generation marker recorded ---
+run-id=paused-ready run-head=aaa111
+state: done · source: run-step · checks green: PR ready for review · run-id=paused-ready run-head=aaa111
+--- ready: second identical poll re-woke nothing (queue empty) ---
+    bytes:        0
+--- failed: drained wake the captain receives ---
+stale	test:fm-paused-outcome-failed	stale: test:fm-paused-outcome-failed
+--- failed: once-per-generation marker recorded ---
+run-id=paused-failed run-head=bbb222
+state: failed · source: run-step · checks failed · run-id=paused-failed run-head=bbb222
+--- failed: second identical poll re-woke nothing (queue empty) ---
+    bytes:        0

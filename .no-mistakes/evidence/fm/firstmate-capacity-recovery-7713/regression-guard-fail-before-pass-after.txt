@@ -1,0 +1,9 @@
+Regression guard: the live-declared-pause assertion fails on the pre-fix watcher
+and passes on the fixed watcher. bin/fm-watch.sh is the ONLY variable - the same
+current test file and the same libs are used for both runs.
+
+$ # pre-fix watcher (fb85100, the commit that carried the status_is_paused short-circuit)
+  not ok - live external-decision gate did not surface immediately
+
+$ # fixed watcher (05370dc, HEAD)
+  ok - exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once
