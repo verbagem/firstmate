@@ -1,0 +1,48 @@
+Captain command-lane transcript - Pi primary watcher rearm-resurface follow-up storm
+harness: captain-lane-harness.sh - drives the real tracked .pi/extensions/fm-primary-pi-watch.ts
+         plus the real bin/fm-wake-drain.sh --captain-work-pending peek against a fixture FM_HOME,
+         and records every FIRSTMATE_OP follow-up the captain lane would receive.
+trees:   base 3d8426c   vs   branch HEAD 1266d15
+
+########## REPRODUCTION: ordinary empty rearm-resurface (no queue row, no open decision, no unread note)
+
+=== tree base 3d8426c (before fix) | scenario empty-rearm | watcher re-armed 12x ===
+captain command lane received 11 FIRSTMATE_OP follow-up(s):
+    1. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    2. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    3. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    4. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    5. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    6. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    7. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    8. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+    9. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+   10. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+   11. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+
+=== tree branch HEAD 1266d15 (after fix) | scenario empty-rearm | watcher re-armed 12x ===
+captain command lane received 0 FIRSTMATE_OP follow-up(s):
+  (lane silent)
+
+########## PRESERVED SIGNAL on HEAD: each captain-relevant outcome still delivers exactly once
+
+=== tree branch HEAD 1266d15 (after fix) | scenario queued-row | watcher re-armed 2x ===
+captain command lane received 1 FIRSTMATE_OP follow-up(s):
+    1. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+
+=== tree branch HEAD 1266d15 (after fix) | scenario open-decision | watcher re-armed 2x ===
+captain command lane received 1 FIRSTMATE_OP follow-up(s):
+    1. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+
+=== tree branch HEAD 1266d15 (after fix) | scenario unread-note | watcher re-armed 2x ===
+captain command lane received 1 FIRSTMATE_OP follow-up(s):
+    1. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: check: rearm-resurface
+
+=== tree branch HEAD 1266d15 (after fix) | scenario real-signal | watcher re-armed 2x ===
+captain command lane received 1 FIRSTMATE_OP follow-up(s):
+    1. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: signal: worker.status
+
+=== tree branch HEAD 1266d15 (after fix, silent-handling confirmation FAILS) | scenario empty-rearm | watcher re-armed 2x ===
+captain command lane received 1 FIRSTMATE_OP follow-up(s):
+    1. FIRSTMATE_OP: v1 watcher: FIRSTMATE WATCHER WAKE: watcher: FAILED - Pi extension could not silen
+
