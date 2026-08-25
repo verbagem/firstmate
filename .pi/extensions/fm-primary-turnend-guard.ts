@@ -100,8 +100,10 @@ const sessionstartTruncatedMarker =
   "Treat omitted context as unread and inspect the named files directly before acting on it.";
 
 // Single-slot private digest file: session-start/compact overwrites it every
-// time, so it never accumulates and needs no separate cleanup.
-const sessionstartDigestFile = `${state}/.session-start-digest.txt`;
+// time, so it never accumulates and needs no separate cleanup. The slot is
+// qualified by pid so two Pi processes sharing one FM_HOME cannot overwrite
+// each other's not-yet-read digest.
+const sessionstartDigestFile = `${state}/.session-start-digest.${process.pid}.txt`;
 
 function runSessionstartHook(source: string): Promise<string> {
   return new Promise((resolveResult) => {
@@ -152,11 +154,27 @@ async function injectSessionstart(pi: ExtensionAPI, source: string): Promise<voi
     if (classifyFirstmateCurrentOperationalText(raw)) {
       content = raw;
     } else {
-      writeFileSync(sessionstartDigestFile, raw);
+      let writeError: unknown;
+      try {
+        writeFileSync(sessionstartDigestFile, raw);
+      } catch (error) {
+        writeError = error ?? new Error("unknown error");
+      }
+      const truncationNotice = raw.endsWith(sessionstartTruncatedMarker)
+        ? " PI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB, so treat omitted " +
+          "context as unread and inspect the named files directly."
+        : "";
       content = encodeFirstmateOperationalInput(
         "session-start",
-        `Session-start digest written to ${sessionstartDigestFile} (${raw.length} bytes). ` +
-          "Read that file now, in full, before executing any other instructions.",
+        writeError === undefined
+          ? `Session-start digest written to ${sessionstartDigestFile} ` +
+            `(${Buffer.byteLength(raw, "utf8")} bytes). ` +
+            "Read that file now, in full, before executing any other instructions." +
+            truncationNotice
+          : `Session-start digest could not be written to ${sessionstartDigestFile} ` +
+            `(${writeError instanceof Error ? writeError.message : String(writeError)}). ` +
+            "Run bin/fm-session-start.sh now and read its full output before executing any " +
+            "other instructions." + truncationNotice,
       );
     }
     pi.sendMessage({
