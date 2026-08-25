@@ -756,7 +756,8 @@ fm_lock_try_acquire() {
   depth=${BASH_SUBSHELL:-0}
   lock_depth=$(cat "$lockdir/bash-sublevel" 2>/dev/null || true)
   if [ -n "$pid" ] && [ "$pid" = "$current" ] \
-    && { [ -z "$lock_depth" ] || [ "$lock_depth" = "$depth" ]; }; then
+    && { { [ -n "$lock_depth" ] && [ "$lock_depth" = "$depth" ]; } \
+      || { [ -z "$lock_depth" ] && [ "$depth" -eq 0 ]; }; }; then
     # The recorded holder is THIS very process. Single-threaded bash can only
     # observe that when an interrupting trap abandoned the frame that held the
     # lock mid-critical-section (e.g. TERM inside a recovery-marker section,
