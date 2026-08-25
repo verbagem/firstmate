@@ -275,6 +275,35 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
+    ok: boolean;
+    detail: string;
+  } {
+    try {
+      const result = spawnSync(
+        "bash",
+        [armScript, "--handling-delivered", recovery.generation, "--watcher-pid", recovery.watcherPid],
+        {
+          cwd: fmRoot,
+          encoding: "utf8",
+          env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_ROOT_OVERRIDE: fmRoot },
+        },
+      );
+      if (result.status === 0) return { ok: true, detail: "" };
+      const stderr = (result.stderr || "").trim();
+      return {
+        ok: false,
+        detail: `watcher: FAILED - handling delivery confirmation was rejected (status=${result.status ?? "none"} generation=${recovery.generation} watcherPid=${recovery.watcherPid})${stderr ? `\n${stderr}` : ""}`,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        detail: `watcher: FAILED - handling delivery confirmation could not be executed (generation=${recovery.generation} watcherPid=${recovery.watcherPid})\n${message}`,
+      };
+    }
+  }
+
   function confirmHandlingDeliveryWithRetry(
     owner: SessionGeneration,
     recovery: { generation: string; watcherPid: string },
@@ -516,6 +545,7 @@ export default function (pi: ExtensionAPI) {
       const classification = classifyClose(stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
       if (classification.kind === "actionable") {
+        if (owner.restoring) return;
         owner.retryFailures = 0;
         owner.restoring = true;
         void (async () => {
