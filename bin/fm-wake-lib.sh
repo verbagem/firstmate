@@ -755,6 +755,9 @@ fm_lock_try_acquire() {
   current=${BASHPID:-$$}
   depth=${BASH_SUBSHELL:-0}
   lock_depth=$(cat "$lockdir/bash-sublevel" 2>/dev/null || true)
+  # A lock written before bash-sublevel existed records no depth, and only a
+  # depth-0 frame can have abandoned such a hold, so a deeper frame must keep
+  # waiting instead of deleting a live parent's lock.
   if [ -n "$pid" ] && [ "$pid" = "$current" ] \
     && { { [ -n "$lock_depth" ] && [ "$lock_depth" = "$depth" ]; } \
       || { [ -z "$lock_depth" ] && [ "$depth" -eq 0 ]; }; }; then
