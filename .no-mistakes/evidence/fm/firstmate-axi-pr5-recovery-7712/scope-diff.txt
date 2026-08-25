@@ -1,0 +1,42 @@
+$ git log --oneline -1 3d8426c   # base recorded in run context
+3d8426c sync fork with accepted Firstmate foundation (#7)
+
+$ git diff --numstat 3d8426c..HEAD
+15	1	.agents/skills/firstmate-coding-guidelines/SKILL.md
+
+$ git diff 3d8426c..HEAD
+diff --git a/.agents/skills/firstmate-coding-guidelines/SKILL.md b/.agents/skills/firstmate-coding-guidelines/SKILL.md
+index a9e2154..bdf01b1 100644
+--- a/.agents/skills/firstmate-coding-guidelines/SKILL.md
++++ b/.agents/skills/firstmate-coding-guidelines/SKILL.md
+@@ -3,7 +3,7 @@ name: firstmate-coding-guidelines
+ description: >-
+   Agent-only reference for changing firstmate's shared, tracked material per AGENTS.md section 1.
+   Use before editing any of that material, whether working as firstmate directly or as a crewmate briefed on a firstmate-repo task.
+-  Covers the knowledge-placement decision tree, the one-owner rule for contracts, the inline-stub pattern for content moved into a skill, AGENTS.md size discipline, trigger hygiene for new skills, and repo style rules (one sentence per line, plain dash, no agent co-author, shellcheck-clean bin scripts, colocated tests, and maintainer-verification evidence).
++  Covers the knowledge-placement decision tree, the one-owner rule for contracts, the inline-stub pattern for content moved into a skill, AGENTS.md size discipline, trigger hygiene for new skills, repo style rules (one sentence per line, plain dash, no agent co-author, shellcheck-clean bin scripts, colocated tests, and maintainer-verification evidence), and the agent-native CLI/AXI interface checklist.
+ user-invocable: false
+ metadata:
+   internal: true
+@@ -125,3 +125,17 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
+ - A maintainer-verification record under `docs/verification/` records active empirical facts, not assumptions or task chronology.
+ - Include the date, version, exact commands run, and exact output needed to support the current guarantee.
+ - Keep incident chronology and delivery evidence in private task reports or PR evidence unless a concise rationale is required to maintain a current safety boundary.
++
++## Agent-native CLI/AXI interface checklist
++
++Applies to firstmate's own agent-facing command-line tools in `bin/`, as part of the shared, tracked material covered by this skill.
++Triggering change: a new `bin/` CLI, or a material update to an existing one's output format, structured-output schema, or help text.
++
++Checklist for agent-efficient tools:
++
++- Default output is compact, token-efficient, and skimmable plain text; avoid verbose prose wrappers.
++- Structured output such as JSON is an opt-in flag, and its schema stays minimal with extra fields behind further flags.
++- Commands compose with pipes and file paths; avoid requiring GUI, redirects, or shell wrappers.
++- Long output supports query/filter/range controls so agents request only needed data.
++- Help text shows one-line usage plus concrete examples; avoid walls of prose.
++- Benchmark meaningful changes by success rate, turns to completion, token/cost ratio, and wall-clock duration.
+
+$ git log --oneline -1 origin/main   # verbagem/firstmate main tip == diff base
+3d8426c sync fork with accepted Firstmate foundation (#7)
+origin	https://github.com/verbagem/firstmate (fetch)

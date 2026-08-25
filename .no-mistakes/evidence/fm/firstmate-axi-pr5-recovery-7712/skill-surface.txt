@@ -1,0 +1,41 @@
+== firstmate-coding-guidelines SKILL.md as an agent loads it (branch fm/firstmate-axi-pr5-recovery-7712) ==
+
+frontmatter (parsed YAML):
+  name: firstmate-coding-guidelines
+  user-invocable: False
+  metadata: {'internal': True}
+  description length: 629 chars (well under the harness skill-description cap)
+  description coverage list ends with: ...n bin scripts, colocated tests, and maintainer-verification evidence), and the agent-native CLI/AXI interface checklist.
+
+sections present after the recovery merge:
+   ## Knowledge-placement decision tree
+   ## One-owner rule
+   ## Inline-stub pattern
+   ## Size discipline
+   ## Trigger hygiene
+   ## Compatibility and enforcement
+   ### Harness-dependent checks
+   ## Documentation change review
+   ## Repo style rules
+   ## Agent-native CLI/AXI interface checklist
+
+--- retained newer accepted instructions (rendered in place) ---
+[### Harness-dependent checks] A check is harness-dependent when its verdict comes from something the vendor emits: a process name, rendered output, a spinner or keybind glyph, a banner, or a key the harness binds.
+[## Repo style rules] - Run `bin/fm-lint.sh` before treating a script change as done; it is the single owner of the lint definition (file set, config, pinned shellcheck version, and pinned actionlint workflow lint) that CI and the no-mistakes pre-push gate both invoke, and it refuses to run under any other version of either linter.
+[## Repo style rules] - When a task names a specific tool, implement the work with that tool, or explicitly flag the substitution and its new dependency footprint for review before shipping.
+
+--- recovered section, verbatim as the agent reads it ---
+## Agent-native CLI/AXI interface checklist
+
+
+Applies to firstmate's own agent-facing command-line tools in `bin/`, as part of the shared, tracked material covered by this skill.
+Triggering change: a new `bin/` CLI, or a material update to an existing one's output format, structured-output schema, or help text.
+
+Checklist for agent-efficient tools:
+
+- Default output is compact, token-efficient, and skimmable plain text; avoid verbose prose wrappers.
+- Structured output such as JSON is an opt-in flag, and its schema stays minimal with extra fields behind further flags.
+- Commands compose with pipes and file paths; avoid requiring GUI, redirects, or shell wrappers.
+- Long output supports query/filter/range controls so agents request only needed data.
+- Help text shows one-line usage plus concrete examples; avoid walls of prose.
+- Benchmark meaningful changes by success rate, turns to completion, token/cost ratio, and wall-clock duration.
