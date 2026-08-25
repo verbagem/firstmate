@@ -64,8 +64,10 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
 | `fm-marker-lib.sh`       | Compatibility entry point for the from-firstmate carrier owned by `fm-operational-input.sh` |
+| `fm-line-cap-lib.sh`     | Shared per-line truncation helper for agent-facing status and decision digests       |
 | `fm-pending-reply-lib.sh` | Parent-owned secondmate pending-reply expectations, recovery, and keyed escalation lifecycle |
 | `fm-secondmate-report.sh` | Optional helper to append a correlated parent status or document-pointer report       |
+| `fm-secondmate-parent-lib.sh` | Parse the durable parent binding written into a seeded secondmate home          |
 | `fm-procevent-remote-reply.sh` | Relay the remote-secondmate status stream through non-destructive process-event deltas |
 | `fm-procevent-when.sh`   | Fire a trust-bound deterministic action at most once when its registered condition holds, then wake with the outcome |
 | `fm-gate-refuse-lib.sh`  | Shared no-mistakes gate-context refusal for fleet lifecycle entrypoints               |
@@ -90,7 +92,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `fm-quota-axi-lib.sh`    | Shared `quota-axi` compatibility floor for the bootstrap diagnostic                  |
 | `fm-vendor-auth-probe.sh`| Run one hard-bounded, non-destructive authentication probe of a named vendor CLI and report the fact |
-| `fm-wake-drain.sh`       | Present durable watcher wakes, unread informational status lines, and OPEN DECISIONS, consume acknowledged rows through their sequence, retire only the matching recovery generation, then assert supervision health |
+| `fm-wake-drain.sh`       | Present durable watcher wakes, unread informational status lines, and OPEN DECISIONS, consume acknowledged rows through their sequence, retire only the matching recovery generation, then assert supervision health; `--captain-work-pending` is a cursor-preserving read-only peek reporting whether a drain would surface anything captain-relevant |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-classify-lib.sh`     | Shared wake-classification vocabulary, durable keyed-decision folds and scans, and unread informational status-line selection |
 | `fm-send.sh`             | Send one verified literal line or supported key through the target's recorded backend |

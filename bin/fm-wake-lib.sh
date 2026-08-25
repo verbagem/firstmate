@@ -289,6 +289,7 @@ fm_lock_clean_known_files() {
   local lockdir=$1
   rm -f \
     "$lockdir/pid" \
+    "$lockdir/bash-sublevel" \
     "$lockdir/fm-home" \
     "$lockdir/pid-identity" \
     "$lockdir/role" \
@@ -297,14 +298,17 @@ fm_lock_clean_known_files() {
 }
 
 fm_lock_set_role() {
-  local lockdir=$1 role=$2 current pid back
+  local lockdir=$1 role=$2 current depth pid lock_depth back
   case "$role" in
     autoarm|terminal-check) : ;;
     *) return 1 ;;
   esac
   current=${BASHPID:-$$}
+  depth=${BASH_SUBSHELL:-0}
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  lock_depth=$(cat "$lockdir/bash-sublevel" 2>/dev/null || true)
   [ "$pid" = "$current" ] || return 1
+  [ -z "$lock_depth" ] || [ "$lock_depth" = "$depth" ] || return 1
   printf '%s\n' "$role" > "$lockdir/role" 2>/dev/null || return 1
   back=$(cat "$lockdir/role" 2>/dev/null || true)
   [ "$back" = "$role" ]
@@ -329,11 +333,14 @@ fm_lock_owner_dir() {
 }
 
 fm_lock_prepare_owner() {
-  local ownerdir=$1 mypid back
+  local ownerdir=$1 mypid depth back back_depth
   mypid=${BASHPID:-$$}
+  depth=${BASH_SUBSHELL:-0}
   printf '%s\n' "$mypid" > "$ownerdir/pid" 2>/dev/null || return 1
+  printf '%s\n' "$depth" > "$ownerdir/bash-sublevel" 2>/dev/null || return 1
   back=$(cat "$ownerdir/pid" 2>/dev/null || true)
-  [ "$back" = "$mypid" ]
+  back_depth=$(cat "$ownerdir/bash-sublevel" 2>/dev/null || true)
+  [ "$back" = "$mypid" ] && [ "$back_depth" = "$depth" ]
 }
 
 fm_lock_link_owner() {
@@ -378,14 +385,20 @@ fm_lock_claim_blocked_by_steal() {
 }
 
 fm_lock_claim() {
-  local lockdir=$1 ownerdir=$2 allowed_steal_owner=${3:-} mypid back
+  local lockdir=$1 ownerdir=$2 allowed_steal_owner=${3:-} mypid depth back back_depth
   mypid=${BASHPID:-$$}
+  depth=${BASH_SUBSHELL:-0}
   if ! { printf '%s\n' "$mypid" > "$ownerdir/pid"; } 2>/dev/null; then
     fm_lock_discard_owner "$ownerdir"
     return 1
   fi
+  if ! { printf '%s\n' "$depth" > "$ownerdir/bash-sublevel"; } 2>/dev/null; then
+    fm_lock_discard_owner "$ownerdir"
+    return 1
+  fi
   back=$(cat "$ownerdir/pid" 2>/dev/null || true)
-  if [ "$back" != "$mypid" ]; then
+  back_depth=$(cat "$ownerdir/bash-sublevel" 2>/dev/null || true)
+  if [ "$back" != "$mypid" ] || [ "$back_depth" != "$depth" ]; then
     fm_lock_discard_owner "$ownerdir"
     return 1
   fi
@@ -724,7 +737,7 @@ fm_recovery_marker_arm_check() {
 }
 
 fm_lock_try_acquire() {
-  local lockdir=$1 pid steal cur rc steal_owner primary_owner
+  local lockdir=$1 pid lock_depth current depth steal cur rc steal_owner primary_owner
   FM_LOCK_HELD_PID=
   FM_LOCK_OWNER_DIR=
   FM_LOCK_RECOVERED_PID=
@@ -734,11 +747,20 @@ fm_lock_try_acquire() {
   fi
 
   # Compare against ${BASHPID:-$$} inline, never via a command substitution:
-  # $() forks a subshell whose BASHPID is not this frame's pid.
+  # $() forks a subshell whose BASHPID is not this frame's pid. On bash 3.2,
+  # BASHPID is absent and $$ is shared with subshells, so the recorded
+  # bash-sublevel distinguishes this frame from a child still blocked on the
+  # parent's live hold.
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
-  if [ -n "$pid" ] \
-    && [ "$pid" = "${BASHPID:-$$}" ] \
-    && [ "${BASH_SUBSHELL:-0}" -eq 0 ]; then
+  current=${BASHPID:-$$}
+  depth=${BASH_SUBSHELL:-0}
+  lock_depth=$(cat "$lockdir/bash-sublevel" 2>/dev/null || true)
+  # A lock written before bash-sublevel existed records no depth, and only a
+  # depth-0 frame can have abandoned such a hold, so a deeper frame must keep
+  # waiting instead of deleting a live parent's lock.
+  if [ -n "$pid" ] && [ "$pid" = "$current" ] \
+    && { { [ -n "$lock_depth" ] && [ "$lock_depth" = "$depth" ]; } \
+      || { [ -z "$lock_depth" ] && [ "$depth" -eq 0 ]; }; }; then
     # The recorded holder is THIS very process. Single-threaded bash can only
     # observe that when an interrupting trap abandoned the frame that held the
     # lock mid-critical-section (e.g. TERM inside a recovery-marker section,
@@ -834,20 +856,25 @@ fm_lock_acquire_wait() {
 }
 
 fm_lock_release() {
-  local lockdir=$1 pid current ownerdir
+  local lockdir=$1 pid current depth ownerdir lock_depth
   current=${BASHPID:-$$}
+  depth=${BASH_SUBSHELL:-0}
   if [ -L "$lockdir" ]; then
     ownerdir=$(fm_lock_link_owner "$lockdir" 2>/dev/null || true)
     [ -n "$ownerdir" ] || return 0
     pid=$(cat "$ownerdir/pid" 2>/dev/null || true)
+    lock_depth=$(cat "$ownerdir/bash-sublevel" 2>/dev/null || true)
     [ "$pid" = "$current" ] || return 0
+    [ -z "$lock_depth" ] || [ "$lock_depth" = "$depth" ] || return 0
     fm_lock_points_to_owner "$lockdir" "$ownerdir" || return 0
     rm -f "$lockdir" 2>/dev/null || return 0
     fm_lock_discard_owner "$ownerdir"
     return 0
   fi
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
+  lock_depth=$(cat "$lockdir/bash-sublevel" 2>/dev/null || true)
   [ "$pid" = "$current" ] || return 0
+  [ -z "$lock_depth" ] || [ "$lock_depth" = "$depth" ] || return 0
   fm_lock_clean_known_files "$lockdir"
   rmdir "$lockdir" 2>/dev/null || true
 }
@@ -898,8 +925,12 @@ fm_failure_episode_reset() {
       ;;
     held)
       current=${BASHPID:-$$}
+      local lock_depth current_depth
+      current_depth=${BASH_SUBSHELL:-0}
       pid=$(cat "$lock/pid" 2>/dev/null || true)
+      lock_depth=$(cat "$lock/bash-sublevel" 2>/dev/null || true)
       [ "$pid" = "$current" ] || return 1
+      [ -z "$lock_depth" ] || [ "$lock_depth" = "$current_depth" ] || return 1
       ;;
     *) return 1 ;;
   esac

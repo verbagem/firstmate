@@ -792,7 +792,42 @@ test_historical_annotation_skips_announced_status() {
   pass "historical annotations replay nothing already announced and keep everything new"
 }
 
+# A lock directory written before the bash-sublevel frame identity existed
+# carries a pid but no recorded depth. Depth 0 is the only frame that can have
+# abandoned such a hold, so a deeper frame must keep waiting rather than delete
+# a live parent's lock and hand two frames the same singleton.
+test_legacy_lock_without_sublevel_is_reclaimed_only_at_depth_zero() {
+  local dir state rc
+  dir=$(make_case legacy-sublevel-lock)
+  state="$dir/state"
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    lock="$2/.legacy.lock"
+    mkdir "$lock" || exit 10
+    printf "%s\n" "${BASHPID:-$$}" > "$lock/pid" || exit 10
+    fm_lock_try_acquire "$lock" || exit 11
+    fm_lock_release "$lock"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" || rc=$?
+  [ "$rc" -eq 0 ] || fail "a legacy depth-0 self-held lock was not reclaimed (rc=$rc)"
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    lock="$2/.legacy2.lock"
+    (
+      mkdir "$lock" || exit 10
+      printf "%s\n" "${BASHPID:-$$}" > "$lock/pid" || exit 10
+      fm_lock_try_acquire "$lock" && exit 13
+      exit 0
+    ) || exit $?
+    [ -d "$lock" ] || exit 14
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state" || rc=$?
+  [ "$rc" -eq 0 ] || fail "a subshell reclaimed a legacy lock with no recorded depth (rc=$rc)"
+  pass "a legacy lock without a recorded sublevel is reclaimed only from depth 0"
+}
+
 test_self_held_lock_reclaims_instead_of_deadlocking
+test_legacy_lock_without_sublevel_is_reclaimed_only_at_depth_zero
 test_self_announced_append_guards
 test_historical_annotation_skips_announced_status
 test_concurrent_append_and_drain
