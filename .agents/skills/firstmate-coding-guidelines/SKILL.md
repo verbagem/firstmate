@@ -128,14 +128,13 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
 
 ## Agent-native CLI/AXI interface checklist
 
-Load this before designing or changing a CLI tool primarily consumed by agents.
-Triggering change: new agent-facing CLI, material update to tool output format, schema change, or help text rewrite.
+Applies to firstmate's own agent-facing command-line tools in `bin/`, as part of the shared, tracked material covered by this skill.
+Triggering change: a new `bin/` CLI, or a material update to an existing one's output format, structured-output schema, or help text.
 
 Checklist for agent-efficient tools:
 
-- Default output is token-efficient and skimmable; avoid verbose JSON or prose wrappers.
-- Compact plain text is the default; JSON or richer structured output is an opt-in flag.
-- Default schema is minimal; extra fields and advanced options are opt-in flags.
+- Default output is compact, token-efficient, and skimmable plain text; avoid verbose prose wrappers.
+- Structured output such as JSON is an opt-in flag, and its schema stays minimal with extra fields behind further flags.
 - Commands compose with pipes and file paths; avoid requiring GUI, redirects, or shell wrappers.
 - Long output supports query/filter/range controls so agents request only needed data.
 - Help text shows one-line usage plus concrete examples; avoid walls of prose.
