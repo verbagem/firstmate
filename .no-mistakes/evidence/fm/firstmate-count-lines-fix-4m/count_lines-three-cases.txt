@@ -1,0 +1,12 @@
+CASE           HELPER       RAW OUTPUT (od -c, so a second 0 is visible)
+--------------------------------------------------------------------------
+missing        old              0                                                            
+missing        new              0                                                            
+empty          old              0  \n   0                                                    
+empty          new              0                                                            
+three          old              3                                                            
+three          new              3                                                            
+--------------------------------------------------------------------------
+arithmetic use, as at tests/fm-procevent-when.test.sh:144 — $(( $(count_lines empty) + 0 )):
+  old -> 0 + 0 : syntax error in expression (error token is "0 + 0 ")
+  new -> 0
