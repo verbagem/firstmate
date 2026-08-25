@@ -90,7 +90,9 @@ exit "$exit_code"
 SH
 chmod +x "$ACT"
 
-count_lines() { [ -e "$1" ] && grep -c . "$1" || echo 0; }
+# grep -c prints 0 AND exits 1 on no-match, so a bare `|| echo 0` fires too and
+# yields "0\n0" for an existing-but-empty file. Swallow the exit code instead.
+count_lines() { if [ -e "$1" ]; then grep -c . "$1" || true; else echo 0; fi; }
 
 # --- arm binds the pair and refuses a duplicate ------------------------------
 H="$TMP_ROOT/h-arm"; new_home "$H"
