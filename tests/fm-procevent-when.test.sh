@@ -90,7 +90,24 @@ exit "$exit_code"
 SH
 chmod +x "$ACT"
 
-count_lines() { [ -e "$1" ] && grep -c . "$1" || echo 0; }
+# grep -c prints 0 AND exits 1 on no-match, so a bare `|| echo 0` fires too and
+# yields "0\n0" for an existing-but-empty file. Swallow the exit code instead.
+count_lines() { if [ -e "$1" ]; then grep -c . "$1" || true; else echo 0; fi; }
+
+# The helper above is load-bearing for every "ran exactly once" assertion below,
+# so pin its three cases: a missing file, an existing-but-empty file, and a file
+# with content each yield exactly one integer.
+CL="$TMP_ROOT/count-lines"; mkdir -p "$CL"
+: > "$CL/empty"; printf 'a\nb\nc\n' > "$CL/three"
+expect_count() {  # <fixture> <expected>
+  local got; got=$(count_lines "$CL/$1")
+  [ "$got" = "$2" ] || fail "count_lines on a $1 file yielded '$got', expected exactly '$2'"
+}
+expect_count missing 0
+expect_count empty 0
+expect_count three 3
+pass "count_lines yields exactly one integer for missing, empty, and non-empty files"
+
 
 # --- arm binds the pair and refuses a duplicate ------------------------------
 H="$TMP_ROOT/h-arm"; new_home "$H"
