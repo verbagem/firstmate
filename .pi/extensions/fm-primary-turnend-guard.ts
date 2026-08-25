@@ -99,6 +99,10 @@ const sessionstartTruncatedMarker =
   "\n\nPI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB. " +
   "Treat omitted context as unread and inspect the named files directly before acting on it.";
 
+// Single-slot private digest file: session-start/compact overwrites it every
+// time, so it never accumulates and needs no separate cleanup.
+const sessionstartDigestFile = `${state}/.session-start-digest.txt`;
+
 function runSessionstartHook(source: string): Promise<string> {
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/fm-sessionstart-run.sh`, ["--source", source], {
@@ -137,11 +141,24 @@ async function injectSessionstart(pi: ExtensionAPI, source: string): Promise<voi
     // Pi is the only adapter that injects a MESSAGE rather than hook stdout, so
     // whatever it injects must carry operational provenance or the Ahoy skill
     // would have to guess whether it was captain-authored. The wrapper already
-    // returns an encoded nudge on a context-preserving open, so only an
-    // unencoded digest needs the marker added here.
-    const content = classifyFirstmateCurrentOperationalText(raw)
-      ? raw
-      : encodeFirstmateOperationalInput("session-start", raw);
+    // returns an encoded nudge on a context-preserving open (a short line, e.g.
+    // "run bin/fm-session-start.sh now"), which is small enough to inject
+    // as-is. An unencoded digest is the full session-start payload - up to
+    // hundreds of KiB - and must not be inlined into the message: see
+    // docs/sessionstart-nudge.md "Digest delivery is a pointer, not inline
+    // content" for why. It is written to a private, single-slot state file
+    // instead, and only a short pointer travels through pi.sendMessage.
+    let content: string;
+    if (classifyFirstmateCurrentOperationalText(raw)) {
+      content = raw;
+    } else {
+      writeFileSync(sessionstartDigestFile, raw);
+      content = encodeFirstmateOperationalInput(
+        "session-start",
+        `Session-start digest written to ${sessionstartDigestFile} (${raw.length} bytes). ` +
+          "Read that file now, in full, before executing any other instructions.",
+      );
+    }
     pi.sendMessage({
       customType: "firstmate-sessionstart-nudge",
       content,

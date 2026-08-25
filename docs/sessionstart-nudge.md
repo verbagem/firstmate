@@ -83,6 +83,31 @@ Pi is the only adapter that injects a message rather than hook stdout, so whatev
 The extension therefore encodes an unencoded digest as `session-start` operational input before sending it, and leaves the already-encoded nudge alone.
 It streams the hook to completion and retains at most 512 KiB for message delivery; this approved containment keeps the prefix and appends a loud `PI SESSION-START DELIVERY TRUNCATED` marker with direct-inspection guidance whenever the digest is incomplete.
 
+### Digest delivery is a pointer, not inline content
+
+Every Run-tier adapter except Pi delivers the digest through hook stdout, which never becomes a chat
+message the harness's own UI has to render. Pi has no such channel, so `fm-primary-turnend-guard.ts`
+has always had to synthesize a `pi.sendMessage` call to get the digest into model context at all.
+Through 2026-08-25 that call inlined the full digest text - regularly tens to hundreds of KiB -
+directly into the message's `content`. Traced in
+`data/launcher-auto-submit-trace-8426/report.md`: on Pi, that made an ordinary, fully-authorized
+session open look to the captain like an unauthorized paste-and-submit of a large block of text,
+because Pi is the one harness where this delivery mechanism is a real chat-shaped message rather than
+hook output the model reads without any UI-facing counterpart. The exact rendering path was not fully
+isolated even after reading the installed `@earendil-works/pi-coding-agent` source (`display: false`
+and the absence of a registered entry-renderer both appear to gate the known TUI rendering paths), but
+removing the inline payload removes the exposure regardless of which path was responsible.
+
+The fix: `injectSessionstart()` writes an unencoded digest to a single-slot private state file,
+`state/.session-start-digest.txt` (overwritten every session-start/compact, so it never accumulates and
+needs no separate cleanup), and sends only a short pointer instructing the agent to read that file in
+full before acting. An already-encoded short nudge (the resume/fork delegation case) is still sent
+inline as before - it was never the source of the oversized payload. `display: false` and the
+no-`triggerTurn`/no-`deliverAs` call shape are unchanged; only what travels through the message shrank.
+This preserves AGENTS.md section 3's full-digest-before-acting contract exactly - the agent still reads
+the complete content, just via a `Read` call instead of inline message text - and changes nothing about
+how Brandon opens a session explicitly.
+
 The OpenCode nudge runs only on `session.created`.
 The watcher-arm and turn-end plugins run later on `session.idle`, and the guard lets the watcher coordinator act first, so the plugins do not race for one lifecycle event.
 
@@ -93,7 +118,7 @@ That alternative expands trust and writes outside this repository, so Firstmate 
 
 `tests/fm-sessionstart-nudge.test.sh` proves the nudge wrapper's silence for both gate signals, an unmarked linked worktree, a missing state directory, and an already-owned lock, plus its exact U+2063 `FIRSTMATE_OP:`-prefixed, `session-start`-typed one-line output.
 It separately proves the run wrapper's silence for the gate environment and an unmarked linked worktree.
-It proves the run wrapper's source routing end to end against a real `fm-session-start.sh`, including completion-gated `--reemit` selection, resume delegation, Pi CLI continuation classification, an unrecognized source falling through to the full digest, and bounded loud delivery of an oversized Pi digest.
+It proves the run wrapper's source routing end to end against a real `fm-session-start.sh`, including completion-gated `--reemit` selection, resume delegation, Pi CLI continuation classification, an unrecognized source falling through to the full digest, that an oversized Pi digest is bounded and written to its private single-slot file rather than inlined, and that repeated session-start/compact opens overwrite that one slot instead of accumulating.
 `tests/fm-session-start.test.sh` proves the runtime bound through the forced pure-Bash fallback: a TERM-resistant digest that exceeds its budget is force-killed with its grandchild, still emits its completed stages, names the incomplete stage and every stage it never reached, leaves no completion proof, and exits 0.
 `tests/fm-pi-primary-live-e2e.test.sh` and `tests/fm-opencode-primary-live-e2e.test.sh` exercise native startup paths with first-message and later-message Ahoy regressions.
 `tests/fm-cursor-primary.test.sh` proves the Cursor adapter over real processes: `sessionStart` emits the whole digest as `additional_context` with a caller-supplied `--source`, stays silent in a child worktree, lets the run wrapper stand down on the Cursor-delivered duplicate, and keeps `preCompact` unregistered so the deferred surface cannot be reintroduced unnoticed.
