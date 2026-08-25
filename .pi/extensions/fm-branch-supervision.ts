@@ -339,10 +339,14 @@ export default function (pi: ExtensionAPI) {
   // append whose merge never ran at all (crash, generation replacement).
   // Before advancing past seq N, redeliver every such stale row in order so
   // the cursor is only ever advanced over rows this call actually delivered.
-  // Returns the highest seq redelivered this way (0 if none).
-  function deliverStaleUnreadBelow(currentSeq: number): number {
+  // ok is false whenever that cannot be proven - the enumeration itself
+  // failed, or a row could not be read - and the walk stops there, since the
+  // store is append-only and ordered by seq so nothing after an unreadable
+  // line can be trusted either. maxDelivered is the highest seq actually
+  // redelivered (0 if none).
+  function deliverStaleUnreadBelow(currentSeq: number): { ok: boolean; maxDelivered: number } {
     const unread = runOutcomeScript(["unread"]);
-    if (!unread.ok || !unread.stdout) return 0;
+    if (!unread.ok) return { ok: false, maxDelivered: 0 };
     let maxDelivered = 0;
     for (const line of unread.stdout.split("\n")) {
       if (!line.trim()) continue;
@@ -350,10 +354,11 @@ export default function (pi: ExtensionAPI) {
       try {
         row = JSON.parse(line);
       } catch {
-        continue;
+        return { ok: false, maxDelivered };
       }
       const rowSeq = typeof row.seq === "number" ? row.seq : NaN;
-      if (!Number.isInteger(rowSeq) || rowSeq >= currentSeq) continue;
+      if (!Number.isInteger(rowSeq)) return { ok: false, maxDelivered };
+      if (rowSeq >= currentSeq) continue;
       if (row.silent !== true) {
         deliverOutcomeMessage(
           typeof row.task === "string" ? row.task : "",
@@ -364,7 +369,7 @@ export default function (pi: ExtensionAPI) {
       }
       if (rowSeq > maxDelivered) maxDelivered = rowSeq;
     }
-    return maxDelivered;
+    return { ok: true, maxDelivered };
   }
 
   // Append-only merge into main. The store row is already durable when this
@@ -396,9 +401,10 @@ export default function (pi: ExtensionAPI) {
   ): { delivered: boolean; cursorAdvanced: boolean } {
     if (!actingAsOwner(expectedGeneration)) return { delivered: false, cursorAdvanced: false };
     const numericSeq = /^[0-9]+$/.test(seq) ? Number(seq) : NaN;
-    if (Number.isInteger(numericSeq)) deliverStaleUnreadBelow(numericSeq);
+    const stale = Number.isInteger(numericSeq) ? deliverStaleUnreadBelow(numericSeq) : { ok: true, maxDelivered: 0 };
     deliverOutcomeMessage(task, verdict, summary, silent);
     if (!Number.isInteger(numericSeq)) return { delivered: true, cursorAdvanced: true };
+    if (!stale.ok) return { delivered: true, cursorAdvanced: false };
     if (!actingAsOwner(expectedGeneration)) return { delivered: true, cursorAdvanced: false };
     const marked = runOutcomeScript(["mark-read", "--through", String(numericSeq)]).ok;
     return { delivered: true, cursorAdvanced: marked };

@@ -539,6 +539,79 @@ EOF
   pass "a delivered outcome whose read-cursor advance fails is reported as delivered, not refused"
 }
 
+# Redelivery that cannot be proven complete must not advance the cursor. If
+# the unread enumeration itself fails, an already-durable lower-seq row is
+# still undelivered, so marking it read would bury it forever. The merge is
+# still delivered (its own note reached main); only the cursor stays put so a
+# later cycle or the session-start replay can redeliver both rows.
+test_failed_unread_enumeration_does_not_advance_cursor() {
+  local repo home shim entry out status
+  repo="$TMP_ROOT/unread-fail-root"
+  home="$TMP_ROOT/unread-fail-home"
+  shim="$TMP_ROOT/unread-fail-shim"
+  mkdir -p "$home/state" "$home/config" "$shim/bin"
+  install_pi_branch_extension_fixture "$repo"
+  for entry in "$ROOT"/* "$ROOT"/.[!.]*; do
+    [ -e "$entry" ] || continue
+    case "$(basename "$entry")" in bin) continue ;; esac
+    ln -s "$entry" "$shim/$(basename "$entry")"
+  done
+  for entry in "$ROOT"/bin/*; do
+    case "$(basename "$entry")" in fm-branch-outcome.sh) continue ;; esac
+    ln -s "$entry" "$shim/bin/$(basename "$entry")"
+  done
+  cat > "$shim/bin/fm-branch-outcome.sh" <<SHIM
+#!/usr/bin/env bash
+if [ "\${1:-}" = unread ]; then
+  echo "simulated enumeration failure" >&2
+  exit 1
+fi
+exec bash "$ROOT/bin/fm-branch-outcome.sh" "\$@"
+SHIM
+  chmod +x "$shim/bin/fm-branch-outcome.sh"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" bash "$ROOT/bin/fm-branch-outcome.sh" \
+    append --task task-buried --verdict routine --summary "durable but never delivered" >/dev/null
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$shim" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, settle, sentToMain, home }; })()`);
+const { dispatch, settle, sentToMain, home } = globalThis.__t;
+import { existsSync, readFileSync } from "node:fs";
+
+const offer = dispatch("signal: enumeration-failure wake");
+if (!offer.accepted) throw new Error("wake was not accepted");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
+const session = globalThis.__fmSessions[0];
+const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+const result = await report.execute(
+  "call-1",
+  { task: "task-fresh", verdict: "routine", summary: "fresh outcome" },
+  undefined,
+  undefined,
+  {},
+);
+if (result.isError) throw new Error(`the fresh note was delivered and must not be an error: ${JSON.stringify(result)}`);
+const text = result.content[0].text;
+if (/refused/i.test(text)) throw new Error(`a delivered note was misreported as refused: ${text}`);
+if (sentToMain.length !== 1) throw new Error(`expected only the fresh note, got ${sentToMain.length}`);
+if (!sentToMain[0].message.content.includes("task-fresh: fresh outcome")) {
+  throw new Error(`fresh outcome was not delivered: ${sentToMain[0].message.content}`);
+}
+const cursorFile = `${home}/state/.branch-outcomes-cursor`;
+const cursor = existsSync(cursorFile) ? Number(readFileSync(cursorFile, "utf8").trim()) : 0;
+if (cursor !== 0) {
+  throw new Error(`the cursor advanced to ${cursor} over rows that were never proven delivered`);
+}
+const rows = readFileSync(`${home}/state/branch-outcomes.jsonl`, "utf8").trim().split("\n");
+if (rows.length !== 2) throw new Error(`expected both rows durable, got ${rows.length}`);
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "a failed unread enumeration must leave the cursor untouched: $out"
+  pass "a merge whose stale-row enumeration fails delivers its note but never advances the cursor"
+}
+
 test_branch_cache_key_is_per_home_stable() {
   local repo home_a home_b key_a1 key_a2 key_b
   repo="$TMP_ROOT/cache-key-root"
@@ -1233,6 +1306,7 @@ EOF
 test_branch_dispatch_two_stage_filter_and_prefix_contract
 test_stale_unread_outcome_is_redelivered_not_buried
 test_cursor_advance_failure_is_not_reported_as_refusal
+test_failed_unread_enumeration_does_not_advance_cursor
 test_branch_cache_key_is_per_home_stable
 test_branch_default_on_heartbeat_afk_and_fallback
 test_branch_predrain_recheck_defers_new_main_owned_row
