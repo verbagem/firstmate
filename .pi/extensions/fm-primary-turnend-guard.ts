@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -99,11 +99,32 @@ const sessionstartTruncatedMarker =
   "\n\nPI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB. " +
   "Treat omitted context as unread and inspect the named files directly before acting on it.";
 
-// Single-slot private digest file: session-start/compact overwrites it every
-// time, so it never accumulates and needs no separate cleanup. The slot is
-// qualified by pid so two Pi processes sharing one FM_HOME cannot overwrite
-// each other's not-yet-read digest.
-const sessionstartDigestFile = `${state}/.session-start-digest.${process.pid}.txt`;
+// Private digest slot, one per Pi process: session-start/compact overwrites
+// this process's own file every time, and the pid qualifier keeps two Pi
+// processes sharing one FM_HOME from clobbering each other's not-yet-read
+// digest. Slots belonging to processes that have exited are swept before every
+// write, so the directory stays bounded by the number of live Pi processes.
+const sessionstartDigestPrefix = ".session-start-digest.";
+const sessionstartDigestSuffix = ".txt";
+const sessionstartDigestFile =
+  `${state}/${sessionstartDigestPrefix}${process.pid}${sessionstartDigestSuffix}`;
+
+function sweepDeadSessionstartDigests(): void {
+  try {
+    for (const entry of readdirSync(state)) {
+      if (!entry.startsWith(sessionstartDigestPrefix)) continue;
+      if (!entry.endsWith(sessionstartDigestSuffix)) continue;
+      const pid = entry.slice(
+        sessionstartDigestPrefix.length,
+        entry.length - sessionstartDigestSuffix.length,
+      );
+      if (!/^[0-9]+$/.test(pid)) continue;
+      if (pid === String(process.pid) || pidAlive(pid)) continue;
+      unlinkSync(`${state}/${entry}`);
+    }
+  } catch {
+  }
+}
 
 function runSessionstartHook(source: string): Promise<string> {
   return new Promise((resolveResult) => {
@@ -148,13 +169,14 @@ async function injectSessionstart(pi: ExtensionAPI, source: string): Promise<voi
     // as-is. An unencoded digest is the full session-start payload - up to
     // hundreds of KiB - and must not be inlined into the message: see
     // docs/sessionstart-nudge.md "Digest delivery is a pointer, not inline
-    // content" for why. It is written to a private, single-slot state file
+    // content" for why. It is written to this process's private digest slot
     // instead, and only a short pointer travels through pi.sendMessage.
     let content: string;
     if (classifyFirstmateCurrentOperationalText(raw)) {
       content = raw;
     } else {
       let writeError: unknown;
+      sweepDeadSessionstartDigests();
       try {
         writeFileSync(sessionstartDigestFile, raw);
       } catch (error) {

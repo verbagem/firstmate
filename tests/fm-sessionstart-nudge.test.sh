@@ -478,13 +478,8 @@ JS
   pass "Pi delivers only a short pointer message, with the full bounded digest written to a private single-slot file"
 }
 
-test_pi_sessionstart_digest_file_is_a_single_overwritten_slot() {
-  local fixture out status=0 digest_file
-  command -v node >/dev/null 2>&1 || {
-    echo "skip: node not found for Pi digest single-slot test"
-    return 0
-  }
-  fixture="$TMP_ROOT/pi-digest-single-slot"
+make_pi_digest_fixture() {
+  local fixture="$1"
   mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/state"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
@@ -498,6 +493,16 @@ SH
 exit 0
 SH
   chmod +x "$fixture/bin/"*.sh
+}
+
+test_pi_sessionstart_digest_file_is_a_single_overwritten_slot() {
+  local fixture out status=0 digest_file
+  command -v node >/dev/null 2>&1 || {
+    echo "skip: node not found for Pi digest single-slot test"
+    return 0
+  }
+  fixture="$TMP_ROOT/pi-digest-single-slot"
+  make_pi_digest_fixture "$fixture"
 
   out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
     FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
@@ -535,7 +540,80 @@ JS
     "the second write (session_compact) did not overwrite the single slot"
   assert_not_contains "$(cat "$digest_file")" "--source startup" \
     "the digest file accumulated instead of staying a single overwritten slot"
-  pass "the private digest file is one slot overwritten on every session-start/compact, never accumulated"
+  pass "one Pi process reuses a single digest slot across session-start and compact"
+}
+
+test_pi_sessionstart_digest_slots_of_dead_processes_are_swept() {
+  local fixture out status=0 stale_file live_file remaining
+  command -v node >/dev/null 2>&1 || {
+    echo "skip: node not found for Pi digest sweep test"
+    return 0
+  }
+  fixture="$TMP_ROOT/pi-digest-sweep"
+  make_pi_digest_fixture "$fixture"
+
+  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    node --input-type=module 2>&1 <<'JS'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const messages = [];
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  sendMessage(message) { messages.push(message); },
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?sweep-first=${Date.now()}`);
+extension.default(pi);
+await handlers.get("session_start")(
+  { reason: "startup" },
+  { sessionManager: { getEntries: () => [] } },
+);
+const named = /digest written to (\S+) \(/.exec(messages[0].content);
+if (!named) throw new Error("the first process did not name a digest file");
+writeFileSync(`${process.env.FM_HOME}/state/first-pointer-path`, named[1]);
+JS
+  ) || status=$?
+  expect_code 0 "$status" "Pi first-process session-start digest write"
+  [ -z "$out" ] || fail "Pi first-process session-start digest write printed output: $out"
+
+  stale_file=$(cat "$fixture/state/first-pointer-path")
+  assert_present "$stale_file" "the first process did not write its digest slot"
+
+  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    node --input-type=module 2>&1 <<'JS'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const messages = [];
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  sendMessage(message) { messages.push(message); },
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?sweep-second=${Date.now()}`);
+extension.default(pi);
+await handlers.get("session_start")(
+  { reason: "startup" },
+  { sessionManager: { getEntries: () => [] } },
+);
+const named = /digest written to (\S+) \(/.exec(messages[0].content);
+if (!named) throw new Error("the second process did not name a digest file");
+writeFileSync(`${process.env.FM_HOME}/state/second-pointer-path`, named[1]);
+JS
+  ) || status=$?
+  expect_code 0 "$status" "Pi second-process session-start digest write"
+  [ -z "$out" ] || fail "Pi second-process session-start digest write printed output: $out"
+
+  live_file=$(cat "$fixture/state/second-pointer-path")
+  [ "$live_file" != "$stale_file" ] \
+    || fail "the two node processes reused one digest slot, so the sweep was never exercised"
+  assert_present "$live_file" "the second process did not write its own digest slot"
+  assert_absent "$stale_file" "the dead process's digest slot was left behind instead of swept"
+  remaining=$(find "$fixture/state" -name '.session-start-digest.*.txt' | wc -l | tr -d ' ')
+  [ "$remaining" = "1" ] \
+    || fail "expected exactly one live digest slot after the sweep, found $remaining"
+  pass "a later Pi process sweeps the digest slots of exited processes instead of accumulating them"
 }
 
 test_pi_unwritable_digest_still_delivers_an_operational_message() {
@@ -545,19 +623,7 @@ test_pi_unwritable_digest_still_delivers_an_operational_message() {
     return 0
   }
   fixture="$TMP_ROOT/pi-digest-unwritable"
-  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/state"
-  cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
-  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
-  cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/"
-  cat > "$fixture/bin/fm-sessionstart-run.sh" <<'SH'
-#!/usr/bin/env bash
-printf 'DIGEST GENERATION %s %s\n' "$1" "$2"
-SH
-  cat > "$fixture/bin/fm-turnend-guard.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fixture/bin/"*.sh
+  make_pi_digest_fixture "$fixture"
 
   out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
     FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
@@ -683,4 +749,5 @@ test_run_reports_a_failed_session_start_as_digest_text
 test_pi_startup_classifies_cli_continuations
 test_pi_large_sessionstart_digest_is_a_pointer_not_inline_content
 test_pi_sessionstart_digest_file_is_a_single_overwritten_slot
+test_pi_sessionstart_digest_slots_of_dead_processes_are_swept
 test_pi_unwritable_digest_still_delivers_an_operational_message
