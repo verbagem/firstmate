@@ -432,6 +432,113 @@ EOF
   pass "branch owns accepted wakes with a stable prefix contract and verdict-driven merge delivery"
 }
 
+# The read cursor is one monotonic integer, not a per-row acknowledgement, so
+# a naive "mark-read --through <this seq>" would silently bury a lower-seq
+# row that was durably appended but never delivered (e.g. a prior merge that
+# lost lock ownership after appending but before sending). Simulate that
+# stale row directly, then prove the next successful merge redelivers it
+# ahead of its own note instead of jumping the cursor past it.
+test_stale_unread_outcome_is_redelivered_not_buried() {
+  local repo home out status
+  repo="$TMP_ROOT/stale-unread-root"
+  home="$TMP_ROOT/stale-unread-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { dispatch, settle, outcomeScript, sentToMain }; })()`);
+const { dispatch, settle, outcomeScript, sentToMain } = globalThis.__t;
+
+// A row appended durably but never merged: no message was ever sent for it,
+// and the cursor never advanced past it.
+outcomeScript(["append", "--task", "task-stale", "--verdict", "routine", "--summary", "stale outcome never delivered"]);
+
+const offer = dispatch("signal: fresh wake");
+if (!offer.accepted) throw new Error("wake was not accepted");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
+const session = globalThis.__fmSessions[0];
+const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+const result = await report.execute(
+  "call-1",
+  { task: "task-fresh", verdict: "routine", summary: "fresh outcome" },
+  undefined,
+  undefined,
+  {},
+);
+if (result.isError) throw new Error(`fresh report failed: ${JSON.stringify(result)}`);
+
+if (sentToMain.length !== 2) {
+  throw new Error(
+    `expected the stale row redelivered ahead of the fresh one, got ${sentToMain.length} notes: ${JSON.stringify(sentToMain.map((m) => m.message.content))}`,
+  );
+}
+if (!sentToMain[0].message.content.includes("task-stale: stale outcome never delivered")) {
+  throw new Error(`stale outcome was not delivered first: ${sentToMain[0].message.content}`);
+}
+if (!sentToMain[1].message.content.includes("task-fresh: fresh outcome")) {
+  throw new Error(`fresh outcome was not delivered second: ${sentToMain[1].message.content}`);
+}
+if (outcomeScript(["unread"]) !== "") throw new Error("stale row was redelivered but not marked read");
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "an undelivered lower-sequence outcome must be redelivered, not buried: $out"
+  pass "an earlier undelivered outcome is redelivered ahead of a later merged outcome instead of buried"
+}
+
+# A merge that sends its note but then loses lock ownership before the
+# read-cursor advance must not tell the caller the merge was "refused" - the
+# note already reached main, so reporting refusal would invite a misleading
+# duplicate re-report of an outcome that already landed.
+test_cursor_advance_failure_is_not_reported_as_refusal() {
+  local repo home out status
+  repo="$TMP_ROOT/cursor-fail-root"
+  home="$TMP_ROOT/cursor-fail-home"
+  mkdir -p "$home/state" "$home/config"
+  install_pi_branch_extension_fixture "$repo"
+  PLUGIN="$repo/.pi/extensions/fm-branch-supervision.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    DRIVER_PRELUDE="$DRIVER_PRELUDE" node --input-type=module > "$TMP_ROOT/node-output" 2>&1 <<'EOF'
+const prelude = process.env.DRIVER_PRELUDE;
+await eval(`(async () => { ${prelude}; globalThis.__t = { pi, dispatch, settle, outcomeScript, sentToMain, home }; })()`);
+const { pi, dispatch, settle, outcomeScript, sentToMain, home } = globalThis.__t;
+import { unlinkSync } from "node:fs";
+
+const offer = dispatch("signal: lock-loss wake");
+if (!offer.accepted) throw new Error("wake was not accepted");
+await settle(() => (globalThis.__fmPrompts ?? []).length === 1, "branch wake prompt");
+const session = globalThis.__fmSessions[0];
+const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
+
+// The message sends successfully, then ownership is lost before the
+// follow-up mark-read call runs.
+const originalSendMessage = pi.sendMessage.bind(pi);
+pi.sendMessage = (message, options) => {
+  originalSendMessage(message, options);
+  unlinkSync(`${home}/state/.lock`);
+};
+
+const result = await report.execute(
+  "call-1",
+  { task: "task-x", verdict: "routine", summary: "delivered but cursor lost" },
+  undefined,
+  undefined,
+  {},
+);
+if (result.isError) throw new Error(`a delivered note must not be reported as an error: ${JSON.stringify(result)}`);
+if (sentToMain.length !== 1) throw new Error(`expected exactly one delivered note, got ${sentToMain.length}`);
+const text = result.content[0].text;
+if (/refused/i.test(text)) throw new Error(`delivered note was misreported as refused: ${text}`);
+if (outcomeScript(["unread"]) === "") throw new Error("the row should remain unread since the cursor genuinely did not advance");
+process.exit(0);
+EOF
+  status=$?
+  out=$(cat "$TMP_ROOT/node-output")
+  expect_code 0 "$status" "a delivered note with a failed cursor advance must not be reported as refused: $out"
+  pass "a delivered outcome whose read-cursor advance fails is reported as delivered, not refused"
+}
+
 test_branch_cache_key_is_per_home_stable() {
   local repo home_a home_b key_a1 key_a2 key_b
   repo="$TMP_ROOT/cache-key-root"
@@ -1124,6 +1231,8 @@ EOF
 }
 
 test_branch_dispatch_two_stage_filter_and_prefix_contract
+test_stale_unread_outcome_is_redelivered_not_buried
+test_cursor_advance_failure_is_not_reported_as_refusal
 test_branch_cache_key_is_per_home_stable
 test_branch_default_on_heartbeat_afk_and_fallback
 test_branch_predrain_recheck_defers_new_main_owned_row

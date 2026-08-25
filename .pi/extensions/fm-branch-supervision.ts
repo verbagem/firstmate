@@ -316,6 +316,57 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  // Pure delivery: send one outcome's note to main. No store interaction, so
+  // it is safe to call more than once for the same row (at-least-once).
+  function deliverOutcomeMessage(task: string, verdict: Verdict, summary: string, silent: boolean): void {
+    if (verdict === "captain") {
+      const message = { customType: "fm-branch-merge", content: `${task}: ${summary}`, display: false };
+      pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
+    } else {
+      const message = { customType: "fm-branch-merge", content: `${MERGE_NOTE_BOAT} ${task}: ${summary}`, display: !(task === "fleet" && silent) };
+      if (mainStreaming) {
+        pi.sendMessage(message, { deliverAs: "nextTurn" });
+      } else {
+        pi.sendMessage(message, {});
+      }
+    }
+  }
+
+  // The read cursor is one monotonic integer, not a per-row acknowledgement,
+  // so a bare "mark-read --through N" would silently bury any row below N
+  // that is still unread - e.g. a prior mergeIntoMain call whose own
+  // mark-read lost ownership after its message already sent, or an earlier
+  // append whose merge never ran at all (crash, generation replacement).
+  // Before advancing past seq N, redeliver every such stale row in order so
+  // the cursor is only ever advanced over rows this call actually delivered.
+  // Returns the highest seq redelivered this way (0 if none).
+  function deliverStaleUnreadBelow(currentSeq: number): number {
+    const unread = runOutcomeScript(["unread"]);
+    if (!unread.ok || !unread.stdout) return 0;
+    let maxDelivered = 0;
+    for (const line of unread.stdout.split("\n")) {
+      if (!line.trim()) continue;
+      let row: { seq?: unknown; task?: unknown; verdict?: unknown; summary?: unknown; silent?: unknown };
+      try {
+        row = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const rowSeq = typeof row.seq === "number" ? row.seq : NaN;
+      if (!Number.isInteger(rowSeq) || rowSeq >= currentSeq) continue;
+      if (row.silent !== true) {
+        deliverOutcomeMessage(
+          typeof row.task === "string" ? row.task : "",
+          row.verdict === "captain" ? "captain" : "routine",
+          typeof row.summary === "string" ? row.summary : "",
+          row.silent === true,
+        );
+      }
+      if (rowSeq > maxDelivered) maxDelivered = rowSeq;
+    }
+    return maxDelivered;
+  }
+
   // Append-only merge into main. The store row is already durable when this
   // runs; the note is a cache of it at main's tail. Delivery modes per the
   // design: routine+idle appends now with no turn, routine+busy appends after
@@ -328,6 +379,13 @@ export default function (pi: ExtensionAPI) {
   // Pi; a crash inside Pi's
   // own delivery window leaves the outcome durable in the store, where
   // main's fm_branch_outcomes tool still reads it on demand.
+  //
+  // Returns delivered/cursorAdvanced separately so a caller never conflates
+  // "this outcome was never sent to main" with "it was sent, but the
+  // bookkeeping cursor failed to advance afterward" - the latter is not a
+  // merge refusal (the note already reached main) and must not be reported
+  // as one, or a caller could be misled into believing nothing happened and
+  // re-report a duplicate.
   function mergeIntoMain(
     expectedGeneration: number,
     seq: string,
@@ -335,24 +393,15 @@ export default function (pi: ExtensionAPI) {
     verdict: Verdict,
     summary: string,
     silent: boolean,
-  ): boolean {
-    if (!actingAsOwner(expectedGeneration)) return false;
-    if (verdict === "captain") {
-      const message = { customType: "fm-branch-merge", content: `${task}: ${summary}`, display: false };
-      pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
-    } else {
-      const message = { customType: "fm-branch-merge", content: `${MERGE_NOTE_BOAT} ${task}: ${summary}`, display: !(task === "fleet" && silent) };
-      if (mainStreaming) {
-        pi.sendMessage(message, { deliverAs: "nextTurn" });
-      } else {
-        pi.sendMessage(message, {});
-      }
-    }
-    if (/^[0-9]+$/.test(seq)) {
-      if (!actingAsOwner(expectedGeneration)) return false;
-      return runOutcomeScript(["mark-read", "--through", seq]).ok;
-    }
-    return true;
+  ): { delivered: boolean; cursorAdvanced: boolean } {
+    if (!actingAsOwner(expectedGeneration)) return { delivered: false, cursorAdvanced: false };
+    const numericSeq = /^[0-9]+$/.test(seq) ? Number(seq) : NaN;
+    if (Number.isInteger(numericSeq)) deliverStaleUnreadBelow(numericSeq);
+    deliverOutcomeMessage(task, verdict, summary, silent);
+    if (!Number.isInteger(numericSeq)) return { delivered: true, cursorAdvanced: true };
+    if (!actingAsOwner(expectedGeneration)) return { delivered: true, cursorAdvanced: false };
+    const marked = runOutcomeScript(["mark-read", "--through", String(numericSeq)]).ok;
+    return { delivered: true, cursorAdvanced: marked };
   }
 
   function createReportTool(toolGeneration: number): ToolDefinition {
@@ -406,11 +455,23 @@ export default function (pi: ExtensionAPI) {
             isError: true,
           };
         }
-        if (!mergeIntoMain(toolGeneration, appended.stdout, task, verdict, summary, silent)) {
+        const merged = mergeIntoMain(toolGeneration, appended.stdout, task, verdict, summary, silent);
+        if (!merged.delivered) {
           return {
             content: [{ type: "text", text: `recorded seq ${appended.stdout}, but merge refused after supervision replacement or lock loss` }],
             details: undefined,
             isError: true,
+          };
+        }
+        if (!merged.cursorAdvanced) {
+          // The note already reached main; only the read-cursor bookkeeping
+          // failed. Report success - the row stays unread and a later merge
+          // or the next session-start replay will redeliver it - never tell
+          // the caller the merge was refused, or it may re-report a
+          // duplicate of an outcome that already landed.
+          return {
+            content: [{ type: "text", text: `recorded seq ${appended.stdout} and merged [${verdict}] into main (read cursor did not advance; it will resurface)` }],
+            details: undefined,
           };
         }
         return {

@@ -91,7 +91,12 @@ JOBS_MAX=8
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=4
+# Raised 4 -> 8 when the remainder's measured weight roughly doubled (multi-brain
+# Pi supervision branch: tests/fm-watch-recovery-loop.test.sh alone measures
+# 80s, plus three new extension/lease suites) without a matching shard-count
+# increase, which had quietly compressed the CI job timeout's intended ~3x
+# hang-tripwire margin to under 2x (docs/fm-test-portable-shards.md "Timeouts").
+PORTABLE_SERIAL_SHARDS=8
 
 # Balance hint for a portable-serial script with no measured duration, close to
 # the measured per-script mean so a newly added test neither starves nor
