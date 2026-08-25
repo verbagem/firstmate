@@ -1,0 +1,56 @@
+Pi session-start delivery: before vs after (what the captain's Pi session actually receives)
+==========================================================================================
+
+Harness: the real .pi/extensions/fm-primary-turnend-guard.ts extension is loaded with a stub
+Pi API; session_start({reason:'startup'}) is fired and the resulting pi.sendMessage() payload
+is captured verbatim. The digest is produced by the REAL bin/fm-sessionstart-run.sh against a
+throwaway FM_HOME. /Users/temp/.local/bin/firstmate was never executed.
+
+--- BASE 6f2c94a (before the fix): full digest inlined into the chat-shaped message ---
+messages=1 display=false customType=firstmate-sessionstart-nudge contentBytes=8665
+first 400 chars of message content:
+⁣FIRSTMATE_OP: v1 session-start: ================================================================================
+SESSION START - /tmp/basecheck/home-base
+================================================================================
+
+LOCK
+--------------------------------------------------------------------------------
+lock acquired: harness pid 8490
+
+BOOTSTRAP
+---------------------------------- ...[truncated for this artifact]
+
+--- TARGET ad9e8a6 (after the fix): a short pointer, shown in full ---
+messages=1 display=false customType=firstmate-sessionstart-nudge contentBytes=215
+full message content:
+⁣FIRSTMATE_OP: v1 session-start: Session-start digest written to /tmp/basecheck/home-target/state/.session-start-digest.10800.txt (8650 bytes). Read that file now, in full, before executing any other instructions.
+
+--- context is preserved, not dropped: the private digest slot ---
+.rw-r--r--@ 8.7k temp 25 Aug 07:13 /tmp/basecheck/home-target/state/.session-start-digest.10800.txt
+first 3 lines of that file:
+================================================================================
+SESSION START - /tmp/basecheck/home-target
+================================================================================
+last 2 lines of that file:
+The digest above is complete for this session start. The READ-ONCE CONTRACT
+section near the top of it governs what may still be read from disk.
+--- explicit/context-preserving opens (resume) are byte-identical before and after ---
+base   : 124 bytes, inline nudge, no digest file written
+target : 124 bytes, inline nudge, no digest file written
+  content: FIRSTMATE_OP: v1 session-start: Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.
+
+--- regression pin fails at base ---
+Running the NEW tests/fm-sessionstart-nudge.test.sh against the BASE extension:
+  not ok - Pi large session-start delivery: expected exit 0, got 1
+  Error: message content is not a short pointer: 524479 bytes
+Against the TARGET extension all 24 cases pass.
+
+--- notes on this artifact ---
+* The BASE/TARGET message blocks and the digest-slot listing above are piped verbatim from the
+  capture runs. The "resume" block and the "regression pin" block are transcribed from the runs
+  (values observed: resume = 124 bytes and identical content under both extensions; base test
+  failure = "Error: message content is not a short pointer: 524479 bytes").
+* The fixture FM_HOME is minimal, so 8.6 KiB is a FLOOR for the inlined payload, not a typical
+  size. The base-commit regression run shows the capped case: 524,479 bytes of message content,
+  i.e. the extension's full 512 KiB delivery bound arriving as one chat-shaped message.
+* state/ is gitignored, so the new per-pid digest slot never dirties the checkout.
