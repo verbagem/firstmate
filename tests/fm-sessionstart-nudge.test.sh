@@ -404,8 +404,8 @@ JS
   pass "Pi distinguishes header-proven restored CLI sessions from named create-if-missing startups"
 }
 
-test_pi_large_sessionstart_digest_is_delivered_loudly() {
-  local fixture out status=0
+test_pi_large_sessionstart_digest_is_a_pointer_not_inline_content() {
+  local fixture out status=0 digest_file digest_content
   command -v node >/dev/null 2>&1 || {
     echo "skip: node not found for Pi large session-start delivery test"
     return 0
@@ -436,6 +436,7 @@ SH
   out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
     FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" FM_GATE_REFUSE_BYPASS=1 \
     node --input-type=module 2>&1 <<'JS'
+import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 const handlers = new Map();
 const messages = [];
@@ -450,16 +451,209 @@ await handlers.get("session_start")(
   { sessionManager: { getEntries: () => [] } },
 );
 if (messages.length !== 1) throw new Error(`expected one message, got ${messages.length}`);
-const content = messages[0].content;
-if (!content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("digest prefix was lost");
-if (!content.includes("PI SESSION-START DELIVERY TRUNCATED")) throw new Error("truncation marker was lost");
-if (content.includes("PI_LARGE_DIGEST_SUFFIX")) throw new Error("delivery exceeded its declared bound");
+const message = messages[0];
+if (message.display !== false) throw new Error("session-start message must stay non-displayed");
+const content = message.content;
+if (content.length > 1024) throw new Error(`message content is not a short pointer: ${content.length} bytes`);
+if (content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("the full digest was inlined into the message");
 if (!content.includes("FIRSTMATE_OP: v1 session-start:")) throw new Error("operational provenance was lost");
+if (!content.includes("PI SESSION-START DELIVERY TRUNCATED")) throw new Error("the pointer did not name the truncation");
+const named = /digest written to (\S+) \(/.exec(content);
+if (!named) throw new Error("the pointer did not name the digest file");
+if (named[1] !== `${process.env.FM_HOME}/state/.session-start-digest.${process.pid}.txt`) {
+  throw new Error(`the pointer named an unexpected digest file: ${named[1]}`);
+}
+writeFileSync(`${process.env.FM_HOME}/state/pointer-path`, named[1]);
 JS
   ) || status=$?
   expect_code 0 "$status" "Pi large session-start delivery"
   [ -z "$out" ] || fail "Pi large session-start delivery printed output: $out"
-  pass "Pi retains a bounded digest prefix and loudly marks oversized delivery"
+
+  digest_file=$(cat "$fixture/state/pointer-path")
+  assert_present "$digest_file" "the full digest was not written to the private state file"
+  digest_content=$(cat "$digest_file")
+  assert_contains "$digest_content" "PI_LARGE_DIGEST_PREFIX" "the state file lost the digest prefix"
+  assert_not_contains "$digest_content" "PI_LARGE_DIGEST_SUFFIX" "the state file exceeded its declared 512 KiB bound"
+  assert_contains "$digest_content" "PI SESSION-START DELIVERY TRUNCATED" "the state file lost the truncation marker"
+  pass "Pi delivers only a short pointer message, with the full bounded digest written to a private single-slot file"
+}
+
+make_pi_digest_fixture() {
+  local fixture="$1"
+  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/state"
+  cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
+  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/"
+  cat > "$fixture/bin/fm-sessionstart-run.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'DIGEST GENERATION %s %s\n' "$1" "$2"
+SH
+  cat > "$fixture/bin/fm-turnend-guard.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$fixture/bin/"*.sh
+}
+
+test_pi_sessionstart_digest_file_is_a_single_overwritten_slot() {
+  local fixture out status=0 digest_file
+  command -v node >/dev/null 2>&1 || {
+    echo "skip: node not found for Pi digest single-slot test"
+    return 0
+  }
+  fixture="$TMP_ROOT/pi-digest-single-slot"
+  make_pi_digest_fixture "$fixture"
+
+  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    node --input-type=module 2>&1 <<'JS'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const messages = [];
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  sendMessage(message) { messages.push(message); },
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?slot=${Date.now()}`);
+extension.default(pi);
+await handlers.get("session_start")(
+  { reason: "startup" },
+  { sessionManager: { getEntries: () => [] } },
+);
+await handlers.get("session_compact")();
+if (messages.length !== 2) throw new Error(`expected two messages, got ${messages.length}`);
+const paths = messages.map((message) => /digest written to (\S+) \(/.exec(message.content)?.[1]);
+if (paths[0] !== paths[1]) throw new Error(`the two pointers named different files: ${paths.join(" ")}`);
+if (paths[0] !== `${process.env.FM_HOME}/state/.session-start-digest.${process.pid}.txt`) {
+  throw new Error(`the pointer named an unexpected digest file: ${paths[0]}`);
+}
+writeFileSync(`${process.env.FM_HOME}/state/pointer-path`, paths[0]);
+JS
+  ) || status=$?
+  expect_code 0 "$status" "Pi repeated session-start digest writes"
+  [ -z "$out" ] || fail "Pi repeated session-start digest writes printed output: $out"
+
+  digest_file=$(cat "$fixture/state/pointer-path")
+  assert_present "$digest_file" "the digest file was not written"
+  assert_contains "$(cat "$digest_file")" "--source compact" \
+    "the second write (session_compact) did not overwrite the single slot"
+  assert_not_contains "$(cat "$digest_file")" "--source startup" \
+    "the digest file accumulated instead of staying a single overwritten slot"
+  pass "one Pi process reuses a single digest slot across session-start and compact"
+}
+
+test_pi_sessionstart_digest_slots_of_dead_processes_are_swept() {
+  local fixture out status=0 stale_file live_file remaining
+  command -v node >/dev/null 2>&1 || {
+    echo "skip: node not found for Pi digest sweep test"
+    return 0
+  }
+  fixture="$TMP_ROOT/pi-digest-sweep"
+  make_pi_digest_fixture "$fixture"
+
+  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    node --input-type=module 2>&1 <<'JS'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const messages = [];
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  sendMessage(message) { messages.push(message); },
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?sweep-first=${Date.now()}`);
+extension.default(pi);
+await handlers.get("session_start")(
+  { reason: "startup" },
+  { sessionManager: { getEntries: () => [] } },
+);
+const named = /digest written to (\S+) \(/.exec(messages[0].content);
+if (!named) throw new Error("the first process did not name a digest file");
+writeFileSync(`${process.env.FM_HOME}/state/first-pointer-path`, named[1]);
+JS
+  ) || status=$?
+  expect_code 0 "$status" "Pi first-process session-start digest write"
+  [ -z "$out" ] || fail "Pi first-process session-start digest write printed output: $out"
+
+  stale_file=$(cat "$fixture/state/first-pointer-path")
+  assert_present "$stale_file" "the first process did not write its digest slot"
+
+  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    node --input-type=module 2>&1 <<'JS'
+import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const messages = [];
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  sendMessage(message) { messages.push(message); },
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?sweep-second=${Date.now()}`);
+extension.default(pi);
+await handlers.get("session_start")(
+  { reason: "startup" },
+  { sessionManager: { getEntries: () => [] } },
+);
+const named = /digest written to (\S+) \(/.exec(messages[0].content);
+if (!named) throw new Error("the second process did not name a digest file");
+writeFileSync(`${process.env.FM_HOME}/state/second-pointer-path`, named[1]);
+JS
+  ) || status=$?
+  expect_code 0 "$status" "Pi second-process session-start digest write"
+  [ -z "$out" ] || fail "Pi second-process session-start digest write printed output: $out"
+
+  live_file=$(cat "$fixture/state/second-pointer-path")
+  [ "$live_file" != "$stale_file" ] \
+    || fail "the two node processes reused one digest slot, so the sweep was never exercised"
+  assert_present "$live_file" "the second process did not write its own digest slot"
+  assert_absent "$stale_file" "the dead process's digest slot was left behind instead of swept"
+  remaining=$(find "$fixture/state" -name '.session-start-digest.*.txt' | wc -l | tr -d ' ')
+  [ "$remaining" = "1" ] \
+    || fail "expected exactly one live digest slot after the sweep, found $remaining"
+  pass "a later Pi process sweeps the digest slots of exited processes instead of accumulating them"
+}
+
+test_pi_unwritable_digest_still_delivers_an_operational_message() {
+  local fixture out status=0
+  command -v node >/dev/null 2>&1 || {
+    echo "skip: node not found for Pi unwritable digest test"
+    return 0
+  }
+  fixture="$TMP_ROOT/pi-digest-unwritable"
+  make_pi_digest_fixture "$fixture"
+
+  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
+    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
+    FM_STATE_OVERRIDE="$fixture/absent-state" \
+    node --input-type=module 2>&1 <<'JS'
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+const messages = [];
+const pi = {
+  on(event, handler) { handlers.set(event, handler); },
+  sendMessage(message) { messages.push(message); },
+};
+const extension = await import(`${pathToFileURL(process.env.EXT).href}?unwritable=${Date.now()}`);
+extension.default(pi);
+await handlers.get("session_start")(
+  { reason: "startup" },
+  { sessionManager: { getEntries: () => [] } },
+);
+if (messages.length !== 1) throw new Error(`expected one message, got ${messages.length}`);
+const content = messages[0].content;
+if (!content.includes("FIRSTMATE_OP: v1 session-start:")) throw new Error("operational provenance was lost");
+if (!content.includes("could not be written")) throw new Error("the message did not report the failed write");
+if (!content.includes("ENOENT")) throw new Error("the message did not name the underlying error");
+if (!content.includes("bin/fm-session-start.sh")) throw new Error("the message did not name the fallback command");
+if (content.includes("DIGEST GENERATION")) throw new Error("the digest was inlined as a fallback");
+JS
+  ) || status=$?
+  expect_code 0 "$status" "Pi unwritable session-start digest delivery"
+  [ -z "$out" ] || fail "Pi unwritable session-start digest delivery printed output: $out"
+  pass "an unwritable digest file still delivers an operational message naming the error and the fallback"
 }
 
 test_run_resume_delegates_to_the_nudge() {
@@ -553,4 +747,7 @@ test_run_unknown_source_takes_the_helm
 test_run_gate_and_scope_are_silent
 test_run_reports_a_failed_session_start_as_digest_text
 test_pi_startup_classifies_cli_continuations
-test_pi_large_sessionstart_digest_is_delivered_loudly
+test_pi_large_sessionstart_digest_is_a_pointer_not_inline_content
+test_pi_sessionstart_digest_file_is_a_single_overwritten_slot
+test_pi_sessionstart_digest_slots_of_dead_processes_are_swept
+test_pi_unwritable_digest_still_delivers_an_operational_message

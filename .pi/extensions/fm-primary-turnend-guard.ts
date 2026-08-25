@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -99,6 +99,33 @@ const sessionstartTruncatedMarker =
   "\n\nPI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB. " +
   "Treat omitted context as unread and inspect the named files directly before acting on it.";
 
+// Private digest slot, one per Pi process: session-start/compact overwrites
+// this process's own file every time, and the pid qualifier keeps two Pi
+// processes sharing one FM_HOME from clobbering each other's not-yet-read
+// digest. Slots belonging to processes that have exited are swept before every
+// write, so the directory stays bounded by the number of live Pi processes.
+const sessionstartDigestPrefix = ".session-start-digest.";
+const sessionstartDigestSuffix = ".txt";
+const sessionstartDigestFile =
+  `${state}/${sessionstartDigestPrefix}${process.pid}${sessionstartDigestSuffix}`;
+
+function sweepDeadSessionstartDigests(): void {
+  try {
+    for (const entry of readdirSync(state)) {
+      if (!entry.startsWith(sessionstartDigestPrefix)) continue;
+      if (!entry.endsWith(sessionstartDigestSuffix)) continue;
+      const pid = entry.slice(
+        sessionstartDigestPrefix.length,
+        entry.length - sessionstartDigestSuffix.length,
+      );
+      if (!/^[0-9]+$/.test(pid)) continue;
+      if (pid === String(process.pid) || pidAlive(pid)) continue;
+      unlinkSync(`${state}/${entry}`);
+    }
+  } catch {
+  }
+}
+
 function runSessionstartHook(source: string): Promise<string> {
   return new Promise((resolveResult) => {
     const child = spawn(`${root}/bin/fm-sessionstart-run.sh`, ["--source", source], {
@@ -137,11 +164,41 @@ async function injectSessionstart(pi: ExtensionAPI, source: string): Promise<voi
     // Pi is the only adapter that injects a MESSAGE rather than hook stdout, so
     // whatever it injects must carry operational provenance or the Ahoy skill
     // would have to guess whether it was captain-authored. The wrapper already
-    // returns an encoded nudge on a context-preserving open, so only an
-    // unencoded digest needs the marker added here.
-    const content = classifyFirstmateCurrentOperationalText(raw)
-      ? raw
-      : encodeFirstmateOperationalInput("session-start", raw);
+    // returns an encoded nudge on a context-preserving open (a short line, e.g.
+    // "run bin/fm-session-start.sh now"), which is small enough to inject
+    // as-is. An unencoded digest is the full session-start payload - up to
+    // hundreds of KiB - and must not be inlined into the message: see
+    // docs/sessionstart-nudge.md "Digest delivery is a pointer, not inline
+    // content" for why. It is written to this process's private digest slot
+    // instead, and only a short pointer travels through pi.sendMessage.
+    let content: string;
+    if (classifyFirstmateCurrentOperationalText(raw)) {
+      content = raw;
+    } else {
+      let writeError: unknown;
+      sweepDeadSessionstartDigests();
+      try {
+        writeFileSync(sessionstartDigestFile, raw);
+      } catch (error) {
+        writeError = error ?? new Error("unknown error");
+      }
+      const truncationNotice = raw.endsWith(sessionstartTruncatedMarker)
+        ? " PI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB, so treat omitted " +
+          "context as unread and inspect the named files directly."
+        : "";
+      content = encodeFirstmateOperationalInput(
+        "session-start",
+        writeError === undefined
+          ? `Session-start digest written to ${sessionstartDigestFile} ` +
+            `(${Buffer.byteLength(raw, "utf8")} bytes). ` +
+            "Read that file now, in full, before executing any other instructions." +
+            truncationNotice
+          : `Session-start digest could not be written to ${sessionstartDigestFile} ` +
+            `(${writeError instanceof Error ? writeError.message : String(writeError)}). ` +
+            "Run bin/fm-session-start.sh now and read its full output before executing any " +
+            "other instructions." + truncationNotice,
+      );
+    }
     pi.sendMessage({
       customType: "firstmate-sessionstart-nudge",
       content,
