@@ -1,0 +1,55 @@
+### What the main (captain) session actually receives from the supervision branch
+#
+# Routine outcomes render as a dim note prefixed with the sailboat glyph.
+# Captain-verdict outcomes are delivered as a turn-triggering follow-up with
+# display:false (no glyph) - that is the behavior 3497541 established inside
+# the recovered range, not something the fix commits changed. Verified by
+# archaeology: MERGE_NOTE_ANCHOR is present at ce8c2ad and ff1ff49 and gone from
+# 3497541 onward, so the single-glyph outcome predates b5d1675 and 31fb75f.
+# Reviewers reading ce8c2ad's title ("distinguish ... by icon") should expect
+# one glyph plus a turn-triggering follow-up, not two glyphs.
+
+
+==================================================================
+BEFORE the fix (extension at 24aa62f) - routine outcome
+==================================================================
+durable store before the next merge:
+  {"seq":1,"epoch":1787693290,"task":"task-stale","wake":"","verdict":"routine","summary":"rebased onto main, checks green","silent":false}
+unread rows: 1
+
+notes actually delivered into the main session: 1
+  [1] ⛵ task-fresh: opened PR #12, checks green
+
+fm_branch_report told the branch agent:
+  isError=false  "recorded seq 2 and merged [routine] into main"
+still-unread rows after the merge: 0
+
+==================================================================
+AFTER the fix (HEAD 31fb75f) - routine outcome
+==================================================================
+durable store before the next merge:
+  {"seq":1,"epoch":1787693291,"task":"task-stale","wake":"","verdict":"routine","summary":"rebased onto main, checks green","silent":false}
+unread rows: 1
+
+notes actually delivered into the main session: 2
+  [1] ⛵ task-stale: rebased onto main, checks green
+  [2] ⛵ task-fresh: opened PR #12, checks green
+
+fm_branch_report told the branch agent:
+  isError=false  "recorded seq 2 and merged [routine] into main"
+still-unread rows after the merge: 0
+
+==================================================================
+AFTER the fix (HEAD) - captain-verdict outcome
+==================================================================
+durable store before the next merge:
+  {"seq":1,"epoch":1787693292,"task":"task-stale","wake":"","verdict":"routine","summary":"rebased onto main, checks green","silent":false}
+unread rows: 1
+
+notes actually delivered into the main session: 2
+  [1] ⛵ task-stale: rebased onto main, checks green
+  [2] task-fresh: needs your call: force-push to a shared branch
+
+fm_branch_report told the branch agent:
+  isError=false  "recorded seq 2 and merged [captain] into main"
+still-unread rows after the merge: 0

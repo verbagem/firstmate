@@ -1,0 +1,51 @@
+### Conflict resolution kept BOTH sides: nothing that existed on current main was dropped
+(comparing the base commit fbcd994 = current verbagem/main, against HEAD 31fb75f)
+
+tests/fm-pi-watch-extension.test.sh - test function names
+  base(fbcd994)=32  head=38  lost=0
+.pi/extensions/fm-primary-pi-watch.ts - top-level functions
+  base(fbcd994)=13  head=13  lost=0
+docs/watcher-continuity.md - section headings
+  base(fbcd994)=7  head=7  lost=0
+
+-- lines removed from the three conflicted files across the whole range --
+90	7	.pi/extensions/fm-primary-pi-watch.ts
+8	1	docs/watcher-continuity.md
+536	27	tests/fm-pi-watch-extension.test.sh
+
+-- what those removals actually are --
+  -          const restoration = await restoreAfterActionableClose(owner, predecessor);
+  -          if (generationIsLive(owner)) owner.restoring = false;
+  -          if (!generationIsLive(owner)) return;
+  -          const message = restoration.failure ? `${classification.message}\n\n${restoration.failure}` : classification.message;
+  -          await sendWake(owner, message, restoration.recovery);
+  -        })().catch(() => {
+  -        });
+  -Every watcher close and every durable queue append publishes downtime, so a downtime republication of any pending episode reuses its generation instead of minting a new one.
+  -      ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").length
+  -if (rows.length !== 2) throw new Error(`expected one successor arm, got ${rows.length}: ${rows.join(" | ")}`);
+  -if (!/predecessor=[0-9]+/.test(rows[1])) throw new Error(`successor did not receive predecessor identity: ${rows[1]}`);
+  -if (stableRows.length !== 2) throw new Error(`delivery was confirmed before the prompt succeeded: ${stableRows.join(" | ")}`);
+  -releaseDelivery();
+  -for (let i = 0; i < 100; i += 1) {
+  -  if (readFileSync(process.env.FM_ARM_LOG, "utf8").includes("confirmed generation=fixture-generation")) break;
+  -  await new Promise((resolve) => setTimeout(resolve, 10));
+  -const confirmedRows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
+  -if (confirmedRows.filter((row) => row.startsWith("confirmed ")).length !== 1) {
+  -  throw new Error(`successful prompt delivery was not confirmed exactly once: ${confirmedRows.join(" | ")}`);
+  -    return child && child !== previousChild && pidAlive(child);
+  -  }, `${reason} replacement child`);
+  -  return child !== sameInstanceChild && pidAlive(child);
+  -}, "same-instance replacement child");
+  -  expect_code 0 "$status" "Pi session transitions must rearm through an explicit generation owner"
+  -        ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").length
+  -if (rows.length !== 2) throw new Error(`expected one successor arm, got ${rows.length}: ${rows.join(" | ")}`);
+  -if (!/predecessor=[0-9]+/.test(rows[1])) throw new Error(`successor did not receive predecessor identity: ${rows[1]}`);
+  -if (stableRows.length !== 2) throw new Error(`delivery was confirmed before the prompt succeeded: ${stableRows.join(" | ")}`);
+  -releasePrompt();
+  -for (let i = 0; i < 100; i += 1) {
+  -  if (readFileSync(process.env.FM_ARM_LOG, "utf8").includes("confirmed generation=fixture-generation")) break;
+  -  await new Promise((resolve) => setTimeout(resolve, 10));
+  -const confirmedRows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
+  -if (confirmedRows.filter((row) => row.startsWith("confirmed ")).length !== 1) {
+  -  throw new Error(`successful prompt delivery was not confirmed exactly once: ${confirmedRows.join(" | ")}`);

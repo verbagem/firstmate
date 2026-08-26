@@ -1,0 +1,20 @@
+GitHub Actions job timeout for the portable-serial lane: 900s (900000 ms)
+Weights are the runner's own measured per-script balance hints (bin/fm-test-run.sh).
+
+== BEFORE: PORTABLE_SERIAL_SHARDS=4 (the config PR #9's CI ran) ==
+shard     scripts    weight_ms   weight_s      margin
+1/4            28       546952      547.0       1.65x
+2/4            32       546943      546.9       1.65x
+3/4            30       546950      547.0       1.65x
+4/4            30       546936      546.9       1.65x
+
+== AFTER: PORTABLE_SERIAL_SHARDS=8 (this change) ==
+shard     scripts    weight_ms   weight_s      margin
+1/8             7       273925      273.9       3.29x
+2/8            13       273422      273.4       3.29x
+3/8            17       273405      273.4       3.29x
+4/8            17       273413      273.4       3.29x
+5/8            14       273396      273.4       3.29x
+6/8            16       273406      273.4       3.29x
+7/8            19       273413      273.4       3.29x
+8/8            17       273401      273.4       3.29x

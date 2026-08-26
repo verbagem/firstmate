@@ -1,0 +1,8 @@
+### Isolated: the misleading 'merge refused' regression (test 3 alone)
+The full-suite run above stops at the first failure, so this runs test 3 by itself.
+
+== BEFORE fix b5d1675 (extension from parent 24aa62f) ==
+not ok - a delivered note with a failed cursor advance must not be reported as refused: file:///Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M0XBJJXHVQBP2YJKQT6RKESV/[eval1]:27
+
+== AT HEAD ==
+ok - a delivered outcome whose read-cursor advance fails is reported as delivered, not refused

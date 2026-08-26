@@ -1,0 +1,13 @@
+ci.yml jobs.tests-portable-serial: matrix.shard=[1, 2, 3, 4, 5, 6, 7, 8] timeout-minutes=15
+every CI matrix shard id resolved to a lane the runner accepts: 8 lanes
+full portable-serial lane scripts: 120
+union over the CI matrix shards:   120  duplicates: 0
+dropped by sharding: none
+not in the lane:     none
+RESULT: complete and disjoint - no test is dropped or run twice
+
+-- runner refuses a CI matrix built for the old shard count --
+fm-test-run: lane 'portable-serial-1of4' asks for 4 portable serial shards but this runner is configured for 8 (see --list-lanes)
+
+-- coverage guard --
+FM_TEST_COVERAGE ok total=156 parallel=24 serial=120 serial_shards=8 herdr=12

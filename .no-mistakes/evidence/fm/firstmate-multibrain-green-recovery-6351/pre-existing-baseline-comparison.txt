@@ -1,0 +1,18 @@
+### Disclosed pre-existing failures - HEAD vs an unmodified fbcd994 baseline checkout
+(baseline = `git archive fbcd994` extracted to a clean temp dir, nothing from this change)
+
+tests/fm-watch-arm.test.sh @ HEAD (31fb75f)
+  exit=0  ok=14  not-ok=0
+tests/fm-watch-arm.test.sh @ fbcd994 baseline
+  exit=0  ok=14  not-ok=0
+  -> The failure the author disclosed as pre-existing did not reproduce on this
+     machine at either revision. Either way this change does not cause it: the
+     suite is green at HEAD, including the 33 lines this change adds to it and
+     the reworked .opencode/plugins/fm-primary-watch-arm.js it exercises.
+
+tests/fm-pr-check-security.test.sh @ HEAD
+  exceeded a 10-minute local wall-clock budget and was stopped, so it was not
+  re-run on the baseline. tests/fm-pr-check-security.test.sh itself is unchanged
+  by this range (absent from the diffstat), and docs/fm-test-portable-shards.md
+  records it as the single longest portable-serial script at 199573 ms. The
+  author disclosed it as local-machine-only timing flakiness; remote CI owns it.

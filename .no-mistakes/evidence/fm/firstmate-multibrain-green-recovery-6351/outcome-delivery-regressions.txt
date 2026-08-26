@@ -1,0 +1,36 @@
+### Fail-before / pass-after for the three outcome-delivery regressions
+(only .pi/extensions/fm-branch-supervision.ts is reverted; the tests stay at HEAD)
+
+== BEFORE fix b5d1675 (extension restored from its parent 24aa62f) ==
+ok - branch owns accepted wakes with a stable prefix contract and verdict-driven merge delivery
+not ok - an undelivered lower-sequence outcome must be redelivered, not buried: file:///Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M0XBJJXHVQBP2YJKQT6RKESV/[eval1]:24
+exit=1
+
+== BEFORE fix 31fb75f (extension restored from its parent b5d1675) ==
+ok - branch owns accepted wakes with a stable prefix contract and verdict-driven merge delivery
+ok - an earlier undelivered outcome is redelivered ahead of a later merged outcome instead of buried
+ok - a delivered outcome whose read-cursor advance fails is reported as delivered, not refused
+not ok - a failed unread enumeration must leave the cursor untouched: file:///Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M0XBJJXHVQBP2YJKQT6RKESV/[eval1]:28
+exit=1
+
+== AT HEAD (31fb75f) ==
+ok - branch owns accepted wakes with a stable prefix contract and verdict-driven merge delivery
+ok - an earlier undelivered outcome is redelivered ahead of a later merged outcome instead of buried
+ok - a delivered outcome whose read-cursor advance fails is reported as delivered, not refused
+ok - a merge whose stale-row enumeration fails delivers its note but never advances the cursor
+ok - branch prompt_cache_key is stable per home across sessions and distinct between homes
+ok - branch default-on eligibility (task-scoped, heartbeat, afk) binds and a broken branch falls back to main
+ok - pre-drain eligibility re-check defers a newly main-owned row
+ok - pre-drain eligibility re-check no-ops an already-drained wake
+ok - dialog mirror filters tool and operational traffic, lands before wakes, and keeps a durable cursor
+ok - branch session persists across process restarts through the recorded pointer
+ok - replacement activation cleans old branch leases and retries failed cleanup
+ok - branch activates on a cold start once the lock is acquired, never before
+ok - queued wakes and mirrors stop mutating branch state after lock ownership is lost
+ok - stale reports, shells, mirrors, cursors, leases, and prompts perform no side effects
+ok - a Pi session that does not own the lock accepts nothing and mutates no branch state
+ok - an extension rebind re-mirrors undelivered dialog instead of dropping it
+exit=0
+
+worktree clean after revert experiments:
+  (empty above == clean)
