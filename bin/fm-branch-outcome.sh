@@ -15,10 +15,14 @@
 #   - Cursor: $STATE/.branch-outcomes-cursor holds the highest seq handed to
 #     Pi as an append-only merge note, emitted by the locked session-start
 #     replay, or silently consumed there because `silent` is true. Records
-#     above the cursor are "unread": the branch stored them but
-#     did not reach either handoff. A crash inside Pi's delivery window after
-#     cursor advancement does not auto-replay the row; it remains durable and
-#     available through the main session's fm_branch_outcomes tool.
+#     above the cursor are "unread": the branch stored them but has not
+#     proven them handed off. Delivery is at-least-once, so an unread row may
+#     already have reached main (the merge sent its note and then could not
+#     advance the cursor) and will be delivered again; the cursor is never
+#     advanced over a row whose delivery this run did not prove. A crash
+#     inside Pi's delivery window after cursor advancement does not
+#     auto-replay the row; it remains durable and available through the main
+#     session's fm_branch_outcomes tool.
 #   - Every mutation runs under $STATE/.branch-outcomes.lock so the branch
 #     extension and a concurrent session-start replay cannot interleave.
 #   - The store is written BEFORE the merge note is appended to main
