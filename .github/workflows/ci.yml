@@ -129,15 +129,16 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Measured whole remainder is ~19 min of serial work; the balanced shards
-    # are ~4.8 min each. Cap is a hang tripwire with roughly 3x margin, not the
-    # expected healthy end of the lane.
+    # Measured whole remainder is ~36.5 min of serial work; the balanced shards
+    # are ~4.6 min each. Cap is a hang tripwire with roughly 3x margin, not the
+    # expected healthy end of the lane. Shard count owner: bin/fm-test-run.sh
+    # PORTABLE_SERIAL_SHARDS (docs/fm-test-portable-shards.md "Timeouts").
     timeout-minutes: 15
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v6
         with:
