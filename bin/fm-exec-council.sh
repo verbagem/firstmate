@@ -41,7 +41,10 @@
 #   ## Disposition
 #   <advisory-now / graduation note>
 #   Only these eight "## " sections are ever read and echoed, and only above
-#   the card's first non-allowlisted heading: reading stops there and nothing
+#   the card's first non-allowlisted heading - or the first repeat of one of
+#   the eight already read above, which ends reading exactly like any other
+#   unrecognized heading rather than extending or reopening that section:
+#   reading stops there and nothing
 #   from that line to end of file is ever scanned. A heading is a line
 #   starting with "#" followed by whitespace, or a line starting with two or
 #   more "#". The single exemption is a "# <Role name>" title, and it is
@@ -130,11 +133,15 @@
 #   The title exemption here is the same narrow one the role-card format uses:
 #   first non-blank line of the file, followed by a packet section header.
 #   The same heading rule applies here: a packet body line beginning with "##",
-#   or with "#" and a space, ends the trusted region at that point, and the
+#   or with "#" and a space - including one repeating a section header already
+#   read - ends the trusted region at that point, and the
 #   field reports that it read nothing rather than claiming the section was
 #   never specified.
 #   The trusted region ends at the first heading that is not one of those four
-#   - whatever it is called, at any heading level - and everything from that
+#   - whatever it is called, at any heading level - or at the first repeat of
+#   one of the four already read above it, which ends trust exactly like any
+#   other unrecognized heading rather than extending or reopening that section,
+#   and everything from that
 #   heading to end of file is one opaque untrusted block, never scanned for
 #   section headers. The single exception is the narrow title rule above, so a
 #   "# Council packet" first line is allowed. So the notes
