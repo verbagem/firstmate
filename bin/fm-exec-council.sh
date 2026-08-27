@@ -82,11 +82,12 @@
 #   empty field. Every header comparison is byte-for-byte, so a section header
 #   carrying a trailing carriage return (a file saved with CRLF line endings)
 #   matches nothing; rather than emit a brief of markers the script exits 2 and
-#   names the line. That check reads only the trusted region, up to and
-#   including the line parsing stops at, so a carriage return in body text, in
-#   note text, or anywhere below the split is left alone and can never deny a
-#   run. The split line itself is exempt too when its header names a section
-#   already read above it, since nothing is then cut off. Save role cards and
+#   names the line. That check is scoped to headers that would otherwise be
+#   lost: only a line that names one of the sections once its carriage return
+#   is stripped, and that names a section not already read above the line
+#   parsing stops at. A carriage return in body text, in note text, or on a
+#   header that merely repeats a section already read is left alone and can
+#   never deny a run. Save role cards and
 #   packets with Unix (LF) line endings.
 #
 # Context packet format (a plain file passed via --packet):
@@ -133,8 +134,7 @@
 #   The title exemption here is the same narrow one the role-card format uses:
 #   first non-blank line of the file, followed by a packet section header.
 #   The same heading rule applies here: a packet body line beginning with "##",
-#   or with "#" and a space - including one repeating a section header already
-#   read - ends the trusted region at that point, and the
+#   or with "#" and a space, ends the trusted region at that point, and the
 #   field reports that it read nothing rather than claiming the section was
 #   never specified.
 #   The trusted region ends at the first heading that is not one of those four
@@ -235,8 +235,8 @@ PACKET_SECTIONS='## Objective|## Horizon|## Constraints|## Metrics'
 # the allowed sections), then derives every fact the rest of this script
 # needs from that one representation: where trust ends (SPLIT), whether the
 # split line is the packet's own untrusted-notes header (NOTES), the first
-# allowed section not read before the split (CUTOFF), the first
-# carriage-return-broken header at or before the split (CRLF), the first
+# allowed section not read before the split (CUTOFF), the first such
+# section left unreadable only by a trailing carriage return (CRLF), the first
 # allowed section anywhere in the file regardless of trust (FIRST - packets
 # only), and for each allowed section its header line, the line its body
 # extraction stops at, and whether that stop was a real heading (a cut) or
@@ -293,21 +293,14 @@ classify_doc() {
       split_notes = split_line ? isnotes(raw[split_line]) : 0
 
       cutoff = ""
+      crlf_line = 0
       if (split_line) {
         for (i = split_line; i <= total; i++) {
-          if ((raw[i] in ok) && !(raw[i] in seen)) { cutoff = raw[i]; break }
+          s = cr[i] ? stripcr(raw[i]) : raw[i]
+          if (!(s in ok) || (s in seen)) continue
+          if (cr[i]) crlf_line = i; else cutoff = s
+          break
         }
-      }
-
-      crlf_line = 0
-      lastline = split_line ? split_line : total
-      for (i = 1; i <= lastline; i++) {
-        if (!cr[i]) continue
-        s = stripcr(raw[i])
-        if (!(s in ok)) continue
-        if (i == split_line && (s in seen) && seen[s] < i) continue
-        crlf_line = i
-        break
       }
 
       first_section = 0
@@ -470,7 +463,7 @@ for role in $ROLES; do
   split=$(meta_scalar "$meta" SPLIT)
   cutoff=$(meta_scalar "$meta" CUTOFF)
   if [ -n "$cutoff" ]; then
-    die "role card $role: line $split is a heading that is not one of the eight sections, or repeats a section already read, so parsing stops there, but \"$cutoff\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
+    die "role card $role: line $split is neither an unread one of the eight section headers nor part of the card's title, so parsing stops there, but \"$cutoff\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
   fi
   printf '%s\n' "$meta" > "$CARD_TMP/$role.meta"
   IFS=','

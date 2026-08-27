@@ -1497,6 +1497,31 @@ EOF
   pass "fm-exec-council.sh: a repeated section header ends trust instead of dropping content"
 }
 
+# A duplicate section header ends trust early; a CR-broken header below it
+# still names a section nobody read, so it must refuse rather than report
+# that section absent.
+test_crlf_header_below_a_duplicate_still_refuses() {
+  local dir packet
+  dir="$TMP_ROOT/cards-crlf-behind-dup"
+  mkdir -p "$dir"
+  write_role_card "$dir" COO
+  packet="$TMP_ROOT/packet-crlf-behind-dup.md"
+  write_packet "$packet" "- weekly revenue: 5000
+- churn rate: 12%" "Nothing unusual."
+
+  {
+    printf '# CFO\n## Mandate\nM1\n## Mandate\nM2\n'
+    printf '## Inputs\r\nI\n'
+  } > "$dir/CFO.md"
+  expect_refusal "CR header hidden behind a duplicate header" "carriage return" \
+    brief --cards-dir "$dir" --roles CFO --packet "$packet"
+  assert_contains "$REFUSAL_OUT" "line 6" "the refusal did not name the carriage-return line"
+  assert_not_contains "$REFUSAL_OUT" "(not specified in role card)" \
+    "a hidden CR header was silently reported absent instead of refusing"
+  assert_not_contains "$REFUSAL_OUT" "Executive council brief" "a brief was emitted for a refused role card"
+  pass "fm-exec-council.sh brief: a CR-broken header below a duplicate header still refuses"
+}
+
 test_help_lists_usage
 test_missing_command_fails_loudly
 test_list_roles_lists_card_slugs
@@ -1539,3 +1564,4 @@ test_unknown_role_fails_loudly
 test_valid_packet_and_role_card_populate_every_field
 test_metrics_header_at_exact_trust_boundary_reports_truncation
 test_duplicate_section_header_is_untrusted_not_dropped
+test_crlf_header_below_a_duplicate_still_refuses
