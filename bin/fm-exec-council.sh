@@ -242,6 +242,7 @@ classify_doc() {
     function isheading(s)    { return (s ~ /^#[[:space:]]/) || (s ~ /^##/) }
     function istitleshape(s) { return (s ~ /^#[[:space:]]/) && !(s ~ /^##/) }
     function stripcr(s)      { sub(/\r$/, "", s); return s }
+    function fresh(s)        { return (s in ok) && !(s in seen) }
     function isnotes(s,    t) {
       if (!notes_mode) return 0
       t = tolower(s)
@@ -269,17 +270,17 @@ classify_doc() {
         if (!started) {
           started = 1
           if (istitleshape(t)) { pend = i; continue }
-          if (t in ok) { if (!(t in seen)) seen[t] = i } else { split_line = i }
+          if (fresh(t)) seen[t] = i; else split_line = i
           continue
         }
         if (pend && !title_line && !split_line) {
-          if (t in ok) { title_line = pend; if (!(t in seen)) seen[t] = i }
+          if (fresh(t)) { title_line = pend; seen[t] = i }
           else { split_line = i }
           continue
         }
         if (split_line) continue
         if (isheading(t)) {
-          if (t in ok) { if (!(t in seen)) seen[t] = i } else { split_line = i }
+          if (fresh(t)) seen[t] = i; else split_line = i
         }
       }
       split_notes = split_line ? isnotes(raw[split_line]) : 0
@@ -462,7 +463,7 @@ for role in $ROLES; do
   split=$(meta_scalar "$meta" SPLIT)
   cutoff=$(meta_scalar "$meta" CUTOFF)
   if [ -n "$cutoff" ]; then
-    die "role card $role: line $split is a heading that is not one of the eight sections, so parsing stops there, but \"$cutoff\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
+    die "role card $role: line $split is a heading that is not one of the eight sections, or repeats a section already read, so parsing stops there, but \"$cutoff\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
   fi
   printf '%s\n' "$meta" > "$CARD_TMP/$role.meta"
   IFS=','
@@ -481,7 +482,7 @@ PACKET_SPLIT=$(meta_scalar "$PACKET_META" SPLIT)
 PACKET_NOTES_FLAG=$(meta_scalar "$PACKET_META" NOTES)
 PACKET_CUTOFF=$(meta_scalar "$PACKET_META" CUTOFF)
 if [ -n "$PACKET_CUTOFF" ] && [ "$PACKET_NOTES_FLAG" != "1" ]; then
-  die "packet: line $PACKET_SPLIT is neither a packet section header nor a \"## Business notes\" header, so parsing stops there, but \"$PACKET_CUTOFF\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
+  die "packet: line $PACKET_SPLIT is neither an unread packet section header nor a \"## Business notes\" header, so parsing stops there, but \"$PACKET_CUTOFF\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
 fi
 
 PACKET_FIRST=$(meta_scalar "$PACKET_META" FIRST)
