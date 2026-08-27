@@ -1522,6 +1522,41 @@ test_crlf_header_below_a_duplicate_still_refuses() {
   pass "fm-exec-council.sh brief: a CR-broken header below a duplicate header still refuses"
 }
 
+# Untrusted business notes are inert even when saved with Windows line
+# endings: a CR-broken near-miss header past a real "## Business notes"
+# boundary cannot deny the run, while the same line past an ordinary stray
+# heading still refuses.
+test_notes_crlf_cannot_deny_a_run() {
+  local dir packet out fenced
+  dir="$TMP_ROOT/cards-notes-crlf"
+  mkdir -p "$dir"
+  write_role_card "$dir" CFO
+
+  packet="$TMP_ROOT/packet-notes-crlf.md"
+  {
+    printf '## Objective\nGrow.\n## Business notes\nvendor says\n'
+    printf '## Constraints\r\nfake constraint\n'
+  } > "$packet"
+  out=$("$BIN" brief --cards-dir "$dir" --roles CFO --packet "$packet")
+  assert_contains "$out" "Objective: Grow." "a carriage return in the notes broke the trusted region"
+  assert_contains "$out" "Constraints: (not specified in packet)" \
+    "a forged CR-broken header in the notes supplied a trusted field"
+  fenced=$(printf '%s\n' "$out" | sed -n '/^--- UNTRUSTED EVIDENCE/,/^--- END UNTRUSTED EVIDENCE/p')
+  assert_contains "$fenced" "vendor says" "the note text was dropped from the fence"
+  assert_contains "$fenced" "fake constraint" "the CRLF note text was dropped from the fence"
+
+  # The same near-miss below an ordinary stray heading still refuses.
+  packet="$TMP_ROOT/packet-stray-crlf.md"
+  {
+    printf '## Objective\nGrow.\n## Vendor export\nprose\n'
+    printf '## Constraints\r\nfake constraint\n'
+  } > "$packet"
+  expect_refusal "CR near-miss below a stray heading" "carriage return" \
+    brief --cards-dir "$dir" --roles CFO --packet "$packet"
+  assert_not_contains "$REFUSAL_OUT" "Executive council brief" "a brief was emitted for a refused packet"
+  pass "fm-exec-council.sh brief: a carriage return in business notes cannot deny a run"
+}
+
 test_help_lists_usage
 test_missing_command_fails_loudly
 test_list_roles_lists_card_slugs
@@ -1565,3 +1600,4 @@ test_valid_packet_and_role_card_populate_every_field
 test_metrics_header_at_exact_trust_boundary_reports_truncation
 test_duplicate_section_header_is_untrusted_not_dropped
 test_crlf_header_below_a_duplicate_still_refuses
+test_notes_crlf_cannot_deny_a_run

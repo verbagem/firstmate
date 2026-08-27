@@ -474,12 +474,12 @@ unset IFS
 [ -f "$PACKET" ] || die "packet file not found: $PACKET"
 
 PACKET_META=$(classify_doc "$PACKET" "$PACKET_SECTIONS" 1)
-PACKET_CRLF=$(meta_scalar "$PACKET_META" CRLF)
-if [ "$PACKET_CRLF" -gt 0 ]; then
-  die "packet: line $PACKET_CRLF ends with a carriage return, so its section header matches nothing byte-for-byte and every field below would be reported absent; save the file with Unix (LF) line endings"
-fi
 PACKET_SPLIT=$(meta_scalar "$PACKET_META" SPLIT)
 PACKET_NOTES_FLAG=$(meta_scalar "$PACKET_META" NOTES)
+PACKET_CRLF=$(meta_scalar "$PACKET_META" CRLF)
+if [ "$PACKET_CRLF" -gt 0 ] && [ "$PACKET_NOTES_FLAG" != "1" ]; then
+  die "packet: line $PACKET_CRLF ends with a carriage return, so its section header matches nothing byte-for-byte and every field below would be reported absent; save the file with Unix (LF) line endings"
+fi
 PACKET_CUTOFF=$(meta_scalar "$PACKET_META" CUTOFF)
 if [ -n "$PACKET_CUTOFF" ] && [ "$PACKET_NOTES_FLAG" != "1" ]; then
   die "packet: line $PACKET_SPLIT is neither an unread packet section header nor a \"## Business notes\" header, so parsing stops there, but \"$PACKET_CUTOFF\" appears below it and was never read; refusing rather than emitting a brief that silently omits it"
