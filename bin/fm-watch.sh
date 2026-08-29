@@ -497,8 +497,10 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # absorb can rot invisibly. <age> is how long the current absorb has held and
 # <throttle> is the per-window marker whose mtime records the last re-surface, so
 # once past PAUSE_RESURFACE_SECS the pane wakes once per window rather than every
-# poll. Shared by the declared-pause absorb and the worktree-write deferral so the
-# two cadences cannot drift apart; each caller owns its own marker and reason.
+# poll. Used by the worktree-write deferral below; the declared-pause absorb now
+# batches through record_paused_stale_recheck instead, so both still share the
+# same PAUSE_RESURFACE_SECS cadence and per-window throttle-marker shape without
+# sharing this call.
 # Returns without waking while either the absorb or the throttle is inside the
 # window; wake() itself exits the cycle, exactly as it does inline.
 resurface_absorbed() {  # <window> <throttle-marker> <age> <reason>
@@ -517,10 +519,10 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason>
 # fake, so the escalation is deferred rather than fired. Deliberately a DEFERRAL,
 # not a cancellation: the idle timer restarts, so the next window probes again,
 # and a .writing-since-<key> marker ages the whole deferral chain so the pane
-# still re-surfaces once every PAUSE_RESURFACE_SECS through the shared
-# resurface_absorbed above - literally the same bounded cadence a declared pause
-# uses, throttled by its own .writing-resurfaced-<key> marker - and a crew whose
-# worktree churns without real progress cannot stay invisible. The escalation
+# still re-surfaces once every PAUSE_RESURFACE_SECS through resurface_absorbed
+# above, throttled by its own .writing-resurfaced-<key> marker - the same
+# bounded cadence a declared pause uses, and a crew whose worktree churns
+# without real progress cannot stay invisible. The escalation
 # counter is left alone: it is neither advanced (this is not an escalation) nor
 # reset (a later genuine escalation must still carry the demand-deep-inspection
 # history it had already earned).

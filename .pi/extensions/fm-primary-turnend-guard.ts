@@ -426,7 +426,8 @@ function sessionstartMessage(
   generation: SessionstartGeneration,
   result: SessionstartResult,
 ): SessionstartMessage | undefined {
-  let raw = result.kind === "ready" ? result.raw : "";
+  const isDigest = result.kind === "ready";
+  let raw = isDigest ? result.raw : "";
   if (!raw && result.kind === "failed") {
     raw = sessionstartManualFallback;
   } else if (!raw && ["startup", "clear", "compact"].includes(generation.source) &&
@@ -440,14 +441,17 @@ function sessionstartMessage(
     // would have to guess whether it was captain-authored. The wrapper already
     // returns an encoded nudge on a context-preserving open (a short line, e.g.
     // "run bin/fm-session-start.sh now"), which is small enough to inject
-    // as-is. An unencoded digest is the full session-start payload - up to
-    // hundreds of KiB - and must not be inlined into the message: see
-    // docs/sessionstart-nudge.md "Digest delivery is a pointer, not inline
-    // content" for why. It is written to this process's private digest slot
-    // instead, and only a short pointer travels through the returned message.
+    // as-is, and so is the short manual fallback prompt - only a genuine ready
+    // digest is the full session-start payload - up to hundreds of KiB - and
+    // must not be inlined into the message: see docs/sessionstart-nudge.md
+    // "Digest delivery is a pointer, not inline content" for why. It is
+    // written to this process's private digest slot instead, and only a short
+    // pointer travels through the returned message.
     let content: string;
     if (classifyFirstmateCurrentOperationalText(raw)) {
       content = raw;
+    } else if (!isDigest) {
+      content = encodeFirstmateOperationalInput("session-start", raw);
     } else {
       let writeError: unknown;
       sweepDeadSessionstartDigests();

@@ -578,6 +578,14 @@ const pidFor = (index) => Number(launchLines().find((line) => line.startsWith(`l
 const supervisorFor = (index) => Number(launchLines().find((line) => line.startsWith(`launch:${index}:`))?.split(":")[5]);
 const grandchildFor = (index) => Number(readFileSync(`${state}/grandchild-${index}`, "utf8").trim());
 const startupMessages = () => providerCalls.map((call) => call.message).filter(Boolean);
+// A genuine ready digest now delivers only a short pointer message (the
+// digest itself is written to the private per-process slot); read the named
+// file to inspect the actual digest content the caller must act on.
+const digestContent = (message) => {
+  const named = /digest written to (\S+) \(/.exec(message?.content ?? "");
+  if (!named) throw new Error(`message did not carry a digest pointer: ${message?.content}`);
+  return readFileSync(named[1], "utf8");
+};
 
 // The failing immediate-prompt path is now a prerequisite: no provider call is
 // observable until the matching slow native generation settles.
@@ -589,7 +597,7 @@ await delay(100);
 assert(providerCalls.length === 0, "provider call escaped before the startup prerequisite settled");
 release(1);
 const immediateResult = await immediateCall;
-assert(immediateResult?.message?.content.includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
+assert(digestContent(immediateResult?.message).includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
 assert(launchLines().length === 1, "immediate generation executed more than once");
 assert((await handlers.get("before_agent_start")({ prompt: "second prompt" }, immediate)) === undefined,
   "one generation delivered startup context more than once");
@@ -602,7 +610,7 @@ plan(2, "success");
 const proven = begin("new", "session-proven");
 await waitFor(() => existsSync(`${state}/completed-2`), "proven generation never completed");
 const provenResult = await providerCall(proven, "proven prompt");
-assert(provenResult?.message?.content.includes("GENERATION_DIGEST_2"), "proven path lost startup context");
+assert(digestContent(provenResult?.message).includes("GENERATION_DIGEST_2"), "proven path lost startup context");
 assert(!provenResult.message.content.includes("Run `bin/fm-session-start.sh`"), "proven path used manual fallback");
 const provenSupervisor = supervisorFor(2);
 assert(alive(provenSupervisor), "completed generation lost its stable supervisor owner");
@@ -639,11 +647,14 @@ const staleCall = handlers.get("before_agent_start")({ prompt: "stale" }, stale)
 begin("new", "session-replaced-once");
 const newest = begin("new", "session-replaced-twice");
 const newestResult = await providerCall(newest, "newest");
-assert(newestResult?.message?.content.includes("GENERATION_DIGEST_5"), "newest replacement lost its context");
+assert(digestContent(newestResult?.message).includes("GENERATION_DIGEST_5"), "newest replacement lost its context");
 assert((await staleCall) === undefined, "stale generation delivered after replacement");
 assert(launchLines().length === 5, "rapid replacements launched the cancelled middle generation");
 assert(!startupMessages().some((message) => message.content.includes("STALE_DIGEST_4")),
   "stale completion reached model context");
+const digestSlot = `${state}/.session-start-digest.${process.pid}.txt`;
+assert(!existsSync(digestSlot) || !readFileSync(digestSlot, "utf8").includes("STALE_DIGEST_4"),
+  "stale completion reached the private digest file");
 const events = readFileSync(`${state}/events`, "utf8");
 assert(events.indexOf("stale-close:4") < events.indexOf("launch:5"),
   "newest generation started before stale child retirement completed");
@@ -707,13 +718,13 @@ await delay(100);
 assert(!providerCalls.some((call) => call.prompt === "timeout"), "timeout provider call escaped before settlement");
 release(13);
 const timedResult = await timedCall;
-assert(timedResult?.message?.content.includes("STARTUP TRUNCATED - stage=bootstrap"), "timeout banner was lost");
+assert(digestContent(timedResult?.message).includes("STARTUP TRUNCATED - stage=bootstrap"), "timeout banner was lost");
 assert(!timedResult.message.content.includes("Run `bin/fm-session-start.sh`"), "bounded timeout incorrectly used manual fallback");
 
 plan(14, "truncate");
 const truncated = begin("new", "session-truncated");
 const truncatedResult = await providerCall(truncated, "truncated");
-assert(truncatedResult?.message?.content.includes("TRUNCATION_PREFIX_14"), "truncated digest lost its prefix");
+assert(digestContent(truncatedResult?.message).includes("TRUNCATION_PREFIX_14"), "truncated digest lost its prefix");
 assert(truncatedResult.message.content.includes("PI SESSION-START DELIVERY TRUNCATED"), "truncated digest was not loud");
 assert(!truncatedResult.message.content.includes("TRUNCATION_SUFFIX_14"), "truncated digest exceeded its bound");
 
@@ -722,7 +733,8 @@ assert(!truncatedResult.message.content.includes("TRUNCATION_SUFFIX_14"), "trunc
 plan(15, "success");
 const compactContext = ctx("session-truncated");
 await handlers.get("session_compact")({}, compactContext);
-assert(sent.length === 1 && sent[0].content.includes("GENERATION_DIGEST_15"),
+assert(sent.length === 1, "compaction lost its existing persistent delivery");
+assert(digestContent(sent[0]).includes("GENERATION_DIGEST_15"),
   "compaction lost its existing persistent delivery");
 assert((await handlers.get("before_agent_start")({ prompt: "post compact" }, compactContext)) === undefined,
   "compaction delivered the same context twice");
@@ -953,6 +965,7 @@ make_pi_digest_fixture() {
   mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/state"
   cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
+  cp "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$fixture/.pi/extensions/lib/"
   cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/"
   cat > "$fixture/bin/fm-sessionstart-run.sh" <<'SH'
 #!/usr/bin/env bash
