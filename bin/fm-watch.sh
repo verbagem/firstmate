@@ -547,11 +547,13 @@ clear_write_tracking() {  # <window-key>
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
-# and the stale_is_terminal-overridden path (a captain-relevant status-log
-# line that an active run/busy pane outranked).
+# escalates once STALE_ESCALATE_SECS have elapsed. Reads no crew state itself,
+# other than the worktree write probe below. Shared by both places a hash can
+# be absorbed this way: the plain non-terminal path, and the
+# stale_is_terminal-overridden path, whose caller samples crew state at most
+# once per claim_run_state_probe cap window before falling through to this
+# timer. Escalating retires this window's timer, so it also retires that
+# caller's cap, leaving the next poll free to classify the pane again.
 # The worktree write probe runs ONLY here, inside the at-threshold branch that is
 # about to escalate: at most one bounded walk per window per STALE_ESCALATE_SECS,
 # never per poll.
@@ -580,7 +582,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           reason="stale: $win (idle ${age}s, possible wedge, escalation $n, demand-deep-inspection: same pane has wedge-escalated $n times in a row - do not re-absorb on the run-step/pane state alone)"
         fi
         fm_wake_append stale "$win" "$reason" || exit 1
-        rm -f "$since_file"
+        rm -f "$since_file" "$STATE/.run-state-probed-terminal-$(window_key "$win")"
         clear_write_tracking "$(window_key "$win")"
         wake "$reason"
       fi
@@ -634,6 +636,7 @@ flush_paused_stale_rechecks() {
   [ "$PAUSED_STALE_RECHECK_COUNT" -gt 0 ] || return 0
   if [ "$PAUSED_STALE_RECHECK_COUNT" -eq 1 ]; then
     wake "$PAUSED_STALE_RECHECK_REASON"
+    return 0
   fi
   wake "stale: paused recheck batch (${PAUSED_STALE_RECHECK_COUNT}): $PAUSED_STALE_RECHECK_WINDOWS"
 }
@@ -726,14 +729,16 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
 
 clear_pause_state() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key" \
+    "$STATE/.run-state-probed-$key"
 }
 
 clear_pause_tracking() {  # <window-key>
   local key=$1
   clear_pause_state "$key"
   clear_write_tracking "$key"
-  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  rm -f "$STATE/.stale-$key" "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key" \
+    "$STATE/.run-state-probed-terminal-$key"
 }
 
 # Reconcile a declared pause or captain-held status with authoritative crew state.
@@ -747,21 +752,6 @@ pause_state_class() {  # <window> <task>
   key=$(window_key "$win")
   last=$(last_status_line "$STATE/$task.status")
   recheck_file="$STATE/.paused-rechecked-$key"
-  if status_is_paused "$last"; then
-    if [ -e "$STATE/.paused-$key" ] && [ "$(age_of "$recheck_file")" -lt "$STALE_ESCALATE_SECS" ]; then
-      printf 'paused'
-      return
-    fi
-    class=$(crew_absorb_class "$task")
-    if [ "$class" = working ]; then
-      rm -f "$recheck_file"
-      printf 'working'
-      return
-    fi
-    date +%s > "$recheck_file"
-    printf 'paused'
-    return
-  fi
   if ! status_is_paused_or_captain_held "$last"; then
     rm -f "$recheck_file"
     class=$(crew_absorb_class "$task")
@@ -1061,10 +1051,35 @@ surface_actionable_run_state_if_new() {  # <window> <task> <hash> <crew-state-li
   wake "$reason"
 }
 
+# The cost gate for every crew_state_line probe the stale loop can reach on a pane
+# it revisits each poll. crew_state_line spawns fm-crew-state.sh - a bounded
+# no-mistakes CLI read for a ship crew with a branch - and bin/fm-classify-lib.sh
+# states that read runs on no-verb signal and first-sighting stale paths, never
+# every wake; a steady-state pane (a held pause, a surfaced terminal status, a
+# running validation) would otherwise pay it every POLL indefinitely, fleet-wide.
+# 0 (and stamps) when a probe may run, 1 while the cap holds. The stamp lands on
+# every ATTEMPT whatever the attempt finds, so the cadence can never be held open
+# by what the crew state happens to say and a newly PR-ready or failed run still
+# surfaces the moment the cap expires. Each <marker> is owned solely by the probe
+# site that names it and follows that site's own reset lifecycle, so a declared
+# wait ending cannot silence a terminal pane's cap or the reverse.
+claim_run_state_probe() {  # <marker> <window-key>
+  local f="$STATE/.$1-$2"
+  [ "$(age_of "$f")" -ge "$STALE_ESCALATE_SECS" ] || return 1
+  date +%s > "$f"
+}
+
+# The declared-wait probe. Its cap rides the pause lifecycle out - cleared both
+# where a pane stops declaring a wait and through clear_pause_state - so a pane
+# entering a fresh declared wait probes again immediately.
 surface_paused_actionable_run_state_if_new() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 last crew_state
+  local win=$1 task=$2 h=$3 key last crew_state
   last=$(last_status_line "$STATE/$task.status")
   status_is_paused_or_captain_held "$last" || return 1
+  key=${win//:/_}
+  key=${key//\//_}
+  key=${key//./_}
+  claim_run_state_probe run-state-probed "$key" || return 1
   crew_state=$(crew_state_line "$task" || true)
   surface_actionable_run_state_if_new "$win" "$task" "$h" "$crew_state" pause-throttle
 }
@@ -1537,8 +1552,11 @@ EOF
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
     key=$(window_key "$w")
     last=$(last_status_line "$STATE/$task.status")
-    if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
-      clear_pause_tracking "$key"
+    if ! status_is_paused_or_captain_held "$last"; then
+      rm -f "$STATE/.run-state-probed-$key"
+      if [ -e "$STATE/.paused-$key" ]; then
+        clear_pause_tracking "$key"
+      fi
     fi
     # An idle secondmate endpoint is healthy by design, so a mate is admitted to
     # the pane-stale path ONLY to serve a declared wait's bounded re-surface -
@@ -1629,11 +1647,16 @@ EOF
             # wedge timer is running for it) - keep treating it that way
             # without re-reading the crew state every poll, and without
             # letting the still-captain-relevant log line re-surface it,
-            # unless a new actionable run-state transition has landed.
-            crew_state=$(crew_state_line "$task" || true)
+            # unless a new actionable run-state transition has landed. The
+            # crew-state read itself is cost-gated by claim_run_state_probe so
+            # a steady-state pane does not pay it every poll indefinitely.
+            crew_state=
+            if claim_run_state_probe run-state-probed-terminal "$key"; then
+              crew_state=$(crew_state_line "$task" || true)
+            fi
             surface_actionable_run_state_if_new "$w" "$task" "$h" "$crew_state" \
               || wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf" "$task"
-          else
+          elif claim_run_state_probe run-state-probed-terminal "$key"; then
             crew_state=$(crew_state_line "$task" || true)
             if [ "$(crew_absorb_class_from_state_line "$crew_state")" = working ]; then
               printf '%s' "$h" > "$sf"
