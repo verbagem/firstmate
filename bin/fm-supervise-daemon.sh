@@ -1251,11 +1251,16 @@ handle_wake() {  # <reason> <state>
               # answer for itself. Overriding it escalated healthy declared waits
               # once per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
-              # bounded - by one recheck per PAUSE_RESURFACE_SECS instead.
+              # bounded - by one recheck per PAUSE_RESURFACE_SECS instead. A batched
+              # validation-run-outcome detail follows the same pause exemption: it
+              # is new captain-facing information either way, but a current
+              # declared wait still owns its own bounded recheck cadence instead.
               case "${decision%%|*}" in
                 pause) : ;;
                 *) case "$stale_detail" in
                      idle\ *s,\ possible\ wedge,\ escalation\ *)
+                       decision="escalate|${reason#stale: }" ;;
+                     validation\ run\ outcome:*)
                        decision="escalate|${reason#stale: }" ;;
                    esac ;;
               esac ;;
