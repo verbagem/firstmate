@@ -29,6 +29,8 @@ install_pi_watch_extension_fixture() {
   cp "$ROOT/bin/fm-wake-lib.sh" "$repo/bin/fm-wake-lib.sh"
   cp "$ROOT/bin/fm-classify-lib.sh" "$repo/bin/fm-classify-lib.sh"
   cp "$ROOT/bin/fm-line-cap-lib.sh" "$repo/bin/fm-line-cap-lib.sh"
+  cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
+  cp "$ROOT/bin/fm-lease-lib.sh" "$repo/bin/fm-lease-lib.sh"
   chmod +x "$repo/bin/fm-operational-input.sh" "$repo/bin/fm-wake-drain.sh"
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/package.json" <<'JSON'
 {"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}
