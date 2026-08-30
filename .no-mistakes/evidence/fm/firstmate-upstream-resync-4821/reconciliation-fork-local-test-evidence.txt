@@ -1,0 +1,31 @@
+== fork-local intent behavior tests (verbagem/firstmate reconciliation) ==
+
+-- e28e154 fix(pi): session-start fallback delivered directly, not pointer-filed --
+tests/fm-sessionstart-nudge.test.sh : 26/26 ok (exit 0)
+   ok - run wrapper: startup runs the full digest and never also nudges
+   ok - run wrapper: clear and compact re-emit the digest without repeating startup sweeps
+   ok - run wrapper: resume delegates to the nudge instead of re-running the digest
+   ok - Pi provider preflight owns one generation-bound startup prerequisite with deterministic fallback, replacement, cancellation, timeout, and truncation
+   ok - Pi delivers only a short pointer message, with the full bounded digest written to a private single-slot file
+   ok - one Pi process reuses a single digest slot across session-start and compact
+   ok - a later Pi process sweeps the digest slots of exited processes instead of accumulating them
+   ok - an unwritable digest file still delivers an operational message naming the error and the fallback
+
+-- ed04b7f no-mistakes(test): paused validation-run outcomes escalate above pause guard --
+   fm-daemon test 15: 15:ok - paused stale validation run outcomes escalate instead of self-handling
+
+-- 6dadfc2 (target commit) CI stabilization of fm-pi-watch hung-successor races --
+tests/fm-pi-watch-extension.test.sh : 39/39 ok (exit 0)
+   ok - Pi hung successor falls back to one typed actionable wake
+   ok - Pi unretired successor falls back without an overlapping retry
+   ok - Pi late unretired closes resume classified supervision
+   ok - OpenCode hung successor falls back to one typed actionable wake
+   ok - OpenCode unretired successor falls back without an overlapping retry
+   ok - OpenCode late unretired closes resume classified supervision
+
+-- 421246f recover project-path/paused monitoring (fleet-sync leg) --
+tests/fm-fleet-sync.test.sh : ok (exit 0)
+
+== flaky (infrastructure, NOT product) ==
+fm-daemon test 86 'hung wedge notifier bounded' reported elapsed=765s in full 792s suite run
+(SECONDS starved on overloaded runner). Isolated re-run: 'ok ... 1.1s exit 0'.
