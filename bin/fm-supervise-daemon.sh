@@ -1253,16 +1253,18 @@ handle_wake() {  # <reason> <state>
               # once per STALE_ESCALATE_SECS for as long as the wait lasted.
               # Housekeeping (2b) then owns the re-surface, so the wait is still
               # bounded - by one recheck per PAUSE_RESURFACE_SECS instead. A batched
-              # validation-run-outcome detail follows the same pause exemption: it
-              # is new captain-facing information either way, but a current
-              # declared wait still owns its own bounded recheck cadence instead.
-              case "${decision%%|*}" in
-                pause) : ;;
-                *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *)
-                       decision="escalate|${reason#stale: }" ;;
-                     validation\ run\ outcome:*)
-                       decision="escalate|${reason#stale: }" ;;
+              # validation-run-outcome detail is the one exception that is NOT
+              # pause-exempt: a run finishing ready/failed is a fresh terminal result
+              # the captain must see now, so it escalates even under a declared wait.
+              case "$stale_detail" in
+                validation\ run\ outcome:*)
+                  decision="escalate|${reason#stale: }" ;;
+                *) case "${decision%%|*}" in
+                     pause) : ;;
+                     *) case "$stale_detail" in
+                          idle\ *s,\ possible\ wedge,\ escalation\ *)
+                            decision="escalate|${reason#stale: }" ;;
+                        esac ;;
                    esac ;;
               esac ;;
     check:*)  decision=$(classify_check "$reason") ;;
