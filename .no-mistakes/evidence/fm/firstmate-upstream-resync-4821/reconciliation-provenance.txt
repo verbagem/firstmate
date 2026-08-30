@@ -1,0 +1,13 @@
+### Intent constraint checks (reconciliation provenance)
+
+-- 'Preserve every fork-local change' — deleted-file audit (pre-merge fork tip 51946cb^1 vs HEAD) --
+Deleted: docs/decision-hold-lifecycle.md, tests/fm-decision-hold-lifecycle.test.sh
+Removed BY UPSTREAM commit 99b21d8 'feat: collapse decisions into tasks held for the captain (#2728)'
+=> legitimate upstream refactor pulled in by the merge, NOT a silently dropped fork change.
+
+-- 'Consolidate two superseded review branches' — branches present in gate repo --
+  fm-recovery-fork-only                        (local + remotes/no-mistakes-push)
+  fm/firstmate-pi-multibrain-fork-reconcile-5834 (local + remotes/no-mistakes-push)
+NOTE: superseded-review-reconciliation.md is not present in this worktree; the
+commit-section structure it prescribes is a review-phase concern, not verifiable
+from the test phase. Flagged as a coverage limitation, not a failure.

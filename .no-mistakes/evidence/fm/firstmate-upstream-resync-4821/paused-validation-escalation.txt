@@ -1,0 +1,12 @@
+# firstmate: paused validation-run outcomes escalate above the pause guard
+# Captain's Option A — a finished validation run (PR ready / failed) must reach
+# the captain immediately even while the pane is a declared pause; ordinary
+# declared waits stay pause-exempt (self-handled on the long recheck cadence).
+
+## Behavior on the FIXED daemon (target commit ed04b7f):
+ok - paused stale validation run outcomes escalate instead of self-handling
+ok - handle_wake on a paused stale records a pause marker, drops the wedge marker, and does not escalate
+ok - paused reasons with captain phrases remain pause-classified
+
+## Same test on the PRE-FIX daemon (parent e28e154) — regression reproduced:
+not ok - ready validation outcome was self-handled as a pause

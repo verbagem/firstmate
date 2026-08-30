@@ -1,0 +1,64 @@
+### DETERMINISTIC FAILURE: tests/fm-daemon.test.sh
+test_handle_wake_paused_validation_outcome_escalates
+Both introduced in the SAME fork-local reconciliation commit 421246f.
+
+-- Two consecutive runs, same result --
+run1 rc=1 ; run2 rc=1 ; exactly one 'not ok' each
+
+-- Failing TAP line --
+15:not ok - ready validation outcome was self-handled as a pause
+
+-- Mechanism trace (why it fails) --
+Status file: 'paused: awaiting the vendor validation slot'
+Wake reason: 'stale: sess:fm-held-ready (validation run outcome: state: done ... )'
+classify_stale('sess:fm-held-ready') = pause|paused (awaiting external), rechecked on a long cadence
+
+handle_wake() decision routing (bin/fm-supervise-daemon.sh:1259-1267):
+              case "${decision%%|*}" in
+                pause) : ;;
+                *) case "$stale_detail" in
+                     idle\ *s,\ possible\ wedge,\ escalation\ *)
+                       decision="escalate|${reason#stale: }" ;;
+                     validation\ run\ outcome:*)
+                       decision="escalate|${reason#stale: }" ;;
+                   esac ;;
+              esac ;;
+
+=> decision is 'pause' so the 'pause) : ;;' arm is taken; the
+   'validation run outcome:*' escalate branch lives under the NON-pause arm and is
+   never reached. No line is written to .subsuper-escalations, so handle_wake
+   self-handles as a pause.
+
+-- The test asserts the OPPOSITE (tests/fm-daemon.test.sh:346-365) --
+test_handle_wake_paused_validation_outcome_escalates() {
+  local dir state win key item outcome reason
+  for item in ready failed; do
+    dir=$(make_supercase "handle-paused-validation-outcome-$item")
+    state="$dir/state"
+    win="sess:fm-held-$item"
+    printf 'paused: awaiting the vendor validation slot\n' > "$state/held-$item.status"
+    key=$(printf '%s' "held-$item" | tr ':/.' '___')
+    case "$item" in
+      ready) outcome='state: done · source: run-step · checks green: PR ready for review · run-id=afk-ready run-head=aaa111' ;;
+      *)     outcome='state: failed · source: run-step · checks failed · run-id=afk-failed run-head=bbb222' ;;
+    esac
+    reason="stale: $win (validation run outcome: $outcome)"
+    FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+    [ -s "$state/.subsuper-escalations" ] || fail "$item validation outcome was self-handled as a pause"
+    grep -F "validation run outcome" "$state/.subsuper-escalations" >/dev/null \
+      || fail "$item validation outcome escalation omitted the run outcome"
+    [ ! -e "$state/.subsuper-paused-$key" ] || fail "$item validation outcome recorded a pause marker"
+  done
+  pass "paused stale validation run outcomes escalate instead of self-handling"
+
+-- The code comment (same commit 421246f) documents the pause-exemption as INTENDED --
+              # bounded - by one recheck per PAUSE_RESURFACE_SECS instead. A batched
+              # validation-run-outcome detail follows the same pause exemption: it
+              # is new captain-facing information either way, but a current
+              # declared wait still owns its own bounded recheck cadence instead.
+
+CONTRADICTION: within commit 421246f, the comment+code exempt paused validation
+outcomes from escalation, while the new test demands they escalate. Both the 'ready'
+and 'failed' loop iterations fail. fm-daemon.test.sh is a CI-run test
+(bin/fm-test-isolation-proof.sh), so this blocks CI. Requires author decision:
+flip the test to expect pause, or hoist the escalate branch above the pause guard.
