@@ -20,7 +20,28 @@
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
+#                 "TOOL_AUTOUPDATE: <diagnostic>", and
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
+#          TOOL AUTO-UPDATE (opt-in, default off). A non-empty config/tool-autoupdate
+#          turns on an unattended `npm install -g <pkg>@latest` for whichever of
+#          gh-axi, chrome-devtools-axi, lavish-axi, tasks-axi, quota-axi, acpx,
+#          backpass, and gnhf are already on PATH and behind the npm registry's
+#          published version. treehouse and no-mistakes are never auto-updated:
+#          both gate active use on their own version and have their own held
+#          update tasks. This is the ONLY tool detection this file ever mutates
+#          without a MISSING-driven install command; every other home leaves the
+#          plain detect-then-consent contract in AGENTS.md section 3 unchanged
+#          because the flag defaults off. Registry lookups are rate-limited to
+#          once per 24h via state/.tool-autoupdate-checked, run only in the
+#          deferred network phase (never on the local session-start path), and
+#          are bounded by FM_TOOL_AUTOUPDATE_TIMEOUT (default 60s) the same way
+#          fleet-sync bounds its own background refresh. A successful update
+#          prints one summary "BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ..."
+#          line; a failed install, a failed registry lookup, or an unreachable
+#          npm/network prints an actionable "TOOL_AUTOUPDATE: ..." line instead.
+#          MISSING detection for a fresh machine is unaffected: a package that
+#          is not yet installed is left to the ordinary MISSING/install flow
+#          above, never auto-installed by this sweep.
 #          When a RUNNING local secondmate worktree is fast-forwarded to
 #          firstmate's own current default-branch commit, that update is a
 #          purely local fast-forward and never an origin fetch. Remote routes
@@ -326,6 +347,126 @@ fleet_sync() {
   [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
 
   fleet_sync_relay_filtered_output "$tmp"
+  rm -f "$tmp"
+}
+
+# Opt-in npm auto-update sweep (default off; every other home keeps the plain
+# detect-then-consent contract from AGENTS.md section 3 unchanged). A home
+# turns this on for itself by dropping a non-empty config/tool-autoupdate;
+# absence is the default and this whole block is then a no-op.
+# treehouse and no-mistakes are deliberately excluded: both have active-use
+# safety gates (lease support, validation-pipeline version matching) and their
+# own held update tasks, so an unattended `npm install -g` on either is never
+# safe here.
+TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
+
+tool_autoupdate_enabled() {
+  [ -f "$CONFIG/tool-autoupdate" ] && [ ! -L "$CONFIG/tool-autoupdate" ]
+}
+
+# Rate-limits the registry lookups to once per 24h so an opted-in home does not
+# pay a network round trip per package on every session start. The marker is
+# stamped before the sweep runs (not after), so a slow, timed-out, or partially
+# failed run still throttles the next attempt instead of retrying immediately.
+tool_autoupdate_due() {
+  local marker="$STATE/.tool-autoupdate-checked" now last
+  now=$(date +%s)
+  if [ -f "$marker" ] && [ ! -L "$marker" ]; then
+    last=$(cat "$marker" 2>/dev/null) || last=0
+    case "$last" in *[!0-9]*) last=0 ;; esac
+    [ $((now - last)) -ge 86400 ] || return 1
+  fi
+  return 0
+}
+
+tool_autoupdate_stamp() {
+  local marker="$STATE/.tool-autoupdate-checked" tmp
+  [ -d "$STATE" ] || return 0
+  tmp=$(mktemp "$STATE/.tool-autoupdate-checked.XXXXXX" 2>/dev/null) || return 0
+  if ! date +%s > "$tmp" 2>/dev/null || ! mv -f "$tmp" "$marker" 2>/dev/null; then
+    rm -f "$tmp"
+  fi
+}
+
+npm_global_installed_version() {  # <pkg>
+  npm list -g "$1" --depth=0 2>/dev/null \
+    | sed -nE "s/.*[[:space:]]$1@([0-9][^[:space:]]*)\$/\1/p" | head -n 1
+}
+
+npm_registry_latest_version() {  # <pkg>
+  npm view "$1" version 2>/dev/null | head -n 1
+}
+
+# Runs entirely inside the caller's already-bounded background job (see
+# tool_autoupdate_sweep). Prints one line per actionable outcome; the caller
+# relays those with the TOOL_AUTOUPDATE: prefix and folds successful updates
+# into a single BOOTSTRAP_INFO line.
+tool_autoupdate_body() {
+  local pkg installed latest updated=""
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "DIAG:npm not found on PATH, cannot check for updates"
+    return 0
+  fi
+  for pkg in $TOOL_AUTOUPDATE_PACKAGES; do
+    command -v "$pkg" >/dev/null 2>&1 || continue
+    installed=$(npm_global_installed_version "$pkg")
+    [ -n "$installed" ] || continue
+    latest=$(npm_registry_latest_version "$pkg")
+    if [ -z "$latest" ]; then
+      echo "DIAG:registry lookup failed for $pkg (network unavailable?)"
+      continue
+    fi
+    [ "$installed" != "$latest" ] || continue
+    if npm install -g "$pkg@latest" >/dev/null 2>&1; then
+      updated="$updated $pkg@$latest"
+    else
+      echo "DIAG:npm install -g $pkg@latest failed (was $installed)"
+    fi
+  done
+  [ -z "$updated" ] || echo "UPDATED:$updated"
+}
+
+tool_autoupdate_relay_output() {
+  local tmp=$1 line updated=""
+  while IFS= read -r line; do
+    case "$line" in
+      DIAG:*) echo "TOOL_AUTOUPDATE: ${line#DIAG:}" ;;
+      UPDATED:*) updated="${line#UPDATED:}" ;;
+    esac
+  done < "$tmp"
+  [ -z "$updated" ] || echo "BOOTSTRAP_INFO: tool-autoupdate updated$updated"
+}
+
+# Bounded exactly like fleet_sync: one background job, wall-clock timeout, no
+# output relayed until the job either finishes or is killed at the timeout.
+tool_autoupdate_sweep() {
+  tool_autoupdate_enabled || return 0
+  tool_autoupdate_due || return 0
+  local tmp timeout monitor_was_on pid start elapsed
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tool-autoupdate.XXXXXX" 2>/dev/null) || return 0
+  timeout=${FM_TOOL_AUTOUPDATE_TIMEOUT:-60}
+  tool_autoupdate_stamp
+  monitor_was_on=0
+  case $- in *m*) monitor_was_on=1 ;; esac
+  set -m 2>/dev/null || true
+  tool_autoupdate_body >"$tmp" 2>/dev/null &
+  pid=$!
+  start=$SECONDS
+  while jobs -r -p | grep -qx "$pid"; do
+    elapsed=$((SECONDS - start))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+      echo "TOOL_AUTOUPDATE: check timed out (timeout=${timeout}s elapsed=${elapsed}s)"
+      rm -f "$tmp"
+      return 0
+    fi
+    sleep 1
+  done
+  wait "$pid" 2>/dev/null || true
+  [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+  tool_autoupdate_relay_output "$tmp"
   rm -f "$tmp"
 }
 
@@ -1400,6 +1541,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     wait "$fleet_sync_pid" || true
     cat "$fleet_sync_out"
     rm -f "$fleet_sync_out"
+  fi
+  if network_phase && tool_autoupdate_enabled && network_sweep_authorized 'tool auto-update'; then
+    __fm_timing_stamp=$(fm_timing_now_ms)
+    tool_autoupdate_sweep
+    fm_timing_record phase tool-autoupdate "$__fm_timing_stamp"
   fi
 fi
 local_phase && secondmate_handoff_detect

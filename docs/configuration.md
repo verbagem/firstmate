@@ -413,6 +413,15 @@ Bootstrap's universal toolchain includes compatible `backpass`; an absent or too
 Run it periodically rather than on every session: in the firstmate home and in `command-center` after a notable batch of sessions, and with `--scope user` after notable sessions to train the always-loaded user-level memory.
 Firstmate presents `backpass`'s proposed edits to the captain for review; it never runs `backpass apply` on its own.
 
+### Tool auto-update (config/tool-autoupdate, opt-in)
+
+A home that wants a fixed set of already-installed tools kept current without a per-session install-consent round trip can drop a non-empty local, gitignored `config/tool-autoupdate` to opt in; its absence is the default, and every other home keeps the plain detect-then-consent contract in `AGENTS.md` section 3 unchanged.
+Once opted in, `bin/fm-bootstrap.sh`'s deferred network phase checks `npm view <pkg> version` for `gh-axi`, `chrome-devtools-axi`, `lavish-axi`, `tasks-axi`, `quota-axi`, `acpx`, `backpass`, and `gnhf` when each is already on `PATH`, rate-limited to once per 24h via `state/.tool-autoupdate-checked`, and silently runs `npm install -g <pkg>@latest` for any package behind the published version.
+`treehouse` and `no-mistakes` are excluded: both gate active use on their own installed version and carry their own held update tasks, so an unattended install on either is unsafe.
+This check runs only in the deferred network phase, never on the local session-start path, and is bounded by `FM_TOOL_AUTOUPDATE_TIMEOUT` (default 60s) the same way fleet-sync bounds its own background refresh.
+A completed update prints one `BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ...` summary line; a failed install, a failed registry lookup, or an unreachable `npm`/network prints an actionable `TOOL_AUTOUPDATE: ...` line instead.
+This opt-in never changes `MISSING` detection: a package not yet installed on a fresh machine still goes through the ordinary install-consent flow above, never an unattended first install.
+
 ## Watched tool updates (config/watched-tools.json)
 
 `config/watched-tools.json` is an optional local, gitignored list of the tools this home depends on.

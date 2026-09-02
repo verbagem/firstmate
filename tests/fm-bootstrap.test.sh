@@ -394,6 +394,129 @@ test_backpass_absent_reports_missing() {
   pass "bootstrap reports backpass MISSING when absent from PATH"
 }
 
+# Fake npm for the tool-autoupdate sweep: reports each package's fake
+# "installed" and "latest" versions via env vars, and either succeeds or fails
+# `npm install -g` per FM_FAKE_NPM_INSTALL_FAIL.
+add_fake_npm() {
+  local fakebin=$1
+  cat > "$fakebin/npm" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = list ] && [ "$2" = -g ]; then
+  pkg=$3
+  case "$pkg" in
+    gh-axi) inst=${FM_FAKE_NPM_GH_AXI_INSTALLED:-} ;;
+    backpass) inst=${FM_FAKE_NPM_BACKPASS_INSTALLED:-} ;;
+    *) exit 1 ;;
+  esac
+  [ -n "$inst" ] || exit 1
+  printf '/x/lib\n'
+  printf '└── %s@%s\n' "$pkg" "$inst"
+  exit 0
+fi
+if [ "$1" = view ]; then
+  case "$2" in
+    gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-} ;;
+    backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-} ;;
+    *) exit 1 ;;
+  esac
+  [ -n "$latest" ] || exit 1
+  printf '%s\n' "$latest"
+  exit 0
+fi
+if [ "$1" = install ]; then
+  [ "${FM_FAKE_NPM_INSTALL_FAIL:-0}" != 1 ]
+  exit $?
+fi
+exit 1
+SH
+  chmod +x "$fakebin/npm"
+}
+
+test_tool_autoupdate_disabled_by_default() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-default-off"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  # config/tool-autoupdate is absent: this is the plain, unmodified template
+  # contract every non-opted-in home keeps.
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "TOOL_AUTOUPDATE" "an un-opted-in home must never run the auto-update sweep"
+  assert_not_contains "$out" "tool-autoupdate updated" "an un-opted-in home must never auto-install anything"
+  pass "bootstrap: tool auto-update stays off without an explicit config/tool-autoupdate opt-in"
+}
+
+test_tool_autoupdate_updates_outdated_and_skips_current() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-mixed"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.16 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "an outdated opted-in package must be auto-updated"
+  assert_contains "$out" "gh-axi@0.1.35" "the update summary must name the outdated package and its new version"
+  assert_not_contains "$out" "backpass@0.1.16" "an already-current package must not appear in the update summary"
+  [ -f "$case_dir/home/state/.tool-autoupdate-checked" ] || fail "the 24h throttle marker must be written after a run"
+  pass "bootstrap: tool auto-update installs an outdated package and leaves a current one alone"
+}
+
+test_tool_autoupdate_respects_24h_throttle() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-throttled"
+  mkdir -p "$case_dir/home/config" "$case_dir/home/state"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  date +%s > "$case_dir/home/state/.tool-autoupdate-checked"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "TOOL_AUTOUPDATE" "a fresh marker must suppress the registry check entirely"
+  assert_not_contains "$out" "tool-autoupdate updated" "a fresh marker must skip the install, not just its diagnostics"
+  pass "bootstrap: tool auto-update rate-limits registry checks to once per 24h"
+}
+
+test_tool_autoupdate_reports_install_failure() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-install-fail"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_FAIL=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "TOOL_AUTOUPDATE:" "a failed npm install must surface as an actionable diagnostic"
+  assert_not_contains "$out" "tool-autoupdate updated" "a failed install must not be reported as a success"
+  pass "bootstrap: tool auto-update reports a failed npm install as an actionable diagnostic"
+}
+
+test_tool_autoupdate_reports_npm_unavailable() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-no-npm"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "TOOL_AUTOUPDATE:" "a missing npm must be reported, not silently skipped"
+  pass "bootstrap: tool auto-update reports when npm itself is unavailable"
+}
+
 test_gh_axi_min_version() {
   local label version mode case_dir fakebin out missing n
   missing='MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)'
@@ -1205,6 +1328,11 @@ test_bootstrap_reporting
 test_no_mistakes_min_version
 test_backpass_min_version
 test_backpass_absent_reports_missing
+test_tool_autoupdate_disabled_by_default
+test_tool_autoupdate_updates_outdated_and_skips_current
+test_tool_autoupdate_respects_24h_throttle
+test_tool_autoupdate_reports_install_failure
+test_tool_autoupdate_reports_npm_unavailable
 test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version
