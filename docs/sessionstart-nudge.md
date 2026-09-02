@@ -112,7 +112,9 @@ by the number of currently-live Pi processes instead of accruing one orphan file
 If the write itself fails, the pointer is replaced by an operational message naming the error and
 telling the agent to run `bin/fm-session-start.sh` directly, so a session never opens silently without
 its digest. A truncated digest also names the truncation in the pointer itself, not only inside the file. An already-encoded short nudge (the resume/fork delegation case) is still sent
-inline as before - it was never the source of the oversized payload. `display: false` and the
+inline as before - it was never the source of the oversized payload - and so is the short manual
+fallback prompt returned when the wrapper fails, which is encoded inline rather than filed because only a
+genuine ready digest can be oversized. `display: false` and the
 no-`triggerTurn`/no-`deliverAs` call shape are unchanged; only what travels through the message shrank.
 This preserves AGENTS.md section 3's full-digest-before-acting contract exactly - the agent still reads
 the complete content, just via a `Read` call instead of inline message text - and changes nothing about
