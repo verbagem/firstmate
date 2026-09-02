@@ -11,7 +11,32 @@ TMP_ROOT=$(fm_test_tmproot fm-on)
 # and physicalize macOS's /var -> /private/var alias before transport validation.
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
-trap 'if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then kill "$(cat "$TMP_ROOT/remote-jobs/worker.pid")" 2>/dev/null || true; fi; rm -rf -- "$TMP_ROOT"' EXIT
+cleanup() {
+  local worker_pid _
+  if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
+    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid" 2>/dev/null || true)
+    if [ -n "$worker_pid" ]; then
+      kill "$worker_pid" 2>/dev/null || true
+      # Wait for the worker to actually exit before removing the tree. A live
+      # worker still flushing state into remote-jobs races rm -rf, which then
+      # fails with "Directory not empty" and, as the trap's last command under
+      # set -e, flips an otherwise-passing test to exit 1.
+      for _ in $(seq 1 100); do
+        kill -0 "$worker_pid" 2>/dev/null || break
+        sleep 0.05
+      done
+    fi
+  fi
+  # Bounded retry so any writer that outlives the wait cannot flip the result.
+  # Removal here is teardown, not an asserted contract (tests/fm-teardown.test.sh
+  # owns teardown behavior), so a benign leftover is swallowed, not propagated.
+  for _ in $(seq 1 20); do
+    rm -rf -- "$TMP_ROOT" 2>/dev/null && break
+    sleep 0.05
+  done
+  return 0
+}
+trap cleanup EXIT
 LOCAL_HOME="$TMP_ROOT/local-home"
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
