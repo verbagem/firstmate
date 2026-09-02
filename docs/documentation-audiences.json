@@ -293,6 +293,10 @@
       "audience": "operator-example"
     },
     {
+      "path": "docs/examples/local-inference-catalog.json",
+      "audience": "operator-example"
+    },
+    {
       "path": "docs/examples/wedge-alarm",
       "audience": "operator-example"
     },
@@ -310,6 +314,10 @@
     },
     {
       "path": "docs/herdr-backend.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/local-inference.md",
       "audience": "operator-current"
     },
     {
@@ -378,6 +386,10 @@
     },
     {
       "path": "docs/verification/dispatch-auth.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/local-inference.md",
       "audience": "maintainer-verification"
     },
     {
