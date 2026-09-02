@@ -217,6 +217,34 @@ test_open_decision_still_shown_when_latest_blocker_is_rejected_by_the_fold() {
   pass "an open decision stays visible when the latest blocked line was not accepted into the folded open set"
 }
 
+test_relative_paths_and_url_segments_are_not_redacted() {
+  local rec state data id=recap-relpath out
+  rec=$(make_fixture relpath); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: updated app/home/page.tsx and api/private/routes.ts, see https://example.com/tmp/x; log at /var/log/app.log\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'app/home/page.tsx' "a relative path containing /home must not be redacted"
+  assert_contains "$out" 'api/private/routes.ts' "a relative path containing /private must not be redacted"
+  assert_contains "$out" 'https://example.com/tmp/x' "a URL path segment containing /tmp must not be redacted"
+  assert_not_contains "$out" '/var/log' "a real absolute path is still redacted"
+  assert_contains "$out" 'log at [path]' "the absolute path leaves its placeholder"
+  pass "path redaction only fires on absolute paths, leaving relative paths and URL segments intact"
+}
+
+test_decision_key_tokens_are_not_treated_as_secrets() {
+  local rec state data id=recap-keytoken out
+  rec=$(make_fixture keytoken); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: resolved the [key=retry-policy] question, rotated key=abcdefghijk afterwards\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" '[key=retry-policy]' "a bracketed decision key is structural syntax, not a credential"
+  assert_not_contains "$out" 'abcdefghijk' "a bare key= assignment is still redacted"
+  printf 'needs-decision [key=api-shape]: [key=other-thing] pick one\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Needs a decision: [key=other-thing] pick one' "a note-head decision key passes through unredacted"
+  pass "the [key=<slug>] decision-key grammar is exempt from secret redaction while key= assignments are not"
+}
+
 test_secret_keywords_redact_regardless_of_case() {
   local rec state data id=recap-privacy-case out
   rec=$(make_fixture privacy-case); IFS='|' read -r state data <<<"$rec"
@@ -263,7 +291,7 @@ test_title_matches_fleet_snapshot_title_of() {
     printf -- '- [ ] %s - Fix login <https://github.com/verbagem/firstmate/pull/3> blocked-by: t0 - waits on auth (repo: demo) (kind: ship) (since 2026-08-01)\n' "$id"
   } > "$data/backlog.md"
   out=$(render "$id" "$state" "$data")
-  expected=$(FM_DATA_OVERRIDE="$data" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-fleet-snapshot.sh" 2>&1 \
+  expected=$(FM_DATA_OVERRIDE="$data" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-fleet-snapshot.sh" 2>/dev/null \
     | jq -r --arg id "$id" '.backlog.records[] | select(.id == $id) | .title' 2>/dev/null)
   [ -n "$expected" ] && [ "$expected" != null ] || fail "fm-fleet-snapshot.sh produced no title record for $id, so the parity check cannot run"
   [ "$(printf '%s\n' "$out" | sed -n 1p)" = "$expected" ] || fail "recap title must match the fleet snapshot's title_of ('$expected'), got:"$'\n'"$out"
@@ -323,6 +351,8 @@ test_no_catchall_redaction_of_long_words_or_mid_word_keywords
 test_pr_url_on_the_allowlist_is_emitted_verbatim
 test_open_count_survives_when_latest_line_is_the_blocker
 test_open_decision_still_shown_when_latest_blocker_is_rejected_by_the_fold
+test_relative_paths_and_url_segments_are_not_redacted
+test_decision_key_tokens_are_not_treated_as_secrets
 test_secret_keywords_redact_regardless_of_case
 test_unrecognized_verb_renders_as_update_not_starting_up
 test_strips_osc_sequences_and_redacts_other_path_roots
