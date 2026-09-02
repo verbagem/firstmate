@@ -16,7 +16,8 @@
 #   - <name> [<mode>] - <desc> (added <date>)                 -> <mode> off
 #   - <name> [<mode> +yolo] - <desc> (added <date>)           -> <mode> on
 #   - <name> [<mode> path=/absolute/project] - <desc> (...)   -> path identity for external projects
-#     (path= runs to the closing ] so paths may contain spaces; it must be the last token)
+#     (path= runs to the closing ] so paths may contain spaces; it must be the last
+#     token - a mode, +yolo, or key=value token written after it refuses loudly)
 #
 # Path lookups match structured identities only: the canonical in-home
 # projects/<name> path, or one path= absolute-path token inside the registry
@@ -197,14 +198,29 @@ mode_yolo_from_annotation() {  # <name> <annotation>
   printf '%s %s\n' "$mode" "$yolo"
 }
 
-explicit_paths_from_annotation() {  # <name> <annotation>
-  local name=$1 ann=$2 path
+explicit_paths_from_annotation() {  # <name> <annotation> <line>
+  local name=$1 ann=$2 line=$3 path token first=1 trailing=''
   case "$ann" in *path=*) ;; *) return 0 ;; esac
   path=${ann#*path=}
   case "$path" in
     *path=*) echo "error: malformed path identity for $name: multiple path= tokens" >&2; return 2 ;;
   esac
   path=${path%"${path##*[![:space:]]}"}
+  for token in $path; do
+    if [ "$first" -eq 1 ]; then
+      first=0
+      continue
+    fi
+    case "$token" in
+      +*|*=*|no-mistakes|direct-PR|local-only|no-mistakes-prod-only)
+        trailing="${trailing}${trailing:+ }$token"
+        ;;
+    esac
+  done
+  if [ -n "$trailing" ]; then
+    echo "error: malformed path identity for $name: path= must be the last annotation token; found trailing token(s) \"$trailing\" after path= in registry line: $line" >&2
+    return 2
+  fi
   case "$path" in
     /*) ;;
     *) echo "error: malformed path identity for $name: path= must be an absolute path" >&2; return 2 ;;
@@ -212,9 +228,9 @@ explicit_paths_from_annotation() {  # <name> <annotation>
   printf '%s\n' "$path"
 }
 
-paths_for_registry_line() {  # <name> <annotation>
-  local name=$1 ann=$2 explicit candidate
-  explicit=$(explicit_paths_from_annotation "$name" "$ann") || return 2
+paths_for_registry_line() {  # <name> <annotation> <line>
+  local name=$1 ann=$2 line=$3 explicit candidate
+  explicit=$(explicit_paths_from_annotation "$name" "$ann" "$line") || return 2
   if [ -n "$explicit" ]; then
     printf '%s\n' "$explicit"
     return
@@ -261,7 +277,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   line_name=$(registry_line_name "$line" || true)
   [ -n "$line_name" ] || continue
   ann=$(registry_annotation "$line_name" "$line") || exit 2
-  paths=$(paths_for_registry_line "$line_name" "$ann") || exit 2
+  paths=$(paths_for_registry_line "$line_name" "$ann" "$line") || exit 2
   matched=0
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue

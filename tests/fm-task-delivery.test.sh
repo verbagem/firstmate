@@ -381,6 +381,13 @@ test_project_mode_resolves_registered_paths() {
   status=$?
   [ "$status" -ne 0 ] || fail "multiple path= tokens should refuse"
   assert_grep 'multiple path= tokens' "$errf" "multiple path= refusal did not name the problem"
+  printf -- "- misordered [local-only path=%s +yolo] - misordered fixture (added 2026-01-01)\n" "$spaced" \
+    > "$home/data/projects.md"
+  FM_HOME="$home" "$PROJECT_MODE" --with-name --path "$spaced" >"$outf" 2>"$errf"
+  status=$?
+  [ "$status" -ne 0 ] || fail "a token after path= should refuse, not be swallowed into the path (got '$(cat "$outf")')"
+  assert_grep 'trailing token(s) "+yolo" after path=' "$errf" "misordered path= refusal did not name the trailing token"
+  assert_grep "registry line: - misordered [local-only path=$spaced +yolo]" "$errf" "misordered path= refusal did not name the registry line"
   pass "fm-project-mode: path lookup handles external, in-tree, unknown, ambiguous, and malformed identities"
 }
 
