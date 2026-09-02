@@ -1,0 +1,16 @@
+PR #15 retrigger — no-mistakes CI-fix delta validation
+
+Product-change check: files touched by the 3 'apply CI fixes' commits:
+  CONTRIBUTING.md
+  tests/fm-pi-watch-extension.test.sh
+-> test-only; no bin/ .pi/ product source changed. Forbidden 'no product changes' constraint holds.
+
+Fix under test (tip 6dadfc2): raise arm readiness timeout 250ms->1000ms in the two
+unretired-successor tests so a slow CI bash startup cannot race the arm log row.
+
+Targeted run of the two affected tests:
+  ok - Pi unretired successor falls back without an overlapping retry
+  ok - OpenCode unretired successor falls back without an overlapping retry
+
+Anti-flake stability (20 repeats):
+  STABILITY: 20/20 clean, 0/20 flaky-or-failed
