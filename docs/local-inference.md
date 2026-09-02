@@ -78,7 +78,7 @@ Speed and intelligence evidence are optional and used only as deterministic rank
 ## Hardware And Ranking
 
 `bin/fm-local-inference.sh hardware` prints portable local inventory with platform, architecture, CPU model, total memory, available memory, and source.
-Linux prefers `/proc/meminfo` and uses `MemAvailable` when present.
+Linux prefers `/proc/meminfo` and uses `MemAvailable` when present; macOS derives available memory from `vm_stat` reclaimable pages and reports it as unknown when `vm_stat` cannot be read.
 Other supported hosts use Node's operating-system inventory and report unknowns when a value cannot be read.
 
 Ranking is deterministic and read-only:
