@@ -66,6 +66,7 @@ function runRecapScript(id: string, state: string, data: string): Promise<string
 // pure function of the task's durable records: identical output means
 // nothing captain-relevant changed.
 let lastRendered: string | undefined;
+let inFlight: Promise<void> = Promise.resolve();
 
 async function render(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   try {
@@ -81,10 +82,22 @@ async function render(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   }
 }
 
-export default function (pi: ExtensionAPI) {
-  pi.on("session_start", async (_event, ctx) => render(pi, ctx));
-  pi.on("turn_start", async (_event, ctx) => render(pi, ctx));
-  pi.on("turn_end", async (_event, ctx) => render(pi, ctx));
+// Turn boundaries never wait on the recap: the render (an execFile of a bash
+// script, bounded by RENDER_TIMEOUT_MS) runs off Pi's critical path and the
+// widget catches up whenever it finishes. session_start still awaits so the
+// first frame the captain sees already carries the recap.
+function renderDetached(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  inFlight = render(pi, ctx);
 }
 
-export const __fmTaskRecapTest = { runRecapScript, resetForTest: () => { lastRendered = undefined; } };
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", async (_event, ctx) => render(pi, ctx));
+  pi.on("turn_start", (_event, ctx) => { renderDetached(pi, ctx); });
+  pi.on("turn_end", (_event, ctx) => { renderDetached(pi, ctx); });
+}
+
+export const __fmTaskRecapTest = {
+  runRecapScript,
+  resetForTest: () => { lastRendered = undefined; },
+  settle: () => inFlight,
+};

@@ -158,6 +158,7 @@ const ctx = {
 };
 for (const ev of process.env.EVENTS.split(",")) {
   await handlers[ev]({}, ctx);
+  await mod.__fmTaskRecapTest.settle();
 }
 console.log(JSON.stringify(calls));
 EOF
@@ -207,6 +208,44 @@ test_extension_skips_unchanged_rerenders() {
   pass "an unchanged status file produces no repeat widget call, while a real change always renders"
 }
 
+test_turn_handlers_do_not_block_on_the_render() {
+  local state data id=recap-ext-detached out
+  state="$TMP_ROOT/ext-detached/state"; data="$TMP_ROOT/ext-detached/data"
+  mkdir -p "$state" "$data"
+  printf -- '- [ ] %s - Fix the login bug (repo: demo) (kind: ship) (since 2026-08-01)\n' "$id" > "$data/backlog.md"
+  printf 'working: reproduced the bug\n' > "$state/$id.status"
+  # turn_start/turn_end must return synchronously (no promise handed back to
+  # Pi) while the widget still lands once the detached render settles.
+  out=$(EXT="$EXT" FM_RECAP_TASK_ID="$id" FM_RECAP_STATE_DIR="$state" FM_RECAP_DATA_DIR="$data" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+const handlers = {};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default({ on: (name, fn) => { handlers[name] = fn; } });
+const calls = [];
+const ctx = { hasUI: true, ui: { setWidget: (key, lines) => { calls.push({ key, lines }); } } };
+const results = {};
+for (const ev of ["turn_start", "turn_end"]) {
+  const before = calls.length;
+  const r = handlers[ev]({}, ctx);
+  results[ev] = { returnsPromise: r instanceof Promise, renderedAtReturn: calls.length - before };
+  await mod.__fmTaskRecapTest.settle();
+}
+console.log(JSON.stringify({ results, finalCalls: calls.length, lines: calls[0]?.lines ?? [] }));
+EOF
+) || fail "drive failed: $out"
+  local json; json=$(printf '%s' "$out" | tail -1)
+  python3 - "$json" <<'PY2' || fail "turn handlers must not hand Pi a render promise: $json"
+import json,sys
+d=json.loads(sys.argv[1])
+for ev in ("turn_start","turn_end"):
+    assert d["results"][ev]["returnsPromise"] is False, ev
+    assert d["results"][ev]["renderedAtReturn"] == 0, ev
+assert d["finalCalls"] == 1, d
+assert any("In progress: reproduced the bug" in l for l in d["lines"]), d
+PY2
+  pass "turn_start/turn_end return synchronously and the widget still renders once the detached render settles"
+}
+
 test_extension_respects_hasui_gate() {
   local state data id=recap-ext-nohasui out calls
   state="$TMP_ROOT/ext-nohasui/state"; data="$TMP_ROOT/ext-nohasui/data"
@@ -227,7 +266,7 @@ const mod = await import(pathToFileURL(process.env.EXT).href);
 mod.default({ on: (name, fn) => { handlers[name] = fn; } });
 const calls = [];
 const ctx = { hasUI: true, ui: { setWidget: (key, lines, opts) => { calls.push({ key, lines, opts }); } } };
-for (const ev of process.env.EVENTS.split(",")) await handlers[ev]({}, ctx);
+for (const ev of process.env.EVENTS.split(",")) { await handlers[ev]({}, ctx); await mod.__fmTaskRecapTest.settle(); }
 console.log(JSON.stringify(calls));
 EOF
 ) || fail "drive failed: $out"
@@ -272,6 +311,7 @@ test_ship_pi_spawn_wires_the_recap_extension_and_env_vars
 test_secondmate_pi_spawn_never_wires_the_recap_extension
 test_other_harness_spawn_is_unaffected
 test_extension_renders_widget_on_session_start
+test_turn_handlers_do_not_block_on_the_render
 test_extension_skips_unchanged_rerenders
 test_extension_respects_hasui_gate
 test_extension_noop_when_recap_env_vars_absent

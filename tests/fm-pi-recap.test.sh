@@ -144,6 +144,101 @@ test_redacts_paths_and_secret_shaped_tokens() {
   pass "absolute local paths and secret-shaped tokens are redacted before the recap is rendered"
 }
 
+test_no_catchall_redaction_of_long_words_or_mid_word_keywords() {
+  local rec state data id=recap-privacy-2 out
+  rec=$(make_fixture privacy-catchall); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Fix turnkey checkout flow for command-center-ops-firstmate"
+  printf 'working: monkey patched the abcdefghijklmnopqrstuvwxyz0123 helper, no key involved\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Fix turnkey checkout flow for command-center-ops-firstmate' "an ordinary long repo name and a mid-word 'key' must survive intact"
+  assert_contains "$out" 'In progress: monkey patched the abcdefghijklmnopqrstuvwxyz0123 helper, no key involved' "a bare long alnum run is not a secret"
+  assert_not_contains "$out" '[redacted]' "nothing keyword-prefixed was present, so nothing may be redacted"
+  printf 'working: rotated ghp_abcdefghijklmnop and password=hunter2hunter2 then sk-abcdef0123456789\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_not_contains "$out" 'ghp_abcdefghijklmnop' "a ghp_ token must be redacted"
+  assert_not_contains "$out" 'hunter2hunter2' "a password= assignment must be redacted"
+  assert_not_contains "$out" 'sk-abcdef0123456789' "an sk- token must be redacted"
+  pass "redaction is keyword-prefixed only: plain long words and mid-word keywords pass through, real secret shapes still do not"
+}
+
+test_pr_url_on_the_allowlist_is_emitted_verbatim() {
+  local rec state data id=recap-pr-2 out
+  rec=$(make_fixture pr-verbatim); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'pr=https://github.com/verbagem/command-center-ops-firstmate/pull/12\n' > "$state/$id.meta"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'PR: https://github.com/verbagem/command-center-ops-firstmate/pull/12' "a canonical GitHub PR URL must reach the captain byte-for-byte"
+  printf 'pr=https://gitlab.example.com/group/sub/project/-/merge_requests/7\n' > "$state/$id.meta"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'PR: https://gitlab.example.com/group/sub/project/-/merge_requests/7' "a canonical GitLab MR URL must reach the captain byte-for-byte"
+  printf 'pr=https://github.com/verbagem/firstmate/pull/12?token=abcdefghijklmnop\n' > "$state/$id.meta"
+  out=$(render "$id" "$state" "$data")
+  assert_not_contains "$out" 'abcdefghijklmnop' "an off-allowlist pr= value goes through the sanitizer"
+  pass "a pr= value that parses under fm_pr_url_parse is emitted verbatim; anything else is sanitized"
+}
+
+test_open_count_survives_when_latest_line_is_the_blocker() {
+  local rec state data id=recap-open-count out
+  rec=$(make_fixture open-count); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  {
+    printf 'blocked: waiting on API access\n'
+    printf 'needs-decision: [key=alt] pick a retry policy\n'
+    printf 'blocked: [key=third] disk full\n'
+  } > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Blocked: disk full (+2 more)' "the phase line must carry the count of the other still-open decisions"
+  [ "$(printf '%s\n' "$out" | grep -c 'disk full')" = 1 ] || fail "the latest blocker text must still appear only once:"$'\n'"$out"
+  printf 'blocked: only one thing\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Blocked: only one thing' "a lone blocker renders plainly"
+  assert_not_contains "$out" 'more)' "a lone blocker carries no (+N more) suffix"
+  pass "the (+N more) open-decision count is kept even when the latest line's own text is deduplicated"
+}
+
+test_unrecognized_verb_renders_as_update_not_starting_up() {
+  local rec state data id=recap-unknown-verb out
+  rec=$(make_fixture unknown-verb); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'reviewing: checking the diff against the spec\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Update: checking the diff against the spec' "an unrecognized leading verb shows the actual note as an Update"
+  assert_not_contains "$out" 'Starting up' "a task that has reported progress is never shown as not yet begun"
+  pass "an unrecognized status verb renders as 'Update: <note>', with 'Starting up' reserved for the absent-status case"
+}
+
+test_strips_osc_sequences_and_redacts_other_path_roots() {
+  local rec state data id=recap-osc out
+  rec=$(make_fixture osc); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: wrote /opt/data/x and /var/tmp/y \033]0;pwned title\007then \033[31mred\033[0m and /etc/hosts\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_not_contains "$out" $'\033' "no escape byte may reach the widget"
+  assert_not_contains "$out" 'pwned title' "an OSC payload must be stripped, not rendered"
+  assert_not_contains "$out" '/opt/data' "an /opt path must be redacted"
+  assert_not_contains "$out" '/var/tmp' "a /var path must be redacted"
+  assert_not_contains "$out" '/etc/hosts' "an /etc path must be redacted"
+  assert_contains "$out" 'In progress: wrote [path] and [path] then red and [path]' "the surrounding text survives the strip and redaction"
+  pass "OSC and CSI escapes are stripped and absolute paths under common roots beyond /Users and /home are redacted"
+}
+
+test_title_matches_fleet_snapshot_title_of() {
+  local rec state data id=recap-title-1 out expected
+  rec=$(make_fixture title-of); IFS='|' read -r state data <<<"$rec"
+  {
+    printf '## Queued\n\n'
+    printf -- '- [ ] %s - Fix login <https://github.com/verbagem/firstmate/pull/3> blocked-by: t0 - waits on auth (repo: demo) (kind: ship) (since 2026-08-01)\n' "$id"
+  } > "$data/backlog.md"
+  out=$(render "$id" "$state" "$data")
+  expected=$(FM_DATA_OVERRIDE="$data" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-fleet-snapshot.sh" 2>/dev/null \
+    | jq -r --arg id "$id" '.backlog.records[] | select(.id == $id) | .title')
+  [ -n "$expected" ] || expected='Fix login'
+  [ "$(printf '%s\n' "$out" | sed -n 1p)" = "$expected" ] || fail "recap title must match the fleet snapshot's title_of ('$expected'), got:"$'\n'"$out"
+  assert_not_contains "$out" 'blocked-by' "the blocked-by clause is not part of the title"
+  assert_not_contains "$out" 'github.com' "a wrapped URL is not part of the title"
+  pass "the recap title is produced by the same wrapped-URL/blocked-by/clean_title pipeline as the fleet snapshot"
+}
+
 test_never_prints_the_task_id() {
   local rec state data id=recap-no-raw-id-9999 out
   rec=$(make_fixture no-id); IFS='|' read -r state data <<<"$rec"
@@ -191,6 +286,12 @@ test_resolved_decision_disappears
 test_pr_line_only_when_meta_has_pr
 test_truncates_a_long_note_deterministically
 test_redacts_paths_and_secret_shaped_tokens
+test_no_catchall_redaction_of_long_words_or_mid_word_keywords
+test_pr_url_on_the_allowlist_is_emitted_verbatim
+test_open_count_survives_when_latest_line_is_the_blocker
+test_unrecognized_verb_renders_as_update_not_starting_up
+test_strips_osc_sequences_and_redacts_other_path_roots
+test_title_matches_fleet_snapshot_title_of
 test_never_prints_the_task_id
 test_absent_backlog_entry_falls_back_safely
 test_absent_state_and_data_dirs_do_not_error
