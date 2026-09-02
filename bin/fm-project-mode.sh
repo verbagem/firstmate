@@ -16,6 +16,7 @@
 #   - <name> [<mode>] - <desc> (added <date>)                 -> <mode> off
 #   - <name> [<mode> +yolo] - <desc> (added <date>)           -> <mode> on
 #   - <name> [<mode> path=/absolute/project] - <desc> (...)   -> path identity for external projects
+#     (path= runs to the closing ] so paths may contain spaces; it must be the last token)
 #
 # Path lookups match structured identities only: the canonical in-home
 # projects/<name> path, or one path= absolute-path token inside the registry
@@ -170,10 +171,9 @@ registry_annotation() {  # <name> <line>
 
 mode_yolo_from_annotation() {  # <name> <annotation>
   local name=$1 ann=$2 token mode=no-mistakes yolo=off mode_set=0
-  for token in $ann; do
+  for token in ${ann%%path=*}; do
     case "$token" in
       +yolo) yolo=on ;;
-      path=*) ;;
       *)
         if [ "$mode_set" -eq 0 ]; then
           mode=$token
@@ -198,24 +198,18 @@ mode_yolo_from_annotation() {  # <name> <annotation>
 }
 
 explicit_paths_from_annotation() {  # <name> <annotation>
-  local name=$1 ann=$2 token path count=0
-  for token in $ann; do
-    case "$token" in
-      path=*)
-        count=$((count + 1))
-        path=${token#path=}
-        case "$path" in
-          /*) ;;
-          *) echo "error: malformed path identity for $name: path= must be an absolute path" >&2; return 2 ;;
-        esac
-        printf '%s\n' "$path"
-        ;;
-    esac
-  done
-  if [ "$count" -gt 1 ]; then
-    echo "error: malformed path identity for $name: multiple path= tokens" >&2
-    return 2
-  fi
+  local name=$1 ann=$2 path
+  case "$ann" in *path=*) ;; *) return 0 ;; esac
+  path=${ann#*path=}
+  case "$path" in
+    *path=*) echo "error: malformed path identity for $name: multiple path= tokens" >&2; return 2 ;;
+  esac
+  path=${path%"${path##*[![:space:]]}"}
+  case "$path" in
+    /*) ;;
+    *) echo "error: malformed path identity for $name: path= must be an absolute path" >&2; return 2 ;;
+  esac
+  printf '%s\n' "$path"
 }
 
 paths_for_registry_line() {  # <name> <annotation>

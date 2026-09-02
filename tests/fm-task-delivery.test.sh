@@ -320,7 +320,7 @@ EOF
 }
 
 test_project_mode_resolves_registered_paths() {
-  local home external unknown outf errf status out
+  local home external unknown spaced outf errf status out
   home="$TMP_ROOT/project-path/home"
   external="$TMP_ROOT/project-path/external/agent"
   unknown="$TMP_ROOT/project-path/unknown/agent"
@@ -368,6 +368,19 @@ test_project_mode_resolves_registered_paths() {
   status=$?
   [ "$status" -ne 0 ] || fail "malformed structured path identity should refuse"
   assert_grep 'malformed path identity' "$errf" "malformed identity refusal did not name the problem"
+
+  spaced="$TMP_ROOT/project-path/My Projects/ext"
+  mkdir -p "$spaced"
+  printf -- "- spaced [local-only +yolo path=%s] - spaced fixture (added 2026-01-01)\n" "$spaced" \
+    > "$home/data/projects.md"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --with-name --path "$spaced" 2>/dev/null)
+  [ "$out" = "spaced local-only on" ] || fail "path= containing spaces was truncated at the first space (got '$out')"
+  printf -- "- twice [local-only path=%s path=%s] - duplicate token fixture (added 2026-01-01)\n" "$spaced" "$spaced" \
+    > "$home/data/projects.md"
+  FM_HOME="$home" "$PROJECT_MODE" --path "$spaced" >"$outf" 2>"$errf"
+  status=$?
+  [ "$status" -ne 0 ] || fail "multiple path= tokens should refuse"
+  assert_grep 'multiple path= tokens' "$errf" "multiple path= refusal did not name the problem"
   pass "fm-project-mode: path lookup handles external, in-tree, unknown, ambiguous, and malformed identities"
 }
 

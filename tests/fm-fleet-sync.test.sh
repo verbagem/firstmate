@@ -390,6 +390,26 @@ test_external_registered_local_only_path_skipped() {
   pass "external registered local-only project paths are skipped before remote sync"
 }
 
+test_external_unregistered_path_keeps_full_label() {
+  local home clone out
+  home=$(new_home)
+  clone="$home/external/agent"
+  mkdir -p "$clone" "$home/data"
+  git init -q "$clone"
+  git -C "$clone" symbolic-ref HEAD refs/heads/main
+  commit_file "$clone" file.txt v0 C0
+  printf -- '- other [local-only] - unrelated project (added 2026-01-01)\n' > "$home/data/projects.md"
+
+  out=$(run_sync "$home" "$clone")
+
+  assert_contains "$out" "$clone: skipped: no origin remote" \
+    "unregistered external path should keep its full disambiguating path label"
+  case "$out" in
+    "agent: "*) fail "unregistered external path collapsed to its basename label: $out" ;;
+  esac
+  pass "unregistered external project paths keep the full path label"
+}
+
 test_single_project_by_bare_name_resolves() {
   local home out
   home=$(new_home)
@@ -634,6 +654,7 @@ test_already_current_unchanged
 test_no_origin_skipped
 test_local_only_skipped
 test_external_registered_local_only_path_skipped
+test_external_unregistered_path_keeps_full_label
 test_single_project_by_bare_name_resolves
 test_single_project_by_bare_name_ignores_cwd_shadow
 test_single_project_by_projects_relative_name_resolves
