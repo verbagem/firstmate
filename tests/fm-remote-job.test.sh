@@ -548,14 +548,21 @@ for _ in $(seq 1 100); do
   sleep 0.05
 done
 assert_absent "$STATE_ROOT/worker.pid" "the worker did not stop before the staged-record tamper"
+# The record is staged with no worker running and only then is a replacement
+# ensured, whose startup can take well over the 5-second queue window on a slow
+# runner. A queue-expired record publishes 124 before the argv symlink is ever
+# inspected, so keep the queue open long enough that the only way this job
+# completes is by the worker judging the tampered record itself.
+FM_REMOTE_JOB_QUEUE_TIMEOUT=60
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-touch-job.sh "$SIDE_EFFECT" < /dev/null > /dev/null
+FM_REMOTE_JOB_QUEUE_TIMEOUT=5
 JOB_ID=$FM_REMOTE_JOB_ID
 JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 rm -f -- "$JOB_DIR/argv"
 ln -s "$TMP_ROOT/not-an-argv" "$JOB_DIR/argv"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail "$FM_REMOTE_JOB_ERROR"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 126 ] || fail "the worker accepted a symlinked argv record"
+[ "$FM_REMOTE_JOB_EXIT" -eq 126 ] || fail "the worker accepted a symlinked argv record (exit $FM_REMOTE_JOB_EXIT)"
 assert_absent "$SIDE_EFFECT" "the worker executed a job after its argv changed to a symlink"
 pass "the worker refuses symlinked job fields before command execution"
 

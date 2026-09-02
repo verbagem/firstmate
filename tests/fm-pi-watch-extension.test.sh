@@ -470,7 +470,12 @@ writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
 const mod = await import(pathToFileURL(process.env.PLUGIN).href);
 mod.default(pi);
 await tool.execute("tool-call-empty-rearm", {}, undefined, undefined, {});
-for (let i = 0; i < 500 && rows().length < 18; i += 1) {
+// Every empty cycle spawns a login-shell arm plus three more bash children
+// (two captain-work probes and the silent confirmation), so 18 cycles need
+// several seconds even locally and overrun a 5s budget on a loaded runner.
+// This bound is a hang tripwire, not the expected pace: the exact-count and
+// zero-prompt assertions below still fail on any real storm.
+for (let i = 0; i < 3000 && rows().length < 18; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 10));
 }
 if (rows().length !== 18) throw new Error(`expected 18 ordinary rearm cycles, got ${rows().length}: ${rows().join(" | ")}`);
