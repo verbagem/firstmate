@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const CATALOG_SCHEMA = 'fm-local-inference-catalog.v1';
 const HARDWARE_SCHEMA = 'fm-local-inference-hardware.v1';
@@ -54,7 +56,7 @@ function parseNonnegativeInteger(value, name) {
 }
 
 function defaultCatalogPath() {
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const root = path.resolve(scriptDir, '..');
   const home = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
   const config = process.env.FM_CONFIG_OVERRIDE || path.join(home, 'config');
@@ -121,7 +123,7 @@ function parseArgs(argv) {
         if (!ALLOWED_CAPABILITIES.has(cap)) {
           dieUsage(`unsupported capability '${cap}'`);
         }
-        opts.capabilities.push(cap);
+        if (!opts.capabilities.includes(cap)) opts.capabilities.push(cap);
         break;
       }
       default:
@@ -366,10 +368,41 @@ function readLinuxMeminfo() {
   return null;
 }
 
+function readMacosMemory() {
+  let text;
+  try {
+    text = execFileSync('vm_stat', [], { encoding: 'utf8', timeout: 2000 });
+  } catch {
+    return null;
+  }
+  const pageSize = Number(text.match(/page size of (\d+) bytes/)?.[1]);
+  if (!Number.isSafeInteger(pageSize) || pageSize <= 0) return null;
+  const pages = (label) => Number(text.match(new RegExp(`^${label}:\\s+(\\d+)\\.`, 'm'))?.[1]);
+  const free = pages('Pages free');
+  const inactive = pages('Pages inactive');
+  const speculative = pages('Pages speculative');
+  const purgeable = pages('Pages purgeable');
+  if (![free, inactive, speculative].every((v) => Number.isSafeInteger(v))) return null;
+  const reclaimable = free + inactive + speculative + (Number.isSafeInteger(purgeable) ? purgeable : 0);
+  return { available_mib: Math.floor((reclaimable * pageSize) / 1024 / 1024), source: 'vm_stat' };
+}
+
 function collectHardware() {
   const linux = process.platform === 'linux' ? readLinuxMeminfo() : null;
+  const macos = !linux && process.platform === 'darwin' ? readMacosMemory() : null;
   const totalMib = linux?.total_mib ?? Math.floor(os.totalmem() / 1024 / 1024);
-  const availableMib = linux?.available_mib ?? Math.floor(os.freemem() / 1024 / 1024);
+  let availableMib;
+  let source;
+  if (linux) {
+    availableMib = linux.available_mib;
+    source = linux.source;
+  } else if (process.platform === 'darwin') {
+    availableMib = macos ? macos.available_mib : null;
+    source = macos ? macos.source : 'node-os';
+  } else {
+    availableMib = Math.floor(os.freemem() / 1024 / 1024);
+    source = 'node-os';
+  }
   const cpus = os.cpus();
   return {
     schema: HARDWARE_SCHEMA,
@@ -378,7 +411,7 @@ function collectHardware() {
     memory: {
       total_mib: Number.isFinite(totalMib) && totalMib > 0 ? totalMib : null,
       available_mib: Number.isFinite(availableMib) && availableMib >= 0 ? availableMib : null,
-      source: linux?.source ?? 'node-os',
+      source,
     },
     cpu: {
       logical_cores: cpus.length || null,
@@ -683,8 +716,13 @@ async function main() {
         dieUsage(`unknown command: ${command}`);
     }
   } catch (error) {
-    if (opts.json && error.validationErrors) {
-      printJson({ schema: 'fm-local-inference-error.v1', error: 'validation-failed', details: error.validationErrors });
+    if (opts.json) {
+      printJson({
+        schema: 'fm-local-inference-error.v1',
+        error: error.validationErrors ? 'validation-failed' : 'failed',
+        message: error.message,
+        ...(error.validationErrors ? { details: error.validationErrors } : {}),
+      });
     } else {
       process.stderr.write(`fm-local-inference: ${error.message}\n`);
     }
