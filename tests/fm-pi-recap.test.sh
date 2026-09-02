@@ -196,6 +196,39 @@ test_open_count_survives_when_latest_line_is_the_blocker() {
   pass "the (+N more) open-decision count is kept even when the latest line's own text is deduplicated"
 }
 
+test_open_decision_still_shown_when_latest_blocker_is_rejected_by_the_fold() {
+  local rec state data id=recap-open-rejected out
+  rec=$(make_fixture open-rejected); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  {
+    printf 'needs-decision: [key=a] choose A\n'
+    printf 'blocked: [key=bad!slug] disk full\n'
+  } > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Blocked: [key=bad!slug] disk full' "the latest blocker still renders as the phase"
+  assert_contains "$out" 'Needs a decision: choose A' "an earlier still-open decision must not be hidden because the fold rejected the latest line's key"
+  assert_not_contains "$out" 'more)' "no phantom (+N more) when the latest line is not itself in the open set"
+  {
+    printf 'needs-decision: [key=a] choose A\n'
+    printf 'blocked: [key=pending-reply-x] waiting on captain\n'
+  } > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Needs a decision: choose A' "a reserved-namespace latest key must not hide the earlier open decision either"
+  pass "an open decision stays visible when the latest blocked line was not accepted into the folded open set"
+}
+
+test_secret_keywords_redact_regardless_of_case() {
+  local rec state data id=recap-privacy-case out
+  rec=$(make_fixture privacy-case); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: sent Authorization: Bearer abcdefghijklmnop with TOKEN=abcdefghijkl and Password: hunter2hunter2\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_not_contains "$out" 'abcdefghijklmnop' "a capitalized Bearer credential must be redacted"
+  assert_not_contains "$out" 'abcdefghijkl' "an upper-case TOKEN= assignment must be redacted"
+  assert_not_contains "$out" 'hunter2hunter2' "a capitalized Password: assignment must be redacted"
+  pass "keyword-prefixed secrets are redacted in their common capitalizations"
+}
+
 test_unrecognized_verb_renders_as_update_not_starting_up() {
   local rec state data id=recap-unknown-verb out
   rec=$(make_fixture unknown-verb); IFS='|' read -r state data <<<"$rec"
@@ -230,9 +263,9 @@ test_title_matches_fleet_snapshot_title_of() {
     printf -- '- [ ] %s - Fix login <https://github.com/verbagem/firstmate/pull/3> blocked-by: t0 - waits on auth (repo: demo) (kind: ship) (since 2026-08-01)\n' "$id"
   } > "$data/backlog.md"
   out=$(render "$id" "$state" "$data")
-  expected=$(FM_DATA_OVERRIDE="$data" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-fleet-snapshot.sh" 2>/dev/null \
-    | jq -r --arg id "$id" '.backlog.records[] | select(.id == $id) | .title')
-  [ -n "$expected" ] || expected='Fix login'
+  expected=$(FM_DATA_OVERRIDE="$data" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-fleet-snapshot.sh" 2>&1 \
+    | jq -r --arg id "$id" '.backlog.records[] | select(.id == $id) | .title' 2>/dev/null)
+  [ -n "$expected" ] && [ "$expected" != null ] || fail "fm-fleet-snapshot.sh produced no title record for $id, so the parity check cannot run"
   [ "$(printf '%s\n' "$out" | sed -n 1p)" = "$expected" ] || fail "recap title must match the fleet snapshot's title_of ('$expected'), got:"$'\n'"$out"
   assert_not_contains "$out" 'blocked-by' "the blocked-by clause is not part of the title"
   assert_not_contains "$out" 'github.com' "a wrapped URL is not part of the title"
@@ -289,6 +322,8 @@ test_redacts_paths_and_secret_shaped_tokens
 test_no_catchall_redaction_of_long_words_or_mid_word_keywords
 test_pr_url_on_the_allowlist_is_emitted_verbatim
 test_open_count_survives_when_latest_line_is_the_blocker
+test_open_decision_still_shown_when_latest_blocker_is_rejected_by_the_fold
+test_secret_keywords_redact_regardless_of_case
 test_unrecognized_verb_renders_as_update_not_starting_up
 test_strips_osc_sequences_and_redacts_other_path_roots
 test_title_matches_fleet_snapshot_title_of

@@ -68,8 +68,8 @@ fm_pi_recap_sanitize() {
   text=$(printf '%s' "$text" | sed -E \
     -e 's#(/Users|/home|/root|/opt|/var|/etc|/tmp|/srv|/private|/mnt)(/[A-Za-z0-9._-]+)+#[path]#g' \
     -e 's/(sk-|ghp_|gho_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]+/[redacted]/g' \
-    -e 's/(^|[^A-Za-z0-9_])(token|key|secret|password)[=:] ?[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
-    -e 's/(^|[^A-Za-z0-9_])bearer[=: ]+[A-Za-z0-9_.-]{8,}/\1[redacted]/g')
+    -e 's/(^|[^A-Za-z0-9_])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])[=:] ?[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
+    -e 's/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr][=: ]+[A-Za-z0-9_.-]{8,}/\1[redacted]/g')
   if [ "${#text}" -gt "$FM_PI_RECAP_LINE_MAX" ]; then
     text="${text:0:$((FM_PI_RECAP_LINE_MAX - 1))}…"
   fi
@@ -159,16 +159,19 @@ fm_pi_recap_render() {  # <task-id> <state-dir> <data-dir>
   local id=$1 state=$2 data=$3
   local status_file="$state/$id.status" meta_file="$state/$id.meta"
   local title last verb='' note phase open_decisions open_last open_verb open_note open_count=0 more='' pr
+  local last_key latest_in_open=0
 
   title=$(fm_pi_recap_title "$id" "$data")
   [ -n "$title" ] || title='This task'
   printf '%s\n' "$title"
 
   # The open blocker/decision set is always folded so the "(+N more)" count
-  # survives even when the latest line's own text is suppressed below.
+  # survives even when the latest line's own text is suppressed below. The
+  # latest line only stands in for its own open record when the fold actually
+  # accepted it (valid key slug); otherwise it is shown on its own merits and
+  # the folded set still gets its dedicated line.
   open_decisions=$(status_open_decisions "$status_file")
   [ -z "$open_decisions" ] || open_count=$(printf '%s\n' "$open_decisions" | grep -c .)
-  [ "$open_count" -le 1 ] || more=" (+$((open_count - 1)) more)"
 
   last=$(last_status_line "$status_file")
   if [ -n "$last" ]; then
@@ -176,8 +179,14 @@ fm_pi_recap_render() {  # <task-id> <state-dir> <data-dir>
     note=$(fm_pi_recap_sanitize "$(status_line_note "$last")")
     phase=$(fm_pi_recap_phase_label "$verb")
     case "$verb" in
-      blocked|needs-decision) ;;
-      *) more='' ;;
+      blocked|needs-decision)
+        if last_key=$(_fm_decision_key "$last"); then
+          case $'\n'"$open_decisions" in
+            *$'\n'"$last_key"$'\t'*) latest_in_open=1 ;;
+          esac
+        fi
+        [ "$latest_in_open" = 1 ] && [ "$open_count" -gt 1 ] && more=" (+$((open_count - 1)) more)"
+        ;;
     esac
     if [ -n "$note" ]; then
       printf '%s: %s%s\n' "$phase" "$note" "$more"
@@ -193,8 +202,8 @@ fm_pi_recap_render() {  # <task-id> <state-dir> <data-dir>
   # others still open), and repeating it would be exactly the unchanged/
   # duplicate noise the recap must not add. Only a decision left open under a
   # LATER, unrelated status line earns its own line here.
-  case "$verb" in
-    blocked|needs-decision) ;;
+  case "$latest_in_open" in
+    1) ;;
     *)
       if [ "$open_count" -gt 0 ]; then
         open_last=$(printf '%s\n' "$open_decisions" | tail -1)

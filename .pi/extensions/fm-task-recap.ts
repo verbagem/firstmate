@@ -87,7 +87,7 @@ async function render(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 // widget catches up whenever it finishes. session_start still awaits so the
 // first frame the captain sees already carries the recap.
 function renderDetached(pi: ExtensionAPI, ctx: ExtensionContext): void {
-  inFlight = render(pi, ctx);
+  inFlight = inFlight.then(() => render(pi, ctx));
 }
 
 export default function (pi: ExtensionAPI) {
