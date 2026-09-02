@@ -5,15 +5,16 @@
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
 # 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
-# 'MISSING: gh-axi (install: ...)', 'MISSING: lavish-axi (install: ...)', and
-# 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
-# are table-driven over the inputs that vary: whether `treehouse get --help`
-# advertises --lease, which (if any) tasks-axi version is on PATH, whether
-# tasks-axi update advertises --archive-body, whether its mv help advertises
-# multi-ID moves, whether quota-axi is on PATH,
-# whether the local backend config opts out of tasks-axi backlog mutations,
-# which no-mistakes version is on PATH, which gh-axi version is on PATH, and
-# which lavish-axi version is on PATH.
+# 'MISSING: gh-axi (install: ...)', 'MISSING: lavish-axi (install: ...)',
+# 'MISSING: backpass (install: ...)', and 'BOOTSTRAP_INFO: ...' lines, so those
+# contracts are pinned verbatim. The cases are table-driven over the inputs that
+# vary: whether `treehouse get --help` advertises --lease, which (if any)
+# tasks-axi version is on PATH, whether tasks-axi update advertises
+# --archive-body, whether its mv help advertises multi-ID moves, whether
+# quota-axi is on PATH, whether the local backend config opts out of tasks-axi
+# backlog mutations, which no-mistakes version is on PATH, which backpass
+# version is on PATH, which gh-axi version is on PATH, and which lavish-axi
+# version is on PATH.
 # Dedicated fleet-sync cases pin the computed bootstrap timeout, explicit
 # override, blank-env defaulting, partial-output relay, and pre-launch timeout
 # scan.
@@ -85,6 +86,15 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
+  cat > "$fakebin/backpass" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ] || [ "${1:-}" = -v ]; then
+  printf '%s\n' "${FM_FAKE_BACKPASS_VERSION:-0.1.16}"
+  exit 0
+fi
+exit 0
+SH
+  chmod +x "$fakebin/backpass"
   add_tasks_axi "$fakebin" "0.2.4"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
@@ -339,6 +349,49 @@ older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^mi
 unparseable no-mistakes version reports an upgrade^no-mistakes development build^missing
 ROWS
   pass "bootstrap enforces no-mistakes minimum version"
+}
+
+test_backpass_min_version() {
+  local label version mode case_dir fakebin out missing n
+  missing='MISSING: backpass (install: npm install -g backpass)'
+  n=0
+  while IFS='^' read -r label version mode; do
+    [ -n "$label" ] || continue
+    n=$((n + 1))
+    case_dir="$TMP_ROOT/backpass-$n"
+    mkdir -p "$case_dir/home/config"
+    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+    fakebin=$(make_fake_toolchain "$case_dir")
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_BACKPASS_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
+    case "$mode" in
+      empty)
+        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
+      missing)
+        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+    esac
+  done <<'ROWS'
+minimum backpass version is accepted^0.1.16^empty
+newer backpass minor is accepted^0.1.17^empty
+newer backpass major is accepted^1.0.0^empty
+older backpass patch reports an upgrade^0.1.15^missing
+unparseable backpass version reports an upgrade^development build^missing
+ROWS
+  pass "bootstrap enforces backpass minimum version"
+}
+
+test_backpass_absent_reports_missing() {
+  local case_dir fakebin out missing
+  missing='MISSING: backpass (install: npm install -g backpass)'
+  case_dir="$TMP_ROOT/backpass-absent"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  rm -f "$fakebin/backpass"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "$missing" "an absent backpass must report MISSING like any other common tool"
+  pass "bootstrap reports backpass MISSING when absent from PATH"
 }
 
 test_gh_axi_min_version() {
@@ -1150,6 +1203,8 @@ ROWS
 
 test_bootstrap_reporting
 test_no_mistakes_min_version
+test_backpass_min_version
+test_backpass_absent_reports_missing
 test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version

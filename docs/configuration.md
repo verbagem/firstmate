@@ -365,7 +365,7 @@ Secondmate homes inherit this file from the primary, so a secondmate's own crewm
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
 It installs automatically supported tools only after you say go; manual-only tools remain for you to install from the printed instructions.
 Required tools come in two parts: a universal toolchain every home needs regardless of backend, and a per-backend delta that follows the runtime backend actually resolved for this home.
-The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.46.0 or newer, compatible gh-axi, chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
+The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.46.0 or newer, compatible backpass (see "backpass" below), compatible gh-axi, chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 In that list, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
@@ -404,6 +404,14 @@ A changed remote home instead receives one durably recorded marked re-read instr
 The locked bootstrap inheritance pass uses the same placement-specific behavior; see `secondmate-provisioning` for the single contract owner.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
+
+### backpass
+
+`backpass` reads a firstmate home's own local agent-session transcripts and proposes evidence-backed edits to `AGENTS.md`, `CLAUDE.md`, and skills; it never writes on its own, so `backpass apply` is the human gate that reviews and accepts or rejects each proposed edit.
+It requires `acpx` on `PATH`, since every model call it makes goes through an already-authenticated harness rather than its own API key.
+Bootstrap's universal toolchain includes compatible `backpass`; an absent or too-old install reports `MISSING: backpass (install: npm install -g backpass)`, following the same `tool_version_at_least` floor pattern as `no-mistakes`.
+Run it periodically rather than on every session: in the firstmate home and in `command-center` after a notable batch of sessions, and with `--scope user` after notable sessions to train the always-loaded user-level memory.
+Firstmate presents `backpass`'s proposed edits to the captain for review; it never runs `backpass apply` on its own.
 
 ## Watched tool updates (config/watched-tools.json)
 
