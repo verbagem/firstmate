@@ -1,0 +1,27 @@
+# Branch integrity transcript (fm/firstmate-upstream-resync-4821)
+
+$ git show --stat --format='%H %s' 402f6f3
+402f6f3b77224a06f1352d173ef6d48100fd2612 chore: retrigger PR checks after upstream no-mistakes attestation repair
+$ git diff --stat 402f6f3~1 402f6f3 | wc -l   # expect 0 (empty retrigger commit)
+       0
+
+$ git log --oneline 402f6f3..4b4c3ac   # commits added after the retrigger head
+4b4c3ac chore: merge upstream base 903d9c1 into fm/firstmate-upstream-resync-4821
+59c67f2 no-mistakes: apply CI fixes
+903d9c1 feat(bin): add opt-in local-inference inspection CLI (#16)
+374d2ea no-mistakes: apply CI fixes
+
+$ git diff --stat 402f6f3 59c67f2 -- bin .pi .github | wc -l   # expect 0 (CI-fix commits touched tests only)
+       0
+
+$ git diff --stat 402f6f3 59c67f2
+ tests/fm-on.test.sh                 | 27 ++++++++++++++++++++++++++-
+ tests/fm-pi-watch-extension.test.sh | 17 ++++++++++++++---
+ tests/fm-remote-job.test.sh         |  9 ++++++++-
+ 3 files changed, 48 insertions(+), 5 deletions(-)
+
+$ git diff 903d9c1 4b4c3ac -- bin/fm-local-inference.sh bin/fm-local-inference.mjs tests/fm-local-inference.test.sh docs/local-inference.md | wc -l   # expect 0 (merge-introduced files identical to upstream base)
+       0
+
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=170 parallel=24 serial=134 serial_shards=8 herdr=12
