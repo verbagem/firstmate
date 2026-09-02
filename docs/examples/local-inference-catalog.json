@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "example-loopback",
+      "endpoint_id": "local-openai-v1",
+      "type": "openai-compatible",
+      "base_url": "http://127.0.0.1:10100/v1",
+      "models": [
+        {
+          "id": "example/qwen3-8b-q4",
+          "upstream_id": "qwen3-8b-q4",
+          "quantization": "Q4_K_M",
+          "context_tokens": 32768,
+          "estimated_memory_mib": 6144,
+          "capabilities": {
+            "chat": true,
+            "tools": false,
+            "json_mode": true
+          },
+          "license": "apache-2.0",
+          "speed_evidence": {
+            "tokens_per_second": 35,
+            "source": "example local benchmark"
+          },
+          "intelligence_evidence": {
+            "score": 7.2,
+            "source": "example benchmark"
+          }
+        }
+      ]
+    }
+  ]
+}
