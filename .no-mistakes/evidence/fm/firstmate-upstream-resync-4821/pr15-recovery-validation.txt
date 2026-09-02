@@ -1,0 +1,30 @@
+# PR 15 recovery validation — fm/firstmate-upstream-resync-4821
+# head: 402f6f3b77224a06f1352d173ef6d48100fd2612
+
+## 1. HEAD is an intentional EMPTY retrigger commit (zero product files changed)
+$ git diff --name-only 6dadfc2 402f6f3 | wc -l
+       0
+$ git show --stat 402f6f3 (subject + body)
+chore: retrigger PR checks after upstream no-mistakes attestation repair
+
+No file changes. The prior head's required check included a stale run
+(from a rerun of an old triggering event, which GitHub Actions always
+replays against a frozen event payload rather than live state) sitting
+alongside a genuine live-verified pass. This empty commit exists solely
+to produce a new head so the no-mistakes pipeline generates a fresh
+attestation and every required check re-evaluates cleanly at that head,
+with no stale entries carried forward from a prior head.
+
+
+## 2. Real no-mistakes attestation verifier binds to PR head SHA (intent-critical)
+   Fetches the pinned kunchenguid/no-mistakes verify.py and runs it:
+ok - shared action accepts a matching head_sha with completed required steps
+ok - shared action rejects a mismatched head_sha and names both SHAs
+ok - shared action rejects an attestation with no head_sha
+
+## 3. Representative accepted-work behavioral slice (.gitignore config semantics)
+ok - config/ is ignored as a directory, covering unlisted and nested paths
+ok - an unrelated path outside config/ remains visible to git
+ok - names starting with scratchpad are gitignored
+ok - no currently tracked path starts with scratchpad
+ok - scratchpad2/ does not make git status --porcelain dirty
