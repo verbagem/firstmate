@@ -1,0 +1,23 @@
+# fm-local-inference — end-user CLI transcript (real machine)
+# Target commit 723e109 · shipped example catalog · this darwin/arm64 host
+
+$ fm-local-inference.sh                 # inert by default
+local-inference=disabled catalog=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M1HZKFJHE1XM45R1M43KYGSC/config/local-inference-catalog.json reason=missing-catalog
+
+$ fm-local-inference.sh hardware        # portable inventory, explicit source
+platform=darwin arch=arm64 memory_total_mib=16384 memory_available_mib=2743 source=vm_stat
+
+$ fm-local-inference.sh catalog --catalog <example>   # strict validation
+catalog=valid providers=1 models=1
+provider=example-loopback endpoint=local-openai-v1 type=openai-compatible models=1
+
+$ fm-local-inference.sh rank ... --context-tokens 8192 --reserve-mib 2048 --require-capability chat
+ranking models=1 reserve_mib=2048 requested_context_tokens=8192 available_memory_mib=2750
+rank=1 model=example/qwen3-8b-q4 provider=example-loopback admission=rejected memory_mib=6144 context=32768 reasons=insufficient-memory-headroom
+
+$ fm-local-inference.sh rank ... --context-tokens 999999   # context-exceeds reason
+ranking models=1 reserve_mib=2048 requested_context_tokens=999999 available_memory_mib=2748
+rank=1 model=example/qwen3-8b-q4 provider=example-loopback admission=rejected memory_mib=6144 context=32768 reasons=requested-context-exceeds-capacity,insufficient-memory-headroom
+
+$ fm-local-inference.sh probe ... --provider example-loopback --timeout-ms 800  # bounded, no creds
+provider=example-loopback endpoint=local-openai-v1 status=network-error discovered=0
