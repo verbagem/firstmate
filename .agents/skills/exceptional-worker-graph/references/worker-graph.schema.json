@@ -170,9 +170,5 @@
         }
       }
     }
-  },
-  "x-firstmate-policy": {
-    "owner": "../SKILL.md",
-    "note": "Fable boundary, eligibility, and Firstmate node validation are defined only in SKILL.md; the call cap above is the machine-enforced part."
   }
 }
