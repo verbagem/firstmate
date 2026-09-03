@@ -1,0 +1,7 @@
+== Firstmate opt-in tool auto-update sweep: backpass 0.1.15 -> 0.1.16 ==
+$ cat config/tool-autoupdate
+on
+$ fm-bootstrap.sh   (registry latest backpass=0.1.16, installed=0.1.15)
+BOOTSTRAP_INFO: tool-autoupdate updated backpass@0.1.16
+$ cat npm-install.log   (what the sweep actually invoked)
+install -g backpass@0.1.16

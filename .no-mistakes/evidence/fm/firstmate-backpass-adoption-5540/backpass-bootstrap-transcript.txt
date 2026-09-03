@@ -1,0 +1,14 @@
+== Firstmate bootstrap: backpass detection (real bin/fm-bootstrap.sh) ==
+
+### backpass current (v0.1.16 == BACKPASS_MIN)
+$ fm-bootstrap.sh
+<silent: backpass current, nothing to report>
+
+### backpass outdated (v0.1.15 < BACKPASS_MIN 0.1.16)
+$ fm-bootstrap.sh
+MISSING: backpass (install: npm install -g backpass)
+
+### absent
+$ fm-bootstrap.sh
+MISSING: backpass (install: npm install -g backpass)
+
