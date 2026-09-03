@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 # GitHub concurrency groups retain at most one pending run, replacing older
 # pending runs even when cancel-in-progress is false. Give body-bearing events
@@ -26,5 +27,26 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
+      - uses: actions/checkout@v6
+      # `git push no-mistakes` rewrites the PR body with the head-bound
+      # attestation seconds after the push that fires synchronize, so the event
+      # payload body is stale. Judge the live body instead (owner:
+      # bin/fm-no-mistakes-attestation-body.sh); the head SHA stays the payload's.
+      - name: Fetch the live PR body once its attestation binds the head
+        id: body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          {
+            echo "body<<FM_PR_BODY_EOF"
+            bin/fm-no-mistakes-attestation-body.sh "$GITHUB_REPOSITORY" "$PR_NUMBER" "$PR_HEAD_SHA"
+            echo
+            echo "FM_PR_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Verify no-mistakes signature and pipeline attestation
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
+        with:
+          pr-body: ${{ steps.body.outputs.body }}

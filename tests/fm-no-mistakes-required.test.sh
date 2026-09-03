@@ -66,7 +66,69 @@ test_missing_head_fails() {
   pass "shared action rejects an attestation with no head_sha"
 }
 
+BODY_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/../bin/fm-no-mistakes-attestation-body.sh"
+
+# fake_gh <fakebin> <stale-polls> <stale-body> <bound-body>: `gh api` answers
+# <stale-body> for the first <stale-polls> calls and <bound-body> afterwards,
+# mirroring the pipeline rewriting the PR body a few seconds after its push.
+fake_gh() {
+  local fakebin=$1 stale_polls=$2
+  printf '%s' "$3" > "$fakebin/stale-body"
+  printf '%s' "$4" > "$fakebin/bound-body"
+  : > "$fakebin/calls"
+  cat > "$fakebin/gh" <<SH
+#!/usr/bin/env bash
+[ "\$1" = api ] || exit 9
+echo "\$2" >> "$fakebin/calls"
+if [ "\$(wc -l < "$fakebin/calls")" -le $stale_polls ]; then
+  cat "$fakebin/stale-body"
+else
+  cat "$fakebin/bound-body"
+fi
+SH
+  chmod +x "$fakebin/gh"
+}
+
+test_live_body_waits_for_head_bound_attestation() {
+  local fakebin stale bound output rc
+  fakebin=$(fm_fakebin "$TMP_ROOT/wait")
+  stale="$SIGNATURE
+<!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"$OLD_SHA\",\"steps\":$COMPLETED_STEPS} -->"
+  bound="$SIGNATURE
+<!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"$NEW_SHA\",\"steps\":$COMPLETED_STEPS} -->"
+  fake_gh "$fakebin" 2 "$stale" "$bound"
+  rc=0
+  output=$(PATH="$fakebin:$PATH" "$BODY_SCRIPT" acme/widgets 3006 "$NEW_SHA" 30 0 2>/dev/null) || rc=$?
+  expect_code 0 "$rc" "live-body script failed once the attestation bound the head"
+  [ "$output" = "$bound" ] || fail "live-body script did not print the head-bound body"
+  expect_code 3 "$(wc -l < "$fakebin/calls" | tr -d ' ')" "live-body script did not stop polling once the body bound the head"
+  assert_contains "$(cat "$fakebin/calls")" "repos/acme/widgets/pulls/3006" \
+    "live-body script did not read the PR from the forge"
+  rc=0
+  output=$(run_verifier "$output" "$NEW_SHA") || rc=$?
+  expect_code 0 "$rc" "shared action rejected the live body the script handed it"
+  pass "live-body script polls past the stale push-time body and hands the shared action a passing body"
+}
+
+test_live_body_times_out_with_last_body() {
+  local fakebin stale output rc
+  fakebin=$(fm_fakebin "$TMP_ROOT/timeout")
+  stale="$SIGNATURE
+<!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"$OLD_SHA\",\"steps\":$COMPLETED_STEPS} -->"
+  fake_gh "$fakebin" 99 "$stale" "$stale"
+  rc=0
+  output=$(PATH="$fakebin:$PATH" "$BODY_SCRIPT" acme/widgets 3006 "$NEW_SHA" 0 0 2>/dev/null) || rc=$?
+  expect_code 0 "$rc" "live-body script should hand a never-bound body to the shared action, not fail itself"
+  [ "$output" = "$stale" ] || fail "live-body script did not print the last body it saw on timeout"
+  rc=0
+  output=$(run_verifier "$output" "$NEW_SHA") || rc=$?
+  [ "$rc" -ne 0 ] || fail "shared action accepted a body that never bound the current head"
+  pass "live-body script times out on a never-bound body and the shared action still fails it"
+}
+
 fetch_shared_verifier
 test_matching_head_and_completed_steps_pass
 test_mismatched_head_fails_with_both_shas
 test_missing_head_fails
+test_live_body_waits_for_head_bound_attestation
+test_live_body_times_out_with_last_body
