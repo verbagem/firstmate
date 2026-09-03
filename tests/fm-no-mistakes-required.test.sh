@@ -117,9 +117,13 @@ test_live_body_times_out_with_last_body() {
 <!-- no-mistakes-pipeline-attestation:v1 {\"head_sha\":\"$OLD_SHA\",\"steps\":$COMPLETED_STEPS} -->"
   fake_gh "$fakebin" 99 "$stale" "$stale"
   rc=0
-  output=$(PATH="$fakebin:$PATH" "$BODY_SCRIPT" acme/widgets 3006 "$NEW_SHA" 0 0 2>/dev/null) || rc=$?
+  output=$(PATH="$fakebin:$PATH" "$BODY_SCRIPT" acme/widgets 3006 "$NEW_SHA" 0 0 2>"$fakebin/stderr") || rc=$?
   expect_code 0 "$rc" "live-body script should hand a never-bound body to the shared action, not fail itself"
   [ "$output" = "$stale" ] || fail "live-body script did not print the last body it saw on timeout"
+  assert_contains "$(cat "$fakebin/stderr")" "still binds $OLD_SHA after 0s, not $NEW_SHA" \
+    "timeout diagnostic did not name the stale head the body still binds"
+  assert_contains "$(cat "$fakebin/stderr")" "republish the body against the current head" \
+    "timeout diagnostic did not tell the operator how to rebind the attestation"
   rc=0
   output=$(run_verifier "$output" "$NEW_SHA") || rc=$?
   [ "$rc" -ne 0 ] || fail "shared action accepted a body that never bound the current head"

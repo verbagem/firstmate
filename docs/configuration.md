@@ -365,7 +365,7 @@ Secondmate homes inherit this file from the primary, so a secondmate's own crewm
 On session start the first mate detects what its required toolchain is missing or too old and lists each problem with either an exact install command or manual instructions.
 It installs automatically supported tools only after you say go; manual-only tools remain for you to install from the printed instructions.
 Required tools come in two parts: a universal toolchain every home needs regardless of backend, and a per-backend delta that follows the runtime backend actually resolved for this home.
-The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.46.0 or newer, compatible gh-axi, chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
+The universal toolchain is node, git, gh with GitHub auth via `gh auth login`, no-mistakes v1.46.0 or newer, compatible backpass (see "backpass" below), compatible gh-axi, chrome-devtools-axi, compatible lavish-axi, compatible tasks-axi per "Backlog backend" above, and compatible quota-axi.
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh) hold their own tools' floor constants.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 In that list, no-mistakes runs the validation pipeline, gh-axi, chrome-devtools-axi, and lavish-axi cover GitHub, browser, and rich-review operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
@@ -404,6 +404,24 @@ A changed remote home instead receives one durably recorded marked re-read instr
 The locked bootstrap inheritance pass uses the same placement-specific behavior; see `secondmate-provisioning` for the single contract owner.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
+
+### backpass
+
+`backpass` reads a firstmate home's own local agent-session transcripts and proposes evidence-backed edits to `AGENTS.md`, `CLAUDE.md`, and skills; it never writes on its own, so `backpass apply` is the human gate that reviews and accepts or rejects each proposed edit.
+It requires `acpx` on `PATH`, since every model call it makes goes through an already-authenticated harness rather than its own API key.
+Bootstrap's universal toolchain includes compatible `backpass`; an absent or too-old install reports `MISSING: backpass (install: npm install -g backpass)`, following the same `tool_version_at_least` floor pattern as `no-mistakes`.
+Run it periodically rather than on every session: in the firstmate home and in `command-center` after a notable batch of sessions, and with `--scope user` after notable sessions to train the always-loaded user-level memory.
+Firstmate presents `backpass`'s proposed edits to the captain for review; it never runs `backpass apply` on its own.
+
+### Tool auto-update (config/tool-autoupdate, opt-in)
+
+A home that wants a fixed set of already-installed tools kept current without a per-session install-consent round trip can drop a local, gitignored `config/tool-autoupdate` presence flag to opt in (same convention as `config/trace-context`: any content, including empty, enables it); its absence is the default, and every other home keeps the plain detect-then-consent contract in `AGENTS.md` section 3 unchanged.
+Once opted in, `bin/fm-bootstrap.sh`'s deferred network phase checks `npm view <pkg> version` for `gh-axi`, `chrome-devtools-axi`, `lavish-axi`, `tasks-axi`, `quota-axi`, `acpx`, `backpass`, and `gnhf` when each is already on `PATH`, rate-limited to once per 24h via `state/.tool-autoupdate-checked`, and silently runs `npm install -g <pkg>@<version>` pinned to the exact version it checked for any package whose installed version sorts strictly below it (a deliberately newer or pre-release install is never downgraded).
+`treehouse` and `no-mistakes` are excluded: both gate active use on their own installed version and carry their own held update tasks, so an unattended install on either is unsafe.
+`FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS` (in days) holds a release younger than that many days instead of installing it, picking it up on a later run once it clears the window; it defaults to 0 for this curated package list because the captain has stated standing trust in it, but an operator who wants the standing 14-day wait-before-installing rule applied to their own opted-in auto-update can set it explicitly.
+This check runs only in the deferred network phase, never on the local session-start path, and is bounded by `FM_TOOL_AUTOUPDATE_TIMEOUT` (default 60s) the same way fleet-sync bounds its own background refresh.
+A completed update prints one `BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ...` summary line; a failed install, a failed registry or publish-date lookup, or an unreachable `npm`/network prints an actionable `TOOL_AUTOUPDATE: ...` line instead.
+This opt-in never changes `MISSING` detection: a package not yet installed on a fresh machine still goes through the ordinary install-consent flow above, never an unattended first install.
 
 ## Watched tool updates (config/watched-tools.json)
 
@@ -776,6 +794,8 @@ FM_WORKTREE_WRITE_TIMEOUT=10       # wall-clock seconds that one walk may take, 
 FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=     # optional seconds allowed for bootstrap's best-effort clone refresh; unset/blank defaults to max(20, 5 + 3 * origin-backed-project-count)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
+FM_TOOL_AUTOUPDATE_TIMEOUT=60   # seconds bounding the opt-in config/tool-autoupdate sweep; non-numeric falls back to 60 (see "Tool auto-update")
+FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=0   # days a registry release must be old before that sweep installs it; 0 = no hold, non-numeric falls back to 0
 FM_STALE_WORKTREE_LOCK_AGE_SECS=30       # min mtime age before fm-teardown.sh treats a leftover worktree git index.lock as provably stale
 FM_TREEHOUSE_RETURN_LOCK_RETRIES=3        # retries after a treehouse return fails on the transient git index.lock signature
 FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1 # seconds fm-teardown.sh waits before each retry after that signature

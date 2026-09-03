@@ -20,7 +20,42 @@
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed after <cause>: <reason>",
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
+#                 "TOOL_AUTOUPDATE: <diagnostic>", and
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
+#          TOOL AUTO-UPDATE (opt-in, default off). A config/tool-autoupdate
+#          presence flag (same convention as config/trace-context - any content,
+#          including empty, enables it) turns on an unattended
+#          `npm install -g <pkg>@<version>` (pinned to the exact registry
+#          version whose publish date was checked, never the @latest tag) for
+#          whichever of gh-axi, chrome-devtools-axi, lavish-axi, tasks-axi,
+#          quota-axi, acpx, backpass, and gnhf are already on PATH and whose
+#          installed version sorts strictly below the registry's published
+#          version (a deliberately newer or pre-release install is never
+#          downgraded). treehouse and no-mistakes are never auto-updated:
+#          both gate active use on their own version and have their own held
+#          update tasks. This is the ONLY tool detection this file ever mutates
+#          without a MISSING-driven install command; every other home leaves the
+#          plain detect-then-consent contract in AGENTS.md section 3 unchanged
+#          because the flag defaults off. A publish-age gate exists for this
+#          package list (FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS, in days; anything
+#          non-numeric falls back to the default) but DEFAULTS TO 0: the captain has
+#          stated standing trust in this specific curated set and wants it kept
+#          current without a wait. Set FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS to
+#          restore the standing 14-day supply-chain wait for an opted-in home
+#          that wants it; a held release is left alone and picked up on a
+#          later run once it clears that window.
+#          Registry lookups are rate-limited to once per 24h via
+#          state/.tool-autoupdate-checked, run only in the deferred network
+#          phase (never on the local session-start path), and are bounded by
+#          FM_TOOL_AUTOUPDATE_TIMEOUT (default 60s) the same way fleet-sync
+#          bounds its own background refresh. A successful update prints one
+#          summary "BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ..."
+#          line; a failed install, a failed registry or publish-date lookup, or
+#          an unreachable npm/network prints an actionable
+#          "TOOL_AUTOUPDATE: ..." line instead.
+#          MISSING detection for a fresh machine is unaffected: a package that
+#          is not yet installed is left to the ordinary MISSING/install flow
+#          above, never auto-installed by this sweep.
 #          When a RUNNING local secondmate worktree is fast-forwarded to
 #          firstmate's own current default-branch commit, that update is a
 #          purely local fast-forward and never an origin fetch. Remote routes
@@ -54,6 +89,10 @@
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
 #          1.46.0 (structured pipeline attestation floor; see CONTRIBUTING.md).
+#          backpass is also MISSING when its installed version is older than
+#          BACKPASS_MIN (0.1.16), a compatibility floor in the same class as
+#          NO_MISTAKES_MIN (not an axi-family "current latest" floor), so a
+#          stale install surfaces the same way a stale no-mistakes does.
 #          The AXI-family floor policy is owned beside GH_AXI_MIN and
 #          LAVISH_AXI_MIN below; the per-tool owners point there. An installed
 #          build below its floor reports MISSING like no-mistakes, so the operator
@@ -83,7 +122,8 @@
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
 #          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
 #          (PR-check migration, secondmate_sync, secondmate_liveness_sweep,
-#          secondmate_handoff_resume, x_mode_setup, fleet_sync) while still
+#          secondmate_handoff_resume, x_mode_setup, fleet_sync) and the opt-in
+#          tool_autoupdate_sweep while still
 #          printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
@@ -322,6 +362,187 @@ fleet_sync() {
   [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
 
   fleet_sync_relay_filtered_output "$tmp"
+  rm -f "$tmp"
+}
+
+# Opt-in npm auto-update sweep (default off; every other home keeps the plain
+# detect-then-consent contract from AGENTS.md section 3 unchanged). A home
+# turns this on for itself by dropping a config/tool-autoupdate presence flag
+# (any content, including empty, same convention as config/trace-context);
+# absence is the default and this whole block is then a no-op.
+# treehouse and no-mistakes are deliberately excluded: both have active-use
+# safety gates (lease support, validation-pipeline version matching) and their
+# own held update tasks, so an unattended `npm install -g` on either is never
+# safe here.
+# The publish-age gate defaults to 0 (no wait) for this fixed, curated package
+# list: the captain has explicitly stated standing trust in this vetted set and
+# wants it kept current without the standing 14-day supply-chain wait. An
+# operator who wants that wait applied to their own opted-in auto-update can
+# still set FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS to restore it (docs/configuration.md
+# "Tool auto-update"); the mechanism this gate uses (npm_registry_version_publish_iso,
+# iso8601_to_epoch) exists precisely so that choice stays available per home.
+TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
+
+tool_autoupdate_timeout() {
+  local timeout=${FM_TOOL_AUTOUPDATE_TIMEOUT:-60}
+  case "$timeout" in ''|*[!0-9]*) timeout=60 ;; esac
+  echo "$timeout"
+}
+
+tool_autoupdate_min_age_seconds() {
+  local days=${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-0}
+  case "$days" in ''|*[!0-9]*) days=0 ;; esac
+  echo $((days * 86400))
+}
+
+tool_autoupdate_enabled() {
+  [ -f "$CONFIG/tool-autoupdate" ] && [ ! -L "$CONFIG/tool-autoupdate" ]
+}
+
+# Rate-limits the registry lookups to once per 24h so an opted-in home does not
+# pay a network round trip per package on every session start. The marker is
+# stamped before the sweep runs (not after), so a slow, timed-out, or partially
+# failed run still throttles the next attempt instead of retrying immediately.
+tool_autoupdate_due() {
+  local marker="$STATE/.tool-autoupdate-checked" now last
+  now=$(date +%s)
+  if [ -f "$marker" ] && [ ! -L "$marker" ]; then
+    last=$(cat "$marker" 2>/dev/null) || last=0
+    case "$last" in *[!0-9]*) last=0 ;; esac
+    [ $((now - last)) -ge 86400 ] || return 1
+  fi
+  return 0
+}
+
+tool_autoupdate_stamp() {
+  local marker="$STATE/.tool-autoupdate-checked" tmp
+  [ -d "$STATE" ] || return 0
+  tmp=$(mktemp "$STATE/.tool-autoupdate-checked.XXXXXX" 2>/dev/null) || return 0
+  if ! date +%s > "$tmp" 2>/dev/null || ! mv -f "$tmp" "$marker" 2>/dev/null; then
+    rm -f "$tmp"
+  fi
+}
+
+npm_global_installed_version() {  # <pkg>
+  npm list -g "$1" --depth=0 2>/dev/null \
+    | sed -nE "s/.*[[:space:]]$1@([0-9][^[:space:]]*)\$/\1/p" | head -n 1
+}
+
+npm_registry_latest_version() {  # <pkg>
+  npm view "$1" version 2>/dev/null | head -n 1
+}
+
+# Parses `npm view <pkg> time`'s pretty-printed object for one version's ISO
+# 8601 publish timestamp. No jq dependency: the object's lines are quoted
+# "<version>": "<timestamp>" pairs, stable across npm's supported versions.
+npm_registry_version_publish_iso() {  # <pkg> <version>
+  local pkg=$1 version=$2 escaped
+  escaped=$(printf '%s' "$version" | sed 's/[.[\*^$]/\\&/g')
+  npm view "$pkg" time 2>/dev/null \
+    | sed -nE "s/.*'${escaped}': '([^']+)'.*/\1/p" | head -n 1
+}
+
+iso8601_to_epoch() {  # <YYYY-MM-DDTHH:MM:SS(.fff)?Z>
+  local iso=$1 clean
+  clean=$(printf '%s' "$iso" | sed -E 's/\.[0-9]+Z$/Z/')
+  if [ "$(uname)" = Darwin ]; then
+    date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$clean" +%s 2>/dev/null
+  else
+    date -u -d "$clean" +%s 2>/dev/null
+  fi
+}
+
+# Runs entirely inside the caller's already-bounded background job (see
+# tool_autoupdate_sweep). Prints one line per actionable outcome; the caller
+# relays those with the TOOL_AUTOUPDATE: prefix and folds successful updates
+# into a single BOOTSTRAP_INFO line.
+tool_autoupdate_body() {
+  local pkg installed latest cmp publish_iso publish_epoch now min_age
+  min_age=$(tool_autoupdate_min_age_seconds)
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "DIAG:npm not found on PATH, cannot check for updates"
+    return 0
+  fi
+  for pkg in $TOOL_AUTOUPDATE_PACKAGES; do
+    command -v "$pkg" >/dev/null 2>&1 || continue
+    installed=$(npm_global_installed_version "$pkg")
+    [ -n "$installed" ] || continue
+    latest=$(npm_registry_latest_version "$pkg")
+    if [ -z "$latest" ]; then
+      echo "DIAG:registry lookup failed for $pkg (network unavailable?)"
+      continue
+    fi
+    if ! cmp=$(version_cmp "$installed" "$latest"); then
+      echo "DIAG:cannot compare $pkg versions (installed $installed, latest $latest), holding"
+      continue
+    fi
+    [ "$cmp" -lt 0 ] || continue
+    # The standing supply-chain age rule: hold a too-recent release rather
+    # than install it same-day. An unparseable or missing publish date is
+    # treated the same as "still held" - never install on evidence we could
+    # not verify.
+    publish_iso=$(npm_registry_version_publish_iso "$pkg" "$latest")
+    publish_epoch=""
+    [ -z "$publish_iso" ] || publish_epoch=$(iso8601_to_epoch "$publish_iso")
+    if [ -z "$publish_epoch" ]; then
+      echo "DIAG:publish date for $pkg@$latest could not be verified, holding"
+      continue
+    fi
+    now=$(date +%s)
+    if [ $((now - publish_epoch)) -lt "$min_age" ]; then
+      continue
+    fi
+    if npm install -g "$pkg@$latest" >/dev/null 2>&1; then
+      echo "UPDATED:$pkg@$latest"
+    else
+      echo "DIAG:npm install -g $pkg@$latest failed (was $installed)"
+    fi
+  done
+}
+
+tool_autoupdate_relay_output() {
+  local tmp=$1 line updated=""
+  while IFS= read -r line; do
+    case "$line" in
+      DIAG:*) echo "TOOL_AUTOUPDATE: ${line#DIAG:}" ;;
+      UPDATED:*) updated="$updated ${line#UPDATED:}" ;;
+    esac
+  done < "$tmp"
+  [ -z "$updated" ] || echo "BOOTSTRAP_INFO: tool-autoupdate updated$updated"
+}
+
+# Bounded exactly like fleet_sync: one background job, wall-clock timeout;
+# whatever the job already wrote (completed updates, diagnostics) is relayed
+# whether it finishes or is killed at the timeout.
+tool_autoupdate_sweep() {
+  tool_autoupdate_enabled || return 0
+  tool_autoupdate_due || return 0
+  local tmp timeout monitor_was_on pid start elapsed
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tool-autoupdate.XXXXXX" 2>/dev/null) || return 0
+  timeout=$(tool_autoupdate_timeout)
+  tool_autoupdate_stamp
+  monitor_was_on=0
+  case $- in *m*) monitor_was_on=1 ;; esac
+  set -m 2>/dev/null || true
+  tool_autoupdate_body >"$tmp" 2>/dev/null &
+  pid=$!
+  start=$SECONDS
+  while jobs -r -p | grep -qx "$pid"; do
+    elapsed=$((SECONDS - start))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+      tool_autoupdate_relay_output "$tmp"
+      echo "TOOL_AUTOUPDATE: check timed out (timeout=${timeout}s elapsed=${elapsed}s)"
+      rm -f "$tmp"
+      return 0
+    fi
+    sleep 1
+  done
+  wait "$pid" 2>/dev/null || true
+  [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+  tool_autoupdate_relay_output "$tmp"
   rm -f "$tmp"
 }
 
@@ -838,6 +1059,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
+    backpass) echo "npm install -g backpass" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     tasks-axi|quota-axi) echo "npm install -g $1" ;;
     *) return 1 ;;
@@ -866,7 +1088,7 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
+COMMON_TOOLS="node git gh no-mistakes backpass gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
@@ -875,6 +1097,7 @@ if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
 fi
 TOOLS="$BACKEND_TOOLS $COMMON_TOOLS"
 NO_MISTAKES_MIN=1.46.0
+BACKPASS_MIN=0.1.16
 # AXI-FAMILY FLOOR POLICY. Every axi-family floor is the CURRENT LATEST published
 # version of that tool, captain-bumped periodically to keep the whole fleet on the
 # newest axi tools. It is NOT the minimum feature-introduced version. These floors
@@ -893,21 +1116,39 @@ treehouse_supports_lease() {
 # cannot be parsed into exactly one major.minor.patch triple is incompatible,
 # never assumed current, so a development or vendored build cannot pass a floor
 # it was never checked against.
+# Extracts the first numeric major.minor.patch triple from a version string
+# ("v0.1.16", "backpass 0.1.16", "0.2.0-beta.1" -> "0 2 0"); fails when none.
+version_triple() {  # <string>
+  local triple major minor patch extra
+  triple=$(printf '%s\n' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+  [ -n "$triple" ] || return 1
+  IFS='.' read -r major minor patch extra <<< "$triple"
+  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
+  printf '%s %s %s\n' "$major" "$minor" "$patch"
+}
+
+# Numeric major.minor.patch comparison (no `sort -V`: unavailable on macOS/BSD).
+# Prints -1, 0, or 1 for a<b, a=b, a>b; fails when either side is unparseable.
+version_cmp() {  # <a> <b>
+  local a b a1 a2 a3 b1 b2 b3 x y
+  a=$(version_triple "$1") || return 1
+  b=$(version_triple "$2") || return 1
+  read -r a1 a2 a3 <<< "$a"
+  read -r b1 b2 b3 <<< "$b"
+  for x in "$a1:$b1" "$a2:$b2" "$a3:$b3"; do
+    y=${x#*:}; x=${x%%:*}
+    if [ "$x" -lt "$y" ]; then echo -1; return 0; fi
+    if [ "$x" -gt "$y" ]; then echo 1; return 0; fi
+  done
+  echo 0
+}
+
 tool_version_at_least() {  # <tool> <min-version>
-  local tool=$1 min=$2 output parts major minor patch extra
-  local min_major min_minor min_patch min_extra
+  local tool=$1 min=$2 output cmp
   command -v "$tool" >/dev/null 2>&1 || return 1
   output=$("$tool" --version 2>/dev/null) || return 1
-  parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
-  IFS=' ' read -r major minor patch extra <<< "$parts"
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
-  IFS='.' read -r min_major min_minor min_patch min_extra <<< "$min"
-  [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
-  [ "$major" -gt "$min_major" ] && return 0
-  [ "$major" -eq "$min_major" ] || return 1
-  [ "$minor" -gt "$min_minor" ] && return 0
-  [ "$minor" -eq "$min_minor" ] || return 1
-  [ "$patch" -ge "$min_patch" ]
+  cmp=$(version_cmp "$output" "$min") || return 1
+  [ "$cmp" -ge 0 ]
 }
 
 x_mode_write_if_changed() {
@@ -1228,6 +1469,9 @@ detect_local_tools() {
   if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then
     echo "MISSING: no-mistakes (install: $(install_cmd no-mistakes))"
   fi
+  if command -v backpass >/dev/null 2>&1 && ! tool_version_at_least backpass "$BACKPASS_MIN"; then
+    echo "MISSING: backpass (install: $(install_cmd backpass))"
+  fi
   if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
     echo "MISSING: gh-axi (install: $(install_cmd gh-axi))"
   fi
@@ -1391,6 +1635,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     wait "$fleet_sync_pid" || true
     cat "$fleet_sync_out"
     rm -f "$fleet_sync_out"
+  fi
+  if network_phase && tool_autoupdate_enabled && network_sweep_authorized 'tool auto-update'; then
+    __fm_timing_stamp=$(fm_timing_now_ms)
+    tool_autoupdate_sweep
+    fm_timing_record phase tool-autoupdate "$__fm_timing_stamp"
   fi
 fi
 local_phase && secondmate_handoff_detect

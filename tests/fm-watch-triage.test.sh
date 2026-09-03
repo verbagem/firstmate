@@ -27,16 +27,39 @@ DRAIN="$ROOT/bin/fm-wake-drain.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-watch-triage-tests)
 
+# Every helper here that waits on a child is bounded: one round that never
+# returns must fail its own assertion, never hang the whole CI shard into the
+# job timeout (a single stalled round once cost the entire portable serial
+# shard its 20-minute cap with every other script green).
+DRAIN_TICKS=600  # 60s per drain invocation; a healthy drain returns in seconds
+
+# Run the drain with a bound. Exit status is the drain's own, or 124 when it
+# outlived DRAIN_TICKS and was reaped (TERM, then KILL - see reap below).
+drain_bounded() {  # <state> [drain args...]
+  local state=$1 pid i=0
+  shift
+  FM_STATE_OVERRIDE="$state" "$DRAIN" "$@" &
+  pid=$!
+  while [ "$i" -lt "$DRAIN_TICKS" ] && is_live_non_zombie "$pid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if is_live_non_zombie "$pid"; then
+    reap "$pid"
+    return 124
+  fi
+  wait "$pid"
+}
+
 ack_stopped_cycle() {  # <state>
   local state=$1 err sequence generation
   err="$state/.test-cycle-drain.err"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2> "$err" || return 1
+  drain_bounded "$state" >/dev/null 2> "$err" || return 1
   sequence=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\) --recovery-generation [A-Za-z0-9._-][A-Za-z0-9._-]*$/\1/p' "$err")
   generation=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through [0-9][0-9]* --recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1/p' "$err")
   rm -f "$err"
   [ -n "$sequence" ] && [ -n "$generation" ] || return 1
-  FM_STATE_OVERRIDE="$state" "$DRAIN" --ack-through "$sequence" \
-    --recovery-generation "$generation"
+  drain_bounded "$state" --ack-through "$sequence" --recovery-generation "$generation"
 }
 
 # Common watcher knobs: tight poll/grace, no check or heartbeat cadence unless a
@@ -163,7 +186,21 @@ record_pi_busy() {  # <state-dir> <id>
     --source pi-ext --event agent-start
 }
 
-reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
+# Stop an intentionally-abandoned watcher round. TERM first so its EXIT trap can
+# release the singleton lock, but a watcher that defers or ignores TERM (a trap
+# runs only after the foreground command it interrupted returns, and wake()
+# masks TERM outright) is KILLed after 10s: a bare `wait` here is exactly the
+# unbounded hold that can stall a round for the rest of the shard's budget.
+reap() {
+  local pid=$1 i=0
+  kill "$pid" 2>/dev/null || true
+  while [ "$i" -lt 100 ] && is_live_non_zombie "$pid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  is_live_non_zombie "$pid" && kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
 
 # --- pure classifier predicates (fm-classify-lib.sh) ------------------------
 
