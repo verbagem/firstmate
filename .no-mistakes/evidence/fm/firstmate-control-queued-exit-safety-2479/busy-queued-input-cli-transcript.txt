@@ -1,0 +1,43 @@
+===== fm-control.base.sh (BASE ff68407 - old behavior) =====
+### worker t1 is BUSY in a tool, composer already holds: 'queued follow-up'
+$ fm-control t1 exit
+error: exit-delivered t1 interrupt=delivered verified=agent-alive cancel=unconfirmed exit-command=delivered agent-state=alive exit=unconfirmed; the agent did not stop within 0.05s
+(exit code 1)
+keys sent to worker pane : [Escape ]
+text typed into composer : [/exit ]
+lines SUBMITTED as chat  : [queued follow-up/exit   ]
+composer now holds       : []
+worker process           : claude
+
+### worker t1 is BUSY in a tool, composer already holds: 'queued follow-up'
+$ fm-control t1 relaunch --note 'continue safely'
+error: exit-delivered t1 interrupt=delivered verified=agent-alive cancel=unconfirmed exit-command=delivered agent-state=alive exit=unconfirmed; the agent did not stop within 0.05s
+error: relaunch of t1 failed while stopping the old agent, which is still running; its original instructions were restored
+(exit code 1)
+keys sent to worker pane : [Escape ]
+text typed into composer : [/exit ]
+lines SUBMITTED as chat  : [queued follow-up/exit   ]
+composer now holds       : []
+worker process           : claude
+
+===== fm-control.sh (TARGET 1d75c4c - fixed) =====
+### worker t1 is BUSY in a tool, composer already holds: 'queued follow-up'
+$ fm-control t1 exit
+error: task t1's composer holds a queued instruction; refusing lifecycle control until the worker consumes it
+(exit code 1)
+keys sent to worker pane : []
+text typed into composer : []
+lines SUBMITTED as chat  : []
+composer now holds       : [queued follow-up]
+worker process           : claude
+
+### worker t1 is BUSY in a tool, composer already holds: 'queued follow-up'
+$ fm-control t1 relaunch --note 'continue safely'
+error: task t1's composer holds a queued instruction; refusing lifecycle control until the worker consumes it
+(exit code 1)
+keys sent to worker pane : []
+text typed into composer : []
+lines SUBMITTED as chat  : []
+composer now holds       : [queued follow-up]
+worker process           : claude
+
