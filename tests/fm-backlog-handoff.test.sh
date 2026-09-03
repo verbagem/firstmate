@@ -355,6 +355,10 @@ case " $* " in
       handoff_pid=$(ps -o ppid= -p "$PPID" | tr -d '[:space:]')
       kill -KILL "$handoff_pid"
       sleep 1
+      # The crash must take the move down with it: falling through to the real
+      # mv would let an orphaned child land the item ~1s later, racing the
+      # retry below (CI saw the retry's mv report NOT_FOUND on the source).
+      exit 137
     fi
     ;;
 esac
