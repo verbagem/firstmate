@@ -82,6 +82,11 @@
 #     than reported as successful blind.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
+#   - `exit` and `relaunch` refuse while the worker's composer holds queued,
+#     unreadable, or ambiguous input - before any interrupt, and again before
+#     the exit command is typed - so a lifecycle command can never concatenate
+#     with pending text; relaunch takes that proof before its checkpoint
+#     (docs/agent-control.md owns the contract).
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)

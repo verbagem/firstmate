@@ -45,7 +45,8 @@ The clear is refused before anything is sent when the recorded backend cannot de
 Before `exit` or `relaunch` interrupts a worker, the composer must be proven empty; queued, unreadable, or ambiguous input causes a refusal and remains untouched.
 `relaunch` takes that proof before its checkpoint, so a queued-input refusal is reported as a refusal before the agent was touched, never as a failed stop.
 The standalone `interrupt` verb is not gated on the composer: it types no text, so queued input cannot concatenate with it; on muse, whose interrupt includes the Ctrl+U clear, it also discards whatever the composer holds, so queue nothing before interrupting a muse worker.
-After any interrupt, the exit command is typed only when a fresh composer read again proves it empty, so restored or newly queued input can never concatenate with lifecycle text or enter chat; that read is re-taken through the settle budget so a TUI still redrawing from the interrupt key is not mistaken for queued input, while a positively pending composer refuses immediately.
+The exit command is typed only when a composer read taken just before it proves the composer empty, so restored or newly queued input can never concatenate with lifecycle text or enter chat.
+For an idle worker that needed no interrupt, any non-empty read refuses at once; after an interrupt, the read is re-taken through the settle budget so a TUI still redrawing from the interrupt key is not mistaken for queued input, while a positively pending composer refuses immediately.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
