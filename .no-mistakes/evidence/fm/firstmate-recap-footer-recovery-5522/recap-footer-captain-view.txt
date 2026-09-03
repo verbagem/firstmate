@@ -1,0 +1,39 @@
+==================================================================
+ Herdr pane captain-facing recap footer - rendered by the real
+ bin/fm-pi-recap.sh (the exact text the Pi widget shows a captain)
+==================================================================
+
+--- Scenario A: active ship task (PR #17), open decision, secrets ---
+$ fm-pi-recap.sh render fm-recap-demo-1 <state> <data>
+------------------------------------------------------------------
+Wire captain recap footer
+In progress: rotated token=[redacted] out of the log
+Needs a decision: which cache backend for the pane store
+PR: https://github.com/verbagem/firstmate/pull/17
+------------------------------------------------------------------
+Preserved-fix checks visible above:
+ * Title 'Wire captain recap footer' -> wrapped PR URL AND the
+   'blocked-by: fm-sibling-9999' clause are stripped, so the sibling
+   task id never leaks (same title pipeline as fm-fleet-snapshot).
+ * token=ghp_... credential shows as [redacted]; the plain 32-char hex
+   commit 'abcdef0123...' passes through (blanket 24+-char catch-all
+   sanitizer was dropped - only keyword-prefixed secrets are redacted).
+ * The still-open 'redis-vs-memcached' decision keeps its dedicated line.
+ * PR line shows the full github.com/verbagem/firstmate/pull/17 URL.
+
+--- Scenario B: freshly spawned scout, no status yet ---
+$ fm-pi-recap.sh render fm-recap-demo-2 <state> <data>
+------------------------------------------------------------------
+Scout the flaky remote-job test
+Starting up
+------------------------------------------------------------------
+ * 'Starting up' shown ONLY for the true absent-status case.
+
+--- Scenario C: unrecognized leading verb ('pondering:') ---
+$ fm-pi-recap.sh render fm-recap-demo-3 <state> <data>
+------------------------------------------------------------------
+Investigate CI attestation restamp
+Update: whether the daemon upgrade fixed the restamp bug
+------------------------------------------------------------------
+ * Unrecognized verb renders as 'Update: <actual free text>', NOT
+   'Starting up' - the captain sees the real note.
