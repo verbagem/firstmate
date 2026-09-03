@@ -1,0 +1,6 @@
+>>> OPERATOR SEES [busy exit]: error: task t1's composer holds a queued instruction; refusing lifecycle control until the worker consumes it
+>>> OPERATOR SEES [busy relaunch]: error: task t1's composer holds a queued instruction; refusing lifecycle control until the worker consumes it
+>>> OPERATOR SEES [idle exit]: error: task t1's composer reads 'pending' with no interrupt sent; refusing to type a lifecycle command into unverified input
+>>> OPERATOR SEES [idle relaunch]: error: task t1's composer reads 'pending' with no interrupt sent; refusing to type a lifecycle command into unverified input
+>>> OPERATOR SEES [unverified-preinterrupt exit]: error: task t1's composer reads 'unknown' before interrupt handling; refusing to risk clearing unverified input
+>>> OPERATOR SEES [unverified-preinterrupt relaunch]: error: task t1's composer reads 'unknown' before interrupt handling; refusing to risk clearing unverified input
