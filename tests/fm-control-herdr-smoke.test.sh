@@ -153,6 +153,12 @@ wait_composer_state() {  # <expected> -> last observed verdict
 # The fixture shell expands $line after the command reaches the pane.
 # shellcheck disable=SC2016
 READ_CMD='printf "❯ "; IFS= read -r line; printf "SUBMITTED:%s\n" "$line"; sleep 30'
+# The interrupt above left a bare Escape in the pane's shell. bash readline
+# holds that as a Meta prefix indefinitely, so the fixture's first letter
+# would become M-p (history search) and the whole command line vanishes.
+# C-c aborts the pending line read and gives a fresh prompt.
+fm_backend_herdr_send_key "$SESSION:$PANE_ID" C-c >/dev/null 2>&1 || true
+sleep 0.5
 fm_backend_herdr_send_literal "$SESSION:$PANE_ID" "$READ_CMD" \
   || fail "could not type the pending-composer fixture"
 fm_backend_herdr_send_key "$SESSION:$PANE_ID" Enter \

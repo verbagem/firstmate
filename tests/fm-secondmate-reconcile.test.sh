@@ -405,7 +405,7 @@ test_a_failed_send_is_retried_on_the_next_run() {
 }
 
 test_busy_lifecycle_locks_never_hold_up_the_digest() {
-  local label home mate fakebin snap lock ready release holder notify out
+  local label home mate fakebin snap lock ready release holder notify out i
   for label in reconcile control meta; do
     { read -r home; read -r mate; read -r fakebin; } < <(make_main_home "busy-$label" mate)
     snap="$home/snapshot.json"
@@ -422,7 +422,14 @@ test_busy_lifecycle_locks_never_hold_up_the_digest() {
     while [ ! -f "$ready" ]; do sleep 0.01; done
     run_notify "$home" "$fakebin" "busy-$label" "$snap" > "$home/notify.out" 2>&1 &
     notify=$!
-    sleep 0.2
+    # A notify that honours the busy lock returns without waiting for it, so
+    # it finishes while the holder still owns the lock; one that blocks never
+    # does. Poll for that outcome (bounded) instead of trusting a fixed sleep
+    # that a loaded runner overruns.
+    i=0
+    while kill -0 "$notify" 2>/dev/null && [ "$i" -lt 200 ]; do
+      sleep 0.05; i=$((i + 1))
+    done
     if kill -0 "$notify" 2>/dev/null; then
       : > "$release"
       wait "$notify" 2>/dev/null || true
