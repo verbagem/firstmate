@@ -118,6 +118,12 @@ case "${1:-}" in
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         printf 'zsh' > "$D/command"
       fi
+      if [ -n "${FM_FAKE_INTERRUPT_RESTORES_TEXT:-}" ] \
+         && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
+        printf '╭────────────────────╮\n│ ❯ %s │\n╰────────────────────╯\n' \
+          "$FM_FAKE_INTERRUPT_RESTORES_TEXT" > "$D/pane"
+        printf '%s' "$FM_FAKE_INTERRUPT_RESTORES_TEXT" > "$FM_FAKE_TYPED_BUFFER"
+      fi
       if [ "$payload" = Escape ] && [ -n "${FM_FAKE_MUSE_LOG:-}" ]; then
         if [ -n "${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" ]; then
           : > "$D/muse-ack-pending"
@@ -209,6 +215,7 @@ run_control() {
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
     FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK="${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" \
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
+    FM_FAKE_INTERRUPT_RESTORES_TEXT="${FM_FAKE_INTERRUPT_RESTORES_TEXT:-}" \
     FM_FAKE_TYPED_BUFFER="${FM_FAKE_TYPED_BUFFER:-}" \
     FM_FAKE_SUBMISSIONS="${FM_FAKE_SUBMISSIONS:-}" \
     "$CONTROL" "$@" 2>&1
@@ -723,6 +730,48 @@ test_busy_agent_with_queued_input_refuses_without_touching_the_queue() {
   pass "fm-control: exit and relaunch preserve queued worker input instead of concatenating lifecycle text"
 }
 
+test_interrupt_race_with_restored_input_refuses_before_lifecycle_text() {
+  local dir out rc verb gen buffer submissions brief_before
+  for verb in exit relaunch; do
+    dir=$(new_case "interrupt-restores-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+    printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    : > "$buffer"
+    : > "$submissions"
+    brief_before=$(cat "$dir/home/data/t1/brief.md")
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_INTERRUPT_RESTORES_TEXT='restored prompt' \
+        FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 relaunch --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_INTERRUPT_RESTORES_TEXT='restored prompt' \
+        FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse when input appears during interrupt handling"
+    assert_contains "$out" "composer reads 'pending" \
+      "$verb refusal should identify the post-interrupt composer race"
+    assert_grep 'Escape' "$dir/fake/keys" \
+      "$verb should interrupt before the composer changes"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text after the interrupt restores input"
+    [ ! -s "$submissions" ] \
+      || fail "$verb submitted restored input as chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'restored prompt' ] \
+      || fail "$verb must preserve input that appears during interrupt handling"
+    [ "$(cat "$dir/home/data/t1/brief.md")" = "$brief_before" ] \
+      || fail "$verb must restore the original instructions after the race refusal"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+  done
+  pass "fm-control: input restored during interrupt handling cannot concatenate with lifecycle text"
+}
+
 test_busy_agent_is_interrupted_before_the_exit_command() {
   local dir out rc
   dir=$(new_case busy)
@@ -958,6 +1007,7 @@ test_missing_endpoint_refuses
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
 test_busy_agent_with_queued_input_refuses_without_touching_the_queue
+test_interrupt_race_with_restored_input_refuses_before_lifecycle_text
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
 test_interrupt_without_acknowledgement_preserves_busy_state
