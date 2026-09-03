@@ -1,0 +1,11 @@
+ok - a ship pi spawn's launch command loads fm-task-recap.ts with its task's FM_RECAP_* env vars
+ok - a pi secondmate spawn never loads fm-task-recap.ts or sets any FM_RECAP_* var
+ok - a non-Pi harness (claude) spawn is completely unaffected by the recap wiring
+ok - session_start renders the recap widget with the task's title and current phase
+ok - turn_start/turn_end return synchronously and the widget still renders once the detached render settles
+ok - an unchanged status file produces no repeat widget call, while a real change always renders
+ok - the widget never renders when ctx.hasUI is false (print/non-interactive mode)
+ok - the extension is a safe no-op (never throws, never renders) when FM_RECAP_* env vars are absent, matching an unwired non-Pi launch
+ok - a broken or missing recap script degrades to no widget update rather than throwing (inert on failure)
+ok - two homes sharing the same task id never read or leak each other's recap data
+all fm-task-recap-extension tests passed

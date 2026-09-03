@@ -1,0 +1,29 @@
+ok - a freshly spawned task with no status yet shows its title and a Starting up phase
+ok - the latest working: line becomes the plain-language phase and its note
+ok - terminal verbs (done/failed) translate to plain captain-facing wording
+ok - an open decision that is also the latest status line is shown once, not duplicated as a separate blocker line
+ok - a decision left open under a later unrelated status line gets its own dedicated line
+ok - a resolved decision no longer appears once closed
+ok - the PR line appears only once state/<id>.meta records pr= and shows the full URL
+ok - a long status note truncates deterministically with an ellipsis, and rendering is repeatable
+ok - absolute local paths and secret-shaped tokens are redacted before the recap is rendered
+ok - redaction is keyword-prefixed only: plain long words and mid-word keywords pass through, real secret shapes still do not
+ok - a pr= value that parses under fm_pr_url_parse is emitted verbatim; anything else is sanitized
+ok - the (+N more) open-decision count is kept even when the latest line's own text is deduplicated
+ok - an open decision stays visible when the latest blocked line was not accepted into the folded open set
+ok - path redaction only fires on absolute paths, leaving relative paths and URL segments intact
+ok - the [key=<slug>] decision-key grammar is exempt from secret redaction while key= assignments are not
+ok - identifier-prefixed secret assignments are redacted while uppercase prose is untouched
+ok - file:// URLs are redacted like absolute paths while http URLs are left alone
+ok - the bearer pattern redacts real credentials but leaves 'bearer authentication' prose alone
+ok - the digit-plus-length gate keeps bearer and colon-space prose intact while redacting real credential shapes
+ok - every credential prefix redacts a real token and leaves the prefix embedded mid-word alone
+ok - a latest line the fold rejected does not suppress an earlier open decision that shares its key
+ok - keyword-prefixed secrets are redacted in their common capitalizations
+ok - an unrecognized status verb renders as 'Update: <note>', with 'Starting up' reserved for the absent-status case
+ok - OSC and CSI escapes are stripped and absolute paths under common roots beyond /Users and /home are redacted
+ok - the recap title is produced by the same wrapped-URL/blocked-by/clean_title pipeline as the fleet snapshot
+ok - the raw task id never appears anywhere in the rendered recap
+ok - a task with no backlog entry (or no backlog.md at all) still renders a safe generic fallback
+ok - missing state/data directories degrade to the safe fallback render instead of erroring
+ok - missing arguments and an unknown subcommand are refused as usage errors (exit 2)
