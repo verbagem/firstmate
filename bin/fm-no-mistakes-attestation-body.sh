@@ -23,7 +23,11 @@ while :; do
     *no-mistakes-pipeline-attestation:v1*\"head_sha\":\""$head"\"*) break ;;
   esac
   # ponytail: fixed poll budget; the pipeline rewrites the body well under a minute after push.
-  [ "$(date +%s)" -lt "$deadline" ] || break
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    bound=$(printf '%s' "$body" | sed -n 's/.*no-mistakes-pipeline-attestation:v1.*"head_sha":"\([0-9a-f]*\)".*/\1/p' | head -n 1)
+    echo "PR #$pr body attestation still binds ${bound:-no head} after ${timeout}s, not $head; a later push never passes on an older attestation, so re-run 'git push no-mistakes' to republish the body against the current head" >&2
+    break
+  fi
   echo "PR #$pr body attestation does not yet bind $head; polling again in ${interval}s" >&2
   sleep "$interval"
 done
