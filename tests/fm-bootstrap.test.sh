@@ -482,7 +482,28 @@ test_tool_autoupdate_updates_outdated_and_skips_current() {
   pass "bootstrap: tool auto-update installs an outdated package and leaves a current one alone"
 }
 
-test_tool_autoupdate_holds_a_too_recent_release() {
+test_tool_autoupdate_installs_same_day_release_by_default() {
+  local case_dir fakebin out recent
+  case_dir="$TMP_ROOT/tool-autoupdate-trusted-default"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  # The publish-age gate defaults to 0 for this curated, captain-trusted
+  # package list, so a release published seconds ago is still installed.
+  recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "the default age gate (0) must not hold a same-day release for this trusted list"
+  assert_contains "$out" "gh-axi@0.1.35" "a same-day release must still be installed under the default age gate"
+  pass "bootstrap: tool auto-update installs a same-day release by default for the trusted package list"
+}
+
+test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set() {
   local case_dir fakebin out recent
   case_dir="$TMP_ROOT/tool-autoupdate-recent-hold"
   mkdir -p "$case_dir/home/config"
@@ -490,17 +511,17 @@ test_tool_autoupdate_holds_a_too_recent_release() {
   printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_fake_npm "$fakebin"
-  # A newer version exists, but it was published seconds ago: the standing
-  # supply-chain age rule must hold it exactly like a first-time install would.
+  # An operator who sets FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS explicitly restores
+  # the standing supply-chain wait for their own opted-in auto-update.
   recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14 \
     FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
     FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
     "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "tool-autoupdate updated" "a release inside the 14-day hold must never be auto-installed"
+  assert_not_contains "$out" "tool-autoupdate updated" "an explicit age gate must hold a release still inside its window"
   assert_not_contains "$out" "gh-axi@0.1.35" "a held release must not appear in any update summary"
-  pass "bootstrap: tool auto-update holds a release still inside the supply-chain age window"
+  pass "bootstrap: tool auto-update holds a release still inside an explicitly configured age window"
 }
 
 test_tool_autoupdate_respects_24h_throttle() {
@@ -1364,7 +1385,8 @@ test_backpass_min_version
 test_backpass_absent_reports_missing
 test_tool_autoupdate_disabled_by_default
 test_tool_autoupdate_updates_outdated_and_skips_current
-test_tool_autoupdate_holds_a_too_recent_release
+test_tool_autoupdate_installs_same_day_release_by_default
+test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set
 test_tool_autoupdate_respects_24h_throttle
 test_tool_autoupdate_reports_install_failure
 test_tool_autoupdate_reports_npm_unavailable

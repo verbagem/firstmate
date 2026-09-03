@@ -33,11 +33,14 @@
 #          update tasks. This is the ONLY tool detection this file ever mutates
 #          without a MISSING-driven install command; every other home leaves the
 #          plain detect-then-consent contract in AGENTS.md section 3 unchanged
-#          because the flag defaults off. A newer version still holds the
-#          standing supply-chain age rule: a release published less than
-#          TOOL_AUTOUPDATE_MIN_AGE_SECONDS ago (FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS,
-#          default 14) is left alone and picked up on a later run once it
-#          clears the window, the same as a first-time install would wait.
+#          because the flag defaults off. A publish-age gate exists for this
+#          package list (FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS, in days, converted to
+#          TOOL_AUTOUPDATE_MIN_AGE_SECONDS) but DEFAULTS TO 0: the captain has
+#          stated standing trust in this specific curated set and wants it kept
+#          current without a wait. Set FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS to
+#          restore the standing 14-day supply-chain wait for an opted-in home
+#          that wants it; a held release is left alone and picked up on a
+#          later run once it clears that window.
 #          Registry lookups are rate-limited to once per 24h via
 #          state/.tool-autoupdate-checked, run only in the deferred network
 #          phase (never on the local session-start path), and are bounded by
@@ -367,14 +370,15 @@ fleet_sync() {
 # safety gates (lease support, validation-pipeline version matching) and their
 # own held update tasks, so an unattended `npm install -g` on either is never
 # safe here.
-# The standing supply-chain age rule still applies to every package here: a
-# version published less than TOOL_AUTOUPDATE_MIN_AGE_SECONDS ago is held, not
-# installed, and is picked up on a later run once it clears the window. Opting
-# into this sweep is authority to auto-update once a release has cleared the
-# same age gate every other install already waits out, never authority to
-# install same-day.
+# The publish-age gate defaults to 0 (no wait) for this fixed, curated package
+# list: the captain has explicitly stated standing trust in this vetted set and
+# wants it kept current without the standing 14-day supply-chain wait. An
+# operator who wants that wait applied to their own opted-in auto-update can
+# still set FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS to restore it (docs/configuration.md
+# "Tool auto-update"); the mechanism this gate uses (npm_registry_version_publish_iso,
+# iso8601_to_epoch) exists precisely so that choice stays available per home.
 TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
-TOOL_AUTOUPDATE_MIN_AGE_SECONDS=$(( ${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-14} * 86400 ))
+TOOL_AUTOUPDATE_MIN_AGE_SECONDS=$(( ${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-0} * 86400 ))
 
 tool_autoupdate_enabled() {
   [ -f "$CONFIG/tool-autoupdate" ] && [ ! -L "$CONFIG/tool-autoupdate" ]
