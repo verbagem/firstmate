@@ -288,8 +288,22 @@ NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 pass "worker identity binds the canonical configured code root"
 
 CRASHED_WORKER_PID=$NEW_WORKER_PID
+# The crashed child's restart supervisor would otherwise reap the lock and,
+# after its backoff, spawn a replacement that contends for ownership about a
+# second later: right inside the shutdown windows the next cases open. Freeze
+# it before the crash so it can neither clean up nor restart, then take it down
+# with the child so this fixture leaves exactly one crashed owner behind.
+CRASHED_SUPERVISOR_PID=$(ps -o ppid= -p "$CRASHED_WORKER_PID" | tr -d '[:space:]')
+case "$CRASHED_SUPERVISOR_PID" in ''|*[!0-9]*) fail "the crash fixture could not resolve the worker supervisor" ;; esac
+kill -STOP "$CRASHED_SUPERVISOR_PID"
 kill -KILL "$CRASHED_WORKER_PID"
-wait "$CRASHED_WORKER_PID" 2>/dev/null || true
+kill -KILL "$CRASHED_SUPERVISOR_PID"
+wait "$CRASHED_SUPERVISOR_PID" 2>/dev/null || true
+for _ in $(seq 1 100); do
+  kill -0 "$CRASHED_SUPERVISOR_PID" 2>/dev/null || break
+  sleep 0.05
+done
+! kill -0 "$CRASHED_SUPERVISOR_PID" 2>/dev/null || fail "the crash fixture could not stop the orphaned worker supervisor"
 assert_present "$STATE_ROOT/worker.lock" "an unclean exit did not retain the worker ownership lock"
 sleep 20 &
 OTHER_PID=$!
