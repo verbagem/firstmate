@@ -740,6 +740,33 @@ test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   pass "pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics"
 }
 
+test_pi_ship_launch_wires_task_recap_widget_but_secondmate_does_not() {
+  local rec id sm launch state_real
+  id=profile-pi-recap-z8e
+  rec=$(make_spawn_case profile-pi-recap pi "$id")
+  read_case_record "$rec"
+  state_real=$(cd "$HOME_DIR/state" && pwd -P)
+
+  run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" >/dev/null
+  expect_code 0 $? "pi ship spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "FM_RECAP_TASK_ID='$id' FM_RECAP_STATE_DIR='$state_real' FM_RECAP_DATA_DIR='$HOME_DIR/data' " \
+    "pi ship launch did not export the FM_RECAP_* env vars the recap widget reads"
+  assert_contains "$launch" "-e '$ROOT/.pi/extensions/fm-task-recap.ts' " \
+    "pi ship launch did not load the tracked fm-task-recap.ts widget"
+
+  printf '%s\n' pi-signed > "$HOME_DIR/config/secondmate-harness"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id-sm"
+  sm=$(cd "$sm" && pwd -P)
+  run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id-sm" "$sm" --secondmate >/dev/null
+  expect_code 0 $? "pi-signed secondmate spawn should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_not_contains "$launch" "FM_RECAP_" "a secondmate has no task phase and must not export FM_RECAP_* vars"
+  assert_not_contains "$launch" "fm-task-recap.ts" "a secondmate must not load the task recap widget"
+  pass "pi ship launches carry the recap widget and its FM_RECAP_* env; secondmates get neither"
+}
+
 test_batch_forwards_shared_profile_flags() {
   local rec id1 id2 out status
   id1=profile-batch-a-z9
@@ -852,6 +879,7 @@ test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
+test_pi_ship_launch_wires_task_recap_widget_but_secondmate_does_not
 test_batch_forwards_shared_profile_flags
 test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset

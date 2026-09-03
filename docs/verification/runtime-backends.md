@@ -989,3 +989,36 @@ The focused extension suite also exercised the installed Pi 0.84.4 picker and ou
 
 Scope of the earlier evidence: the installed signed `pi` CLI (0.82.0 at verification time) is a compiled binary whose bundled SDK is not importable from Node, so the importable npm package is the only surface the guard and the typecheck can pin.
 The extension executes inside the signed CLI's own runtime, so a CLI upgrade can drift ahead of the pinned npm surface; refresh this record after every Pi upgrade by re-running the live guard, picker regression, and strict typecheck above (point `FM_PI_PACKAGE_DIR` at a matching npm install when one exists) and by watching the branch's own fallback line - every branch failure degrades to the pre-branch wake-to-main path by construction, which `tests/fm-pi-branch-extension.test.sh` holds with a broken generator and the live guard holds with the real SDK.
+
+## Pi task recap
+
+The captain-facing task recap for a Pi ship/scout crewmate (`.pi/extensions/fm-task-recap.ts`, loaded by `bin/fm-spawn.sh` via `-e` alongside the per-task busy-state extension, ship/scout only) is Pi's own native `ctx.ui.setWidget(key, lines, { placement: "belowEditor" })` extension API - the same mechanism the captain's personal `pai-bq-statusline` extension (`~/.pi/agent/extensions/pai-bq-statusline.ts`, a separate `local-only` project, never edited by Firstmate) already uses. No terminal-overlay machinery, no typed input, no Herdr-side rendering: Pi renders the widget itself, inside its own TUI, below the editor pane.
+
+Evidence produced 2026-08-25 on macOS 26.4.0 arm64 (Darwin 25.4.0), installed `pi` 0.82.1 (protocol client only - no `--tui-mode` flag in this version's `--help`, confirming `pi_supports_tui_mode` in `bin/fm-spawn.sh` correctly omits it rather than passing an option this build rejects), Herdr 0.7.4 protocol 16, Node v24.12.0:
+
+- Isolated Herdr lab session (`bin/fm-herdr-lab.sh`, session `fm-lab-pi-recap-*`, torn down and tripwire-confirmed after every run below) hosted every live Pi launch; no default session or live fleet pane was touched.
+- `pi -e <extension>` in a scratch working directory (no positional prompt, real Herdr pane, real `bin/fm-busy-event.sh`-shaped sibling extension) still renders `pai-bq-statusline`'s own widget - explicit `-e` paths do not disable Pi's global extension discovery, disproving the naive "the extension is never loaded" hypothesis before any code was written.
+- The same launch in a workspace created with `--no-focus` (Herdr's ordinary placement for a newly spawned, not-yet-attended task pane) still rendered the widget, ruling out an unfocused-pane rendering gap.
+- Two independently-authored extensions calling `ctx.ui.setWidget` with distinct keys (`pai-bq-statusline` and a test `fm-task-recap` key) rendered simultaneously in one pane with no collision or replacement - captured via `herdr pane read` on the real pane:
+  ```
+  FM-RECAP-LINE-1 task foo
+  FM-RECAP-LINE-2 phase bar
+  ◆ BH1VE · gpt-5.6-sol · medium
+  ▸ pi-recap-lab
+  ⬡ ...
+  ```
+  This is the fact `fm-task-recap.ts`'s distinct `fm-task-recap` widget key depends on: it never overwrites or is overwritten by the captain's own statusline.
+- `pane.report_metadata` (`herdr pane report-metadata`) confirmed separately: `title`/`display_agent`/`state_labels`/`tokens` persist on the pane record across calls but do NOT survive a Herdr server restart (a fresh `pane get` after `herdr server` restarts returns none of them). `fm-task-recap.ts` does not depend on this - it re-renders from `bin/fm-pi-recap.sh`'s durable inputs (`state/<id>.status`, `state/<id>.meta`, `data/backlog.md`) on every `session_start`/`turn_start`/`turn_end`, so a restart is a non-event: the next event re-populates the widget from scratch.
+- Full end-to-end launch: the real tracked extension, the real `bin/fm-pi-recap.sh`, and the exact `FM_RECAP_TASK_ID`/`FM_RECAP_STATE_DIR`/`FM_RECAP_DATA_DIR` shape `bin/fm-spawn.sh` sets (proven separately by `tests/fm-task-recap-extension.test.sh`'s captured-launch-command assertions) against a synthetic `state/<id>.status` + `data/backlog.md` fixture, attached from a wide (200-column) client so Pi's own onboarding banner had room to render, produced:
+  ```
+  Fix the checkout timeout bug
+  In progress: reproduced the timeout under load
+  ◆ BH1VE · gpt-5.6-sol · medium
+  ▸ temp
+  ⬡ ⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡ 0% 0/1050.0k
+  ↑0 ↓0 │ Codex —
+  ```
+  the task title and current phase rendering cleanly above the captain's own statusline, both visible, neither disturbed. Unrelated finding, out of this feature's scope: the same launch crashed once against a narrower (53-column) pane - Pi's own onboarding ASCII-art banner (unrelated to any Firstmate extension) rendered a line wider than the terminal and threw inside `pi-tui`'s `doRender`. Worth a line here because a future narrow-pane investigation should know this reproduces with zero Firstmate wiring loaded at all, not assume it is this feature's fault.
+
+Executable coverage: `tests/fm-pi-recap.test.sh` (the pure render step - title, phase translation, open-decision dedup, PR inclusion, truncation, path/secret redaction, absent-input fallbacks) and `tests/fm-task-recap-extension.test.sh` (the real `bin/fm-spawn.sh` launch-command wiring for ship/scout vs. secondmate vs. non-Pi harnesses, and the tracked extension's `setWidget` dedup, `ctx.hasUI` gate, absent-env-var safety, and cross-home isolation, driven through its public `pi.on()`/`ctx.ui.setWidget()` interface exactly like `tests/fm-busy-adapter-wiring.test.sh` drives the sibling busy-state extension). `tests/fm-pi-primary-types.test.sh` typechecks `fm-task-recap.ts` under the same strict no-emit contract as the other tracked Pi extensions.
+Refresh this record after a Pi or Herdr upgrade by repeating the lab-session widget-coexistence and unfocused-pane checks above; a version that stops rendering `ctx.ui.setWidget` below the editor, or that starts colliding same-session widget keys, invalidates this evidence.
