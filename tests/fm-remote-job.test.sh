@@ -315,16 +315,22 @@ STORMED_WORKER_PID=$NEW_WORKER_PID
 STORMED_SUPERVISOR_PID=$(ps -o ppid= -p "$STORMED_WORKER_PID" | tr -d '[:space:]')
 case "$STORMED_SUPERVISOR_PID" in ''|*[!0-9]*) fail "the stop-storm fixture could not resolve the worker supervisor" ;; esac
 kill -STOP "$STORMED_SUPERVISOR_PID"
+# The stopped supervisor cannot reap its child, so on Linux the exited worker
+# lingers as a zombie that still answers kill -0; a zombie has stopped.
+stormed_worker_running() {
+  kill -0 "$STORMED_WORKER_PID" 2>/dev/null || return 1
+  case "$(ps -o stat= -p "$STORMED_WORKER_PID" 2>/dev/null)" in Z*) return 1 ;; esac
+}
 i=0
 while kill -0 "$STORMED_WORKER_PID" 2>/dev/null && [ "$i" -lt 20000 ]; do
   kill -TERM "$STORMED_WORKER_PID" 2>/dev/null || true
   i=$((i + 1))
 done
 for _ in $(seq 1 100); do
-  kill -0 "$STORMED_WORKER_PID" 2>/dev/null || break
+  stormed_worker_running || break
   sleep 0.05
 done
-! kill -0 "$STORMED_WORKER_PID" 2>/dev/null || fail "the stormed worker did not stop"
+! stormed_worker_running || fail "the stormed worker did not stop"
 kill -CONT "$STORMED_SUPERVISOR_PID"
 for _ in $(seq 1 100); do
   kill -0 "$STORMED_SUPERVISOR_PID" 2>/dev/null || break
