@@ -27,45 +27,26 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
-      - name: Verify no-mistakes signature in PR body
+      - uses: actions/checkout@v6
+      # `git push no-mistakes` rewrites the PR body with the head-bound
+      # attestation seconds after the push that fires synchronize, so the event
+      # payload body is stale. Judge the live body instead (owner:
+      # bin/fm-no-mistakes-attestation-body.sh); the head SHA stays the payload's.
+      - name: Fetch the live PR body once its attestation binds the head
+        id: body
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          # no-mistakes pushes the branch first and rewrites the PR body a few
-          # seconds later, so the synchronize event's body snapshot predates the
-          # signature. Re-read the live body for a bounded grace window instead
-          # of failing on the stale snapshot.
-          GRACE_ATTEMPTS: '12'
-          GRACE_SLEEP_SECS: '10'
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -eu
-          marker='Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)'
-          body=${PR_BODY:-}
-          attempt=0
-          while :; do
-            if printf '%s' "$body" | grep -qF -- "$marker"; then
-              echo "Found no-mistakes signature in PR #${PR_NUMBER} body."
-              exit 0
-            fi
-            attempt=$((attempt + 1))
-            [ "$attempt" -lt "$GRACE_ATTEMPTS" ] || break
-            echo "Signature missing (attempt ${attempt}/${GRACE_ATTEMPTS}); re-reading live PR body in ${GRACE_SLEEP_SECS}s."
-            sleep "$GRACE_SLEEP_SECS"
-            body=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""') || body=${PR_BODY:-}
-          done
           {
-            echo "::error::This PR was not raised through no-mistakes."
+            echo "body<<FM_PR_BODY_EOF"
+            bin/fm-no-mistakes-attestation-body.sh "$GITHUB_REPOSITORY" "$PR_NUMBER" "$PR_HEAD_SHA"
             echo
-            echo "Contributions to this repository must be submitted via 'git push no-mistakes'."
-            echo "That pipeline runs the required review/test/lint/CI steps and writes a"
-            echo "deterministic '## Pipeline' section into the PR body containing:"
-            echo
-            echo "    $marker"
-            echo
-            echo "See CONTRIBUTING.md for setup and the full workflow."
-            echo
-            echo "PR author: ${PR_AUTHOR}"
-          } >&2
-          exit 1
+            echo "FM_PR_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Verify no-mistakes signature and pipeline attestation
+        uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6 # post-v1.57.1, untagged (action added in #819)
+        with:
+          pr-body: ${{ steps.body.outputs.body }}
