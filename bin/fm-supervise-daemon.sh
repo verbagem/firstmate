@@ -471,7 +471,8 @@ clear_pause_tracking() {  # <window> <state>
   watcher_key=$(_stale_key "$win")
   rm -f "$state/.subsuper-paused-$key" "$state/.subsuper-stale-$key" \
     "$state/.paused-$watcher_key" "$state/.paused-rechecked-$watcher_key" "$state/.paused-resurfaced-$watcher_key" \
-    "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key"
+    "$state/.stale-$watcher_key" "$state/.stale-since-$watcher_key" "$state/.wedge-escalations-$watcher_key" \
+    "$state/.run-state-probed-$watcher_key" "$state/.run-state-probed-terminal-$watcher_key"
 }
 
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
@@ -1216,6 +1217,8 @@ handle_wake() {  # <reason> <state>
               decision=$(classify_stale "$arg" "$state")
               case "$stale_detail" in
                 idle\ *s,\ possible\ wedge,\ escalation\ *)
+                  decision="escalate|${reason#stale: }" ;;
+                validation\ run\ outcome:*)
                   decision="escalate|${reason#stale: }" ;;
               esac ;;
     check:*)  decision=$(classify_check "$reason") ;;

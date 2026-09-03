@@ -7,8 +7,10 @@
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
-#   standing posture as context, not as this task's answer, so a spawn never looks
-#   the mode up. A ship spawn additionally reads the brief's recorded
+#   standing posture as context, not as this task's answer, so a spawn never derives
+#   this task's mode from the registry. A ship spawn still resolves the standing
+#   posture by the canonical project path for the deviation notice below. A ship
+#   spawn additionally reads the brief's recorded
 #   "Delivery contract: mode=<mode>" line and REFUSES a mismatch, so the worker's
 #   instructions and the recorded task delivery cannot drift apart; a brief
 #   scaffolded before that line existed warns once and launches on the flag. When
@@ -1658,6 +1660,14 @@ else
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
 
+# PROJ_ABS can still carry a symlinked path component (e.g. macOS's /tmp ->
+# /private/tmp) when it came from the ship/scout branch's logical `pwd` above.
+# Every backend's own current-path read (tmux's pane_current_path, herdr's
+# foreground_cwd, zellij/cmux's active pwd probe against the live shell) can
+# report the OS-level, physically-resolved cwd, so compare and registry-resolve
+# against one canonical physical form below.
+PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
+
 delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task mode
   case "$1" in
     no-mistakes) echo 3 ;;
@@ -1672,7 +1682,22 @@ delivery_rigor_rank() {  # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task
 # line. A spawn that disagrees would launch a worker whose instructions and whose
 # recorded task delivery differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
-  PROJ_NAME=$(basename "$PROJ_ABS")
+  STANDING_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-mode.XXXXXX") || STANDING_ERR=/dev/null
+  if STANDING_LINE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$PROJ_ABS_REAL" 2>"$STANDING_ERR"); then
+    read -r PROJ_NAME STANDING_MODE _ <<EOF
+$STANDING_LINE
+EOF
+    if [ -s "$STANDING_ERR" ]; then cat "$STANDING_ERR" >&2; fi
+  else
+    STANDING_REASON="registered mode lookup failed"
+    if [ -s "$STANDING_ERR" ]; then
+      STANDING_REASON="$STANDING_REASON: $(first_line "$(cat "$STANDING_ERR")")"
+    fi
+    PROJ_NAME=$(basename -- "$PROJ_ABS_REAL")
+    STANDING_MODE=no-mistakes
+    echo "warning: $STANDING_REASON; assuming the default standing posture ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
+  fi
+  [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
   BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   if [ -z "$BRIEF_MODE" ]; then
     echo "warning: $BRIEF records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode $MODE - confirm its definition of done matches" >&2
@@ -1685,7 +1710,6 @@ if [ "$KIND" = ship ]; then
   # unregistered project resolves to the same no-mistakes standing default, which
   # is why the notice names the standing posture rather than the registry line. A
   # conditional policy is excluded: both of its legs are legitimate classifications.
-  STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
   if [ -n "$STANDING_MODE" ] && [ "$STANDING_MODE" != no-mistakes-prod-only ] \
      && [ "$(delivery_rigor_rank "$MODE")" -lt "$(delivery_rigor_rank "$STANDING_MODE")" ]; then
     echo "notice: $ID ships mode=$MODE while the standing posture for $PROJ_NAME is $STANDING_MODE - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
@@ -1694,18 +1718,6 @@ fi
 
 BRIEF_DIR_REAL=$(cd "$(dirname "$BRIEF")" && pwd -P)
 BRIEF_REAL="$BRIEF_DIR_REAL/$(basename "$BRIEF")"
-
-# PROJ_ABS can still carry a symlinked path component (e.g. macOS's /tmp ->
-# /private/tmp) when it came from the ship/scout branch's logical `pwd` above.
-# Every backend's own current-path read (tmux's pane_current_path, herdr's
-# foreground_cwd, zellij/cmux's active pwd probe against the live shell) can
-# report the OS-level, physically-resolved cwd, so comparing it against a
-# still-symlinked PROJ_ABS can misfire both ways: false-negative (the poll
-# below never notices the pane left the project) or false-positive (the
-# isolation guard refuses a spawn that never actually tangled). Canonicalize
-# once here so every downstream comparison uses the same physical form
-# (docs/herdr-backend.md "Known gaps").
-PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
 
 real_path_or_raw() {  # <path>
   local path=$1 real
