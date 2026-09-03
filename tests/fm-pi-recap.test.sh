@@ -299,11 +299,13 @@ test_credential_prefixes_are_word_anchored_and_length_gated() {
   local rec state data id=recap-prefix-table out prefix real embedded
   rec=$(make_fixture prefix-table); IFS='|' read -r state data <<<"$rec"
   write_backlog_entry "$data" "$id" "Fix disk-space"
-  local table='sk-|sk-abcdefghijklmnop1234|disk-space
-ghp_|ghp_abcdefghijklmnop1234|graphghp_x
-gho_|gho_abcdefghijklmnop1234|echogho_y
-github_pat_|github_pat_abcdefghijklmnop1234|mygithub_pat_z
-xoxb-|xoxb-abcdefghijklmnop1234|boxoxb-tool
+  # Every embedded word carries an 8+ char body after the prefix, so only
+  # the word-start anchor (not the length gate) keeps it intact.
+  local table='sk-|sk-abcdefghijklmnop1234|disk-spacewalker1
+ghp_|ghp_abcdefghijklmnop1234|graphghp_abcdefghij
+gho_|gho_abcdefghijklmnop1234|echogho_abcdefghij
+github_pat_|github_pat_abcdefghijklmnop1234|mygithub_pat_abcdefghij
+xoxb-|xoxb-abcdefghijklmnop1234|boxoxb-toolchain01
 AKIA|AKIAABCDEFGHIJKLMNOP|MAKIAWAKA-thing'
   while IFS='|' read -r prefix real embedded; do
     printf 'working: rotated %s while touching %s\n' "$real" "$embedded" > "$state/$id.status"
