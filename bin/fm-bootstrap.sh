@@ -22,23 +22,31 @@
 #                 "SECONDMATE_HANDOFF: secondmate <id>: pending delivery: <n> item(s)",
 #                 "TOOL_AUTOUPDATE: <diagnostic>", and
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
-#          TOOL AUTO-UPDATE (opt-in, default off). A non-empty config/tool-autoupdate
-#          turns on an unattended `npm install -g <pkg>@latest` for whichever of
-#          gh-axi, chrome-devtools-axi, lavish-axi, tasks-axi, quota-axi, acpx,
+#          TOOL AUTO-UPDATE (opt-in, default off). A config/tool-autoupdate
+#          presence flag (same convention as config/trace-context - any content,
+#          including empty, enables it) turns on an unattended
+#          `npm install -g <pkg>@latest` for whichever of gh-axi,
+#          chrome-devtools-axi, lavish-axi, tasks-axi, quota-axi, acpx,
 #          backpass, and gnhf are already on PATH and behind the npm registry's
 #          published version. treehouse and no-mistakes are never auto-updated:
 #          both gate active use on their own version and have their own held
 #          update tasks. This is the ONLY tool detection this file ever mutates
 #          without a MISSING-driven install command; every other home leaves the
 #          plain detect-then-consent contract in AGENTS.md section 3 unchanged
-#          because the flag defaults off. Registry lookups are rate-limited to
-#          once per 24h via state/.tool-autoupdate-checked, run only in the
-#          deferred network phase (never on the local session-start path), and
-#          are bounded by FM_TOOL_AUTOUPDATE_TIMEOUT (default 60s) the same way
-#          fleet-sync bounds its own background refresh. A successful update
-#          prints one summary "BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ..."
-#          line; a failed install, a failed registry lookup, or an unreachable
-#          npm/network prints an actionable "TOOL_AUTOUPDATE: ..." line instead.
+#          because the flag defaults off. A newer version still holds the
+#          standing supply-chain age rule: a release published less than
+#          TOOL_AUTOUPDATE_MIN_AGE_SECONDS ago (FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS,
+#          default 14) is left alone and picked up on a later run once it
+#          clears the window, the same as a first-time install would wait.
+#          Registry lookups are rate-limited to once per 24h via
+#          state/.tool-autoupdate-checked, run only in the deferred network
+#          phase (never on the local session-start path), and are bounded by
+#          FM_TOOL_AUTOUPDATE_TIMEOUT (default 60s) the same way fleet-sync
+#          bounds its own background refresh. A successful update prints one
+#          summary "BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ..."
+#          line; a failed install, a failed registry or publish-date lookup, or
+#          an unreachable npm/network prints an actionable
+#          "TOOL_AUTOUPDATE: ..." line instead.
 #          MISSING detection for a fresh machine is unaffected: a package that
 #          is not yet installed is left to the ordinary MISSING/install flow
 #          above, never auto-installed by this sweep.
@@ -352,13 +360,21 @@ fleet_sync() {
 
 # Opt-in npm auto-update sweep (default off; every other home keeps the plain
 # detect-then-consent contract from AGENTS.md section 3 unchanged). A home
-# turns this on for itself by dropping a non-empty config/tool-autoupdate;
+# turns this on for itself by dropping a config/tool-autoupdate presence flag
+# (any content, including empty, same convention as config/trace-context);
 # absence is the default and this whole block is then a no-op.
 # treehouse and no-mistakes are deliberately excluded: both have active-use
 # safety gates (lease support, validation-pipeline version matching) and their
 # own held update tasks, so an unattended `npm install -g` on either is never
 # safe here.
+# The standing supply-chain age rule still applies to every package here: a
+# version published less than TOOL_AUTOUPDATE_MIN_AGE_SECONDS ago is held, not
+# installed, and is picked up on a later run once it clears the window. Opting
+# into this sweep is authority to auto-update once a release has cleared the
+# same age gate every other install already waits out, never authority to
+# install same-day.
 TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
+TOOL_AUTOUPDATE_MIN_AGE_SECONDS=$(( ${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-14} * 86400 ))
 
 tool_autoupdate_enabled() {
   [ -f "$CONFIG/tool-autoupdate" ] && [ ! -L "$CONFIG/tool-autoupdate" ]
@@ -397,12 +413,32 @@ npm_registry_latest_version() {  # <pkg>
   npm view "$1" version 2>/dev/null | head -n 1
 }
 
+# Parses `npm view <pkg> time`'s pretty-printed object for one version's ISO
+# 8601 publish timestamp. No jq dependency: the object's lines are quoted
+# "<version>": "<timestamp>" pairs, stable across npm's supported versions.
+npm_registry_version_publish_iso() {  # <pkg> <version>
+  local pkg=$1 version=$2 escaped
+  escaped=$(printf '%s' "$version" | sed 's/[.[\*^$]/\\&/g')
+  npm view "$pkg" time 2>/dev/null \
+    | sed -nE "s/.*'${escaped}': '([^']+)'.*/\1/p" | head -n 1
+}
+
+iso8601_to_epoch() {  # <YYYY-MM-DDTHH:MM:SS(.fff)?Z>
+  local iso=$1 clean
+  clean=$(printf '%s' "$iso" | sed -E 's/\.[0-9]+Z$/Z/')
+  if [ "$(uname)" = Darwin ]; then
+    date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$clean" +%s 2>/dev/null
+  else
+    date -u -d "$clean" +%s 2>/dev/null
+  fi
+}
+
 # Runs entirely inside the caller's already-bounded background job (see
 # tool_autoupdate_sweep). Prints one line per actionable outcome; the caller
 # relays those with the TOOL_AUTOUPDATE: prefix and folds successful updates
 # into a single BOOTSTRAP_INFO line.
 tool_autoupdate_body() {
-  local pkg installed latest updated=""
+  local pkg installed latest updated="" publish_iso publish_epoch now
   if ! command -v npm >/dev/null 2>&1; then
     echo "DIAG:npm not found on PATH, cannot check for updates"
     return 0
@@ -417,6 +453,21 @@ tool_autoupdate_body() {
       continue
     fi
     [ "$installed" != "$latest" ] || continue
+    # The standing supply-chain age rule: hold a too-recent release rather
+    # than install it same-day. An unparseable or missing publish date is
+    # treated the same as "still held" - never install on evidence we could
+    # not verify.
+    publish_iso=$(npm_registry_version_publish_iso "$pkg" "$latest")
+    publish_epoch=""
+    [ -z "$publish_iso" ] || publish_epoch=$(iso8601_to_epoch "$publish_iso")
+    if [ -z "$publish_epoch" ]; then
+      echo "DIAG:publish date for $pkg@$latest could not be verified, holding"
+      continue
+    fi
+    now=$(date +%s)
+    if [ $((now - publish_epoch)) -lt "$TOOL_AUTOUPDATE_MIN_AGE_SECONDS" ]; then
+      continue
+    fi
     if npm install -g "$pkg@latest" >/dev/null 2>&1; then
       updated="$updated $pkg@$latest"
     else

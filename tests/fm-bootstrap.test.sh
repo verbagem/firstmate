@@ -395,8 +395,10 @@ test_backpass_absent_reports_missing() {
 }
 
 # Fake npm for the tool-autoupdate sweep: reports each package's fake
-# "installed" and "latest" versions via env vars, and either succeeds or fails
-# `npm install -g` per FM_FAKE_NPM_INSTALL_FAIL.
+# "installed" and "latest" versions via env vars, a controllable publish date
+# for the "latest" version (default old enough to clear the 14-day supply-chain
+# hold), and either succeeds or fails `npm install -g` per
+# FM_FAKE_NPM_INSTALL_FAIL.
 add_fake_npm() {
   local fakebin=$1
   cat > "$fakebin/npm" <<'SH'
@@ -413,7 +415,7 @@ if [ "$1" = list ] && [ "$2" = -g ]; then
   printf '└── %s@%s\n' "$pkg" "$inst"
   exit 0
 fi
-if [ "$1" = view ]; then
+if [ "$1" = view ] && [ "$3" = version ]; then
   case "$2" in
     gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-} ;;
     backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-} ;;
@@ -421,6 +423,17 @@ if [ "$1" = view ]; then
   esac
   [ -n "$latest" ] || exit 1
   printf '%s\n' "$latest"
+  exit 0
+fi
+if [ "$1" = view ] && [ "$3" = time ]; then
+  pkg=$2
+  case "$pkg" in
+    gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-}; iso=${FM_FAKE_NPM_GH_AXI_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
+    backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-}; iso=${FM_FAKE_NPM_BACKPASS_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
+    *) exit 1 ;;
+  esac
+  [ -n "$latest" ] || exit 1
+  printf "{ '%s': '%s' }\n" "$latest" "$iso"
   exit 0
 fi
 if [ "$1" = install ]; then
@@ -467,6 +480,27 @@ test_tool_autoupdate_updates_outdated_and_skips_current() {
   assert_not_contains "$out" "backpass@0.1.16" "an already-current package must not appear in the update summary"
   [ -f "$case_dir/home/state/.tool-autoupdate-checked" ] || fail "the 24h throttle marker must be written after a run"
   pass "bootstrap: tool auto-update installs an outdated package and leaves a current one alone"
+}
+
+test_tool_autoupdate_holds_a_too_recent_release() {
+  local case_dir fakebin out recent
+  case_dir="$TMP_ROOT/tool-autoupdate-recent-hold"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  # A newer version exists, but it was published seconds ago: the standing
+  # supply-chain age rule must hold it exactly like a first-time install would.
+  recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" "tool-autoupdate updated" "a release inside the 14-day hold must never be auto-installed"
+  assert_not_contains "$out" "gh-axi@0.1.35" "a held release must not appear in any update summary"
+  pass "bootstrap: tool auto-update holds a release still inside the supply-chain age window"
 }
 
 test_tool_autoupdate_respects_24h_throttle() {
@@ -1330,6 +1364,7 @@ test_backpass_min_version
 test_backpass_absent_reports_missing
 test_tool_autoupdate_disabled_by_default
 test_tool_autoupdate_updates_outdated_and_skips_current
+test_tool_autoupdate_holds_a_too_recent_release
 test_tool_autoupdate_respects_24h_throttle
 test_tool_autoupdate_reports_install_failure
 test_tool_autoupdate_reports_npm_unavailable
