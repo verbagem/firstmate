@@ -1,0 +1,44 @@
+ok - bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts
+ok - bootstrap enforces no-mistakes minimum version
+ok - bootstrap enforces backpass minimum version
+ok - bootstrap reports backpass MISSING when absent from PATH
+ok - bootstrap: tool auto-update stays off without an explicit config/tool-autoupdate opt-in
+ok - bootstrap: tool auto-update installs an outdated package and leaves a current one alone
+ok - bootstrap: tool auto-update installs the exact version it age-checked
+ok - bootstrap: tool auto-update never downgrades a deliberately newer install
+ok - bootstrap: tool auto-update holds instead of assuming behind when versions cannot be compared
+ok - bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS instead of aborting
+ok - bootstrap: tool auto-update relays already-completed updates when the sweep times out
+ok - bootstrap: tool auto-update compares multi-digit version components numerically
+ok - bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_TIMEOUT instead of running unbounded
+ok - bootstrap: tool auto-update installs a same-day release by default for the trusted package list
+ok - bootstrap: tool auto-update holds a release still inside an explicitly configured age window
+ok - bootstrap: tool auto-update rate-limits registry checks to once per 24h
+ok - bootstrap: tool auto-update reports a failed npm install as an actionable diagnostic
+ok - bootstrap: tool auto-update reports when npm itself is unavailable
+ok - bootstrap enforces gh-axi minimum version
+ok - bootstrap enforces lavish-axi minimum version
+ok - bootstrap enforces tasks-axi minimum version
+ok - bootstrap enforces quota-axi minimum version
+ok - bootstrap requires git with an install instruction
+ok - bootstrap: backend=orca gates the Orca CLI without requiring it on the default backend
+ok - bootstrap: session-provider backends require their own CLI + jq + treehouse, never tmux
+ok - bootstrap: a session-provider backend gates its own CLI, never a false tmux requirement
+ok - bootstrap: Herdr manual-install guidance is never executed as a shell command
+ok - bootstrap: the bundled cmux CLI satisfies the active backend dependency
+ok - bootstrap: unknown resolved backends fail closed with an actionable diagnostic
+ok - bootstrap: JSON-emitting backends require jq (their genuine dep), never tmux
+ok - bootstrap: the treehouse lease check follows the resolved backend's worktree provider
+ok - bootstrap computes a fleet-size-aware default timeout and preserves partial fleet-sync output
+ok - bootstrap keeps the quick 20s default for small fleets
+ok - bootstrap preserves FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT as an explicit override
+ok - bootstrap treats a blank timeout override as unset
+ok - bootstrap computes the timeout before launching fleet sync
+ok - bootstrap keeps routine tasks-axi, harness, dispatch, and already-live liveness confirmations silent
+ok - bootstrap routine contract runs under system /bin/bash
+ok - bootstrap: FM_BOOTSTRAP_NETWORK partitions one run into local and network halves
+ok - bootstrap: every deferred mutating sweep rechecks fleet-lock ownership
+ok - bootstrap: each deferred network phase, secondmate, and clone records its own elapsed time
+ok - bootstrap: the tasks-axi compatibility verdict travels exactly one process hop
+ok - bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO
+ok - bootstrap validates crew-dispatch.json and reports malformed or unverified configs
