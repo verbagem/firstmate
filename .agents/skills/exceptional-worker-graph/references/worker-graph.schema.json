@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Firstmate Exceptional Worker Graph",
+  "type": "object",
+  "required": ["version", "engagement", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "enum": [1]
+    },
+    "engagement": {
+      "type": "object",
+      "required": ["planner", "reason", "call_budget", "calls_used", "packet_scope"],
+      "additionalProperties": false,
+      "properties": {
+        "planner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "call_budget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "calls_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "captain_authorized_extra_calls": {
+          "type": "boolean"
+        },
+        "packet_scope": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "purpose",
+          "dependencies",
+          "ownership_boundary",
+          "worker",
+          "expected_output",
+          "verification",
+          "stop_condition",
+          "parallel_safe"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            }
+          },
+          "ownership_boundary": {
+            "type": "object",
+            "required": ["scope", "exclusive"],
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "exclusive": {
+                "type": "boolean"
+              }
+            }
+          },
+          "worker": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "selected_profile": {
+                "type": "object",
+                "required": ["harness"],
+                "additionalProperties": false,
+                "properties": {
+                  "harness": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "effort": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "profile_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "unresolved_profile_requirement": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "oneOf": [
+              {
+                "required": ["selected_profile"]
+              },
+              {
+                "required": ["unresolved_profile_requirement"]
+              }
+            ]
+          },
+          "expected_output": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "stop_condition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parallel_safe": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "x-firstmate-policy": {
+    "routine_work": "unchanged",
+    "fable_5_1": {
+      "eligible_roles": ["planner", "adjudicator"],
+      "default_call_budget": 3,
+      "outside_implementation_graph": true,
+      "forbidden_authority": [
+        "edit_project_files",
+        "invoke_project_tools",
+        "spawn_workers",
+        "bypass_dispatch_profile_or_quota_checks",
+        "merge_or_approve"
+      ]
+    },
+    "firstmate_validates_nodes_for": [
+      "existing_worker_support",
+      "quota_and_runway",
+      "project_authority",
+      "isolation",
+      "delivery_contract",
+      "safety_contract"
+    ]
+  }
+}
