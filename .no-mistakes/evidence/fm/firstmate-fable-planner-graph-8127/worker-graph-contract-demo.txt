@@ -1,13 +1,15 @@
-Firstmate exceptional-worker-graph contract — validated via jsonschema 4.25.1 (Draft 2020-12)
+=== Firstmate exceptional-worker-graph contract — real jsonschema Draft 2020-12 validator ===
+schema: .agents/skills/exceptional-worker-graph/references/worker-graph.schema.json
 
-Each packet below is checked by the real schema consumer Firstmate would use before dispatch.
+Intent: bounded worker graph; Fable stays outside implementation graph; 3-call cap.
 
-==============================================================================
-[ACCEPT] Valid bounded graph packet (Fable planner, budget 3, selected profile)
-[REJECT] Fable node claims merge/approval authority (forbidden)  -> /nodes/0
-[REJECT] Fable node claims it can spawn workers directly (forbidden)  -> /nodes/0/worker
-[REJECT] Declared call_budget 4 without captain authorization (over 3-call cap)  -> /engagement/call_budget
-[REJECT] calls_used 4 without captain authorization (usage past cap)  -> /engagement/calls_used
-[ACCEPT] Budget 4 WITH captain explicit authorization (allowed override)
-[REJECT] Node missing parallel-safety declaration (required field)  -> /nodes/0
-[REJECT] Node with empty verification list (delivery/verification contract)  -> /nodes/0/verification
+  ACCEPT  bounded valid graph packet (Fable planner, resolved worker profile)
+  REJECT  node grants Fable merge/approval authority (forbidden)  -> at /nodes/0: Additional properties are not allowed ('merge_authority' was unexpecte
+  REJECT  node lets planner spawn workers directly (forbidden)  -> at /nodes/0/worker: Additional properties are not allowed ('can_spawn_directly' was unexpe
+  REJECT  node omits required parallel-safety declaration  -> at /nodes/0: 'parallel_safe' is a required property
+  REJECT  node has no verification step  -> at /nodes/0/verification: [] should be non-empty
+  REJECT  4 Fable calls, no captain authorization (over cap)  -> at /engagement/call_budget: 4 is greater than the maximum of 3
+  ACCEPT  6 Fable calls WITH captain authorization (allowed)
+  REJECT  already used 4 Fable calls, no authorization (over cap)  -> at /engagement/calls_used: 4 is greater than the maximum of 3
+
+All verdicts match the intent's required/forbidden constraints.
