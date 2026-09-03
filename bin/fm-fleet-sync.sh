@@ -330,9 +330,12 @@ sync_project() {
     return 0
   }
   if mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" --with-name --path "$PROJ" 2>"$mode_err"); then
-    IFS=' ' read -r label mode _ <<EOF
+    IFS=' ' read -r mode_name mode _ <<EOF
 $mode_line
 EOF
+    if ! grep -q -e 'no project registered for path' -e 'no registry at' "$mode_err"; then
+      label=$mode_name
+    fi
   else
     reason="registered mode lookup failed"
     if [ -s "$mode_err" ]; then
