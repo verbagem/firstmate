@@ -12,8 +12,9 @@
 #   3. Exact-id scoping: a window label, an explicit endpoint, an unknown id,
 #      and a record bound to another task are all refused.
 #   4. Verb allowlist: no arbitrary text, no raw keys, no resume.
-#   5. Lifecycle states: busy interrupts first, idle does not, already-stopped
-#      is idempotent success, and an agent that does not stop fails closed.
+#   5. Lifecycle states: busy interrupts first, idle does not, queued composer
+#      input is preserved, already-stopped is idempotent success, and an agent
+#      that does not stop fails closed.
 #   6. Marker non-regression: a control command to a kind=secondmate task
 #      carries NO from-firstmate marker and opens no pending-reply expectation,
 #      while fm-send's marking of the same task is untouched.
@@ -93,7 +94,9 @@ case "${1:-}" in
     payload=${1:-}
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
-      if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
+      if [ -n "${FM_FAKE_TYPED_BUFFER:-}" ]; then
+        printf '%s' "$payload" >> "$FM_FAKE_TYPED_BUFFER"
+      elif [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
          && { [ "$payload" = /exit ] || [ "$payload" = /quit ]; }; then
         printf 'zsh' > "$D/command"
       fi
@@ -102,6 +105,15 @@ case "${1:-}" in
       esac
     else
       printf '%s\n' "$payload" >> "$D/keys"
+      if [ "$payload" = Enter ] && [ -n "${FM_FAKE_TYPED_BUFFER:-}" ]; then
+        combined=$(cat "$FM_FAKE_TYPED_BUFFER")
+        printf '%s\n' "$combined" >> "$FM_FAKE_SUBMISSIONS"
+        : > "$FM_FAKE_TYPED_BUFFER"
+        if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
+           && { [ "$combined" = /exit ] || [ "$combined" = /quit ]; }; then
+          printf 'zsh' > "$D/command"
+        fi
+      fi
       if [ -n "${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" ] \
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         printf 'zsh' > "$D/command"
@@ -197,6 +209,8 @@ run_control() {
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
     FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK="${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" \
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
+    FM_FAKE_TYPED_BUFFER="${FM_FAKE_TYPED_BUFFER:-}" \
+    FM_FAKE_SUBMISSIONS="${FM_FAKE_SUBMISSIONS:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -663,6 +677,52 @@ test_ambiguous_endpoint_refuses() {
   pass "fm-control exit: an endpoint whose process cannot be attributed refuses"
 }
 
+test_busy_agent_with_queued_input_refuses_without_touching_the_queue() {
+  local dir out rc verb gen inbox before buffer submissions
+  for verb in exit relaunch; do
+    dir=$(new_case "busy-queued-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+    printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+    printf '╭────────────────────╮\n│ ❯ queued follow-up │\n╰────────────────────╯\n' > "$dir/fake/pane"
+    inbox="$dir/home/state/t1.inbox/001.msg"
+    mkdir -p "${inbox%/*}/handled"
+    printf 'v1\n--\nlegitimate queued worker instruction\n' > "$inbox"
+    before=$(cat "$inbox")
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    printf 'queued follow-up' > "$buffer"
+    : > "$submissions"
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 relaunch --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse while a busy worker has queued composer input"
+    assert_contains "$out" "composer holds a queued instruction" \
+      "$verb refusal should identify the preserved queued instruction"
+    [ -z "$(keys_sent "$dir")" ] \
+      || fail "$verb must not interrupt or clear a queued instruction"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text after queued input"
+    [ ! -s "$submissions" ] \
+      || fail "$verb turned queued input plus lifecycle text into chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'queued follow-up' ] \
+      || fail "$verb must preserve the queued composer bytes"
+    [ "$(cat "$inbox")" = "$before" ] \
+      || fail "$verb must preserve the durable worker instruction byte-for-byte"
+    assert_grep "queued follow-up" "$dir/fake/pane" \
+      "$verb must leave the queued composer input untouched"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+  done
+  pass "fm-control: exit and relaunch preserve queued worker input instead of concatenating lifecycle text"
+}
+
 test_busy_agent_is_interrupted_before_the_exit_command() {
   local dir out rc
   dir=$(new_case busy)
@@ -897,6 +957,7 @@ test_already_stopped_exit_is_idempotent
 test_missing_endpoint_refuses
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
+test_busy_agent_with_queued_input_refuses_without_touching_the_queue
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
 test_interrupt_without_acknowledgement_preserves_busy_state

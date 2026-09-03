@@ -318,6 +318,34 @@ busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
 }
 
+composer_state() {
+  fm_backend_composer_state "$BACKEND" "$T" "$LABEL"
+}
+
+# A positively identified queued instruction must survive lifecycle control.
+# Refuse before interrupting because some adapters clear their composer as part
+# of interrupt delivery; the existing durable inbox lets the instruction be
+# re-rung after the worker consumes it.
+refuse_pending_composer() {
+  local state
+  state=$(composer_state)
+  case "$state" in
+    pending|pending-unproven)
+      die "task $ID's composer holds a queued instruction; refusing lifecycle control until the worker consumes it"
+      ;;
+  esac
+}
+
+# Textual lifecycle commands are safe only in a positively empty composer.
+# This second check runs after any interrupt, catching restored or newly queued
+# input before /exit or /quit can concatenate with it.
+require_empty_composer() {
+  local state
+  state=$(composer_state)
+  [ "$state" = empty ] \
+    || die "task $ID's composer reads '$state' after interrupt handling; refusing to type a lifecycle command into unverified input"
+}
+
 # wait_agent_state <wanted...> <timeout>: poll until agent_state prints one of
 # the wanted values. Prints the final observed state; returns 0 on a match.
 wait_agent_state() {  # <timeout> <wanted>...
@@ -404,6 +432,7 @@ interrupt_cancel_claim() {
 # cancellation claim available after delivery.
 deliver_interrupt() {
   local cancel
+  refuse_pending_composer
   prepare_interrupt_ack
   send_interrupt_keys
   cancel=$(interrupt_cancel_claim)
@@ -471,6 +500,7 @@ do_exit() {
       esac
       ;;
   esac
+  require_empty_composer
   cmd=$(fm_control_exit_command "$HARNESS")
   # The submit verdict is NOT the postcondition here: a successful exit command
   # destroys the composer the verdict is read from, so a post-exit read can
