@@ -125,9 +125,10 @@ fm_task_inbox_lock_acquire() {  # <lock-path>
   case "$wait" in ''|*[!0-9]*) wait=$FM_TASK_INBOX_LOCK_WAIT_DEFAULT ;; esac
   probe=$(mktemp "${lock%/*}/.lock-probe.XXXXXX") || return 1
   rm -f "$probe" || return 1
+  # A lost create race whose winner has already released leaves no lock
+  # behind; that is a reason to keep waiting, never a failure.
   if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then
     fm_lock_try_create "$lock" && return 0
-    [ -e "$lock" ] || [ -L "$lock" ] || return 1
   fi
   deadline=$(( $(date +%s) + wait ))
   while ! fm_lock_try_acquire "$lock"; do

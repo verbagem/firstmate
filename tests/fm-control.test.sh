@@ -12,8 +12,9 @@
 #   3. Exact-id scoping: a window label, an explicit endpoint, an unknown id,
 #      and a record bound to another task are all refused.
 #   4. Verb allowlist: no arbitrary text, no raw keys, no resume.
-#   5. Lifecycle states: busy interrupts first, idle does not, already-stopped
-#      is idempotent success, and an agent that does not stop fails closed.
+#   5. Lifecycle states: busy interrupts first, idle does not, queued composer
+#      input is preserved, already-stopped is idempotent success, and an agent
+#      that does not stop fails closed.
 #   6. Marker non-regression: a control command to a kind=secondmate task
 #      carries NO from-firstmate marker and opens no pending-reply expectation,
 #      while fm-send's marking of the same task is untouched.
@@ -93,7 +94,9 @@ case "${1:-}" in
     payload=${1:-}
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
-      if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
+      if [ -n "${FM_FAKE_TYPED_BUFFER:-}" ]; then
+        printf '%s' "$payload" >> "$FM_FAKE_TYPED_BUFFER"
+      elif [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
          && { [ "$payload" = /exit ] || [ "$payload" = /quit ]; }; then
         printf 'zsh' > "$D/command"
       fi
@@ -102,9 +105,32 @@ case "${1:-}" in
       esac
     else
       printf '%s\n' "$payload" >> "$D/keys"
+      if [ "$payload" = Enter ] && [ -n "${FM_FAKE_TYPED_BUFFER:-}" ]; then
+        combined=$(cat "$FM_FAKE_TYPED_BUFFER")
+        printf '%s\n' "$combined" >> "$FM_FAKE_SUBMISSIONS"
+        : > "$FM_FAKE_TYPED_BUFFER"
+        if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
+           && { [ "$combined" = /exit ] || [ "$combined" = /quit ]; }; then
+          printf 'zsh' > "$D/command"
+        fi
+      fi
       if [ -n "${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" ] \
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         printf 'zsh' > "$D/command"
+      fi
+      if [ -n "${FM_FAKE_INTERRUPT_RESTORES_TEXT:-}" ] \
+         && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
+        printf '╭────────────────────╮\n│ ❯ %s │\n╰────────────────────╯\n' \
+          "$FM_FAKE_INTERRUPT_RESTORES_TEXT" > "$D/pane"
+        printf '%s' "$FM_FAKE_INTERRUPT_RESTORES_TEXT" > "$FM_FAKE_TYPED_BUFFER"
+      fi
+      if [ -n "${FM_FAKE_INTERRUPT_REDRAW_READS:-}" ] \
+         && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
+        printf '%s' "$FM_FAKE_INTERRUPT_REDRAW_READS" > "$D/redraw-remaining"
+      fi
+      if [ -n "${FM_FAKE_INTERRUPT_CLEARS_TEXT:-}" ] \
+         && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
+        : > "$FM_FAKE_TYPED_BUFFER"
       fi
       if [ "$payload" = Escape ] && [ -n "${FM_FAKE_MUSE_LOG:-}" ]; then
         if [ -n "${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" ]; then
@@ -125,6 +151,13 @@ case "${1:-}" in
     done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
+    if [ -s "$D/redraw-remaining" ]; then
+      left=$(cat "$D/redraw-remaining")
+      if [ "$left" -gt 1 ]; then printf '%s' $((left - 1)) > "$D/redraw-remaining"; else rm -f "$D/redraw-remaining"; fi
+      printf 'Esc to interrupt\n'
+      echo "$left" >> "$D/redraw-reads"
+      exit 0
+    fi
     if [ -f "$D/pane" ]; then cat "$D/pane"; else printf '╭────╮\n│    │\n╰────╯\n'; fi
     exit 0 ;;
   list-windows)
@@ -197,6 +230,11 @@ run_control() {
     FM_FAKE_MUSE_LOG="${FM_FAKE_MUSE_LOG:-}" \
     FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK="${FM_FAKE_MUSE_DISAPPEAR_BEFORE_ACK:-}" \
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
+    FM_FAKE_INTERRUPT_RESTORES_TEXT="${FM_FAKE_INTERRUPT_RESTORES_TEXT:-}" \
+    FM_FAKE_INTERRUPT_CLEARS_TEXT="${FM_FAKE_INTERRUPT_CLEARS_TEXT:-}" \
+    FM_FAKE_INTERRUPT_REDRAW_READS="${FM_FAKE_INTERRUPT_REDRAW_READS:-}" \
+    FM_FAKE_TYPED_BUFFER="${FM_FAKE_TYPED_BUFFER:-}" \
+    FM_FAKE_SUBMISSIONS="${FM_FAKE_SUBMISSIONS:-}" \
     "$CONTROL" "$@" 2>&1
 }
 
@@ -663,6 +701,254 @@ test_ambiguous_endpoint_refuses() {
   pass "fm-control exit: an endpoint whose process cannot be attributed refuses"
 }
 
+# The relaunch journal (state/<id>.control-relaunch) is the transaction's
+# durable record; a queued-input refusal must never be recorded as a failed stop.
+assert_relaunch_refused_before_touching_agent() {  # <case-dir> <verb> <output>
+  local journal="$1/home/state/t1.control-relaunch"
+  [ "$2" = relaunch ] || return 0
+  assert_not_contains "$3" "failed while stopping" \
+    "a queued-input relaunch refusal must not be reported as a failed stop"
+  if [ -e "$journal" ] && grep -q '^phase=failed:stopping$' "$journal"; then
+    fail "a queued-input relaunch refusal must not journal phase=failed:stopping"
+  fi
+}
+
+test_busy_agent_with_queued_input_refuses_without_touching_the_queue() {
+  local dir out rc verb gen inbox before buffer submissions
+  for verb in exit relaunch; do
+    dir=$(new_case "busy-queued-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+    printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+    printf '╭────────────────────╮\n│ ❯ queued follow-up │\n╰────────────────────╯\n' > "$dir/fake/pane"
+    inbox="$dir/home/state/t1.inbox/001.msg"
+    mkdir -p "${inbox%/*}/handled"
+    printf 'v1\n--\nlegitimate queued worker instruction\n' > "$inbox"
+    before=$(cat "$inbox")
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    printf 'queued follow-up' > "$buffer"
+    : > "$submissions"
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 relaunch --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse while a busy worker has queued composer input"
+    assert_contains "$out" "composer holds a queued instruction" \
+      "$verb refusal should identify the preserved queued instruction"
+    [ -z "$(keys_sent "$dir")" ] \
+      || fail "$verb must not interrupt or clear a queued instruction"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text after queued input"
+    [ ! -s "$submissions" ] \
+      || fail "$verb turned queued input plus lifecycle text into chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'queued follow-up' ] \
+      || fail "$verb must preserve the queued composer bytes"
+    [ "$(cat "$inbox")" = "$before" ] \
+      || fail "$verb must preserve the durable worker instruction byte-for-byte"
+    assert_grep "queued follow-up" "$dir/fake/pane" \
+      "$verb must leave the queued composer input untouched"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+    assert_relaunch_refused_before_touching_agent "$dir" "$verb" "$out"
+  done
+  pass "fm-control: exit and relaunch preserve queued worker input instead of concatenating lifecycle text"
+}
+
+test_idle_agent_with_queued_input_refuses_without_touching_the_queue() {
+  local dir out rc verb inbox before buffer submissions
+  for verb in exit relaunch; do
+    dir=$(new_case "idle-queued-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    printf '╭────────────────────╮\n│ ❯ queued follow-up │\n╰────────────────────╯\n' > "$dir/fake/pane"
+    inbox="$dir/home/state/t1.inbox/001.msg"
+    mkdir -p "${inbox%/*}/handled"
+    printf 'v1\n--\nlegitimate queued worker instruction\n' > "$inbox"
+    before=$(cat "$inbox")
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    printf 'queued follow-up' > "$buffer"
+    : > "$submissions"
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 relaunch --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse queued composer input even when the worker reads idle"
+    assert_contains "$out" "composer reads 'pending" \
+      "$verb refusal should identify the queued input"
+    [ -z "$(keys_sent "$dir")" ] \
+      || fail "$verb must not submit or clear queued input"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text after queued input"
+    [ ! -s "$submissions" ] \
+      || fail "$verb turned queued input plus lifecycle text into chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'queued follow-up' ] \
+      || fail "$verb must preserve the queued composer bytes"
+    [ "$(cat "$inbox")" = "$before" ] \
+      || fail "$verb must preserve the durable worker instruction byte-for-byte"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+    assert_relaunch_refused_before_touching_agent "$dir" "$verb" "$out"
+  done
+  pass "fm-control: idle exit and relaunch preserve queued worker input without typing lifecycle text"
+}
+
+test_busy_agent_with_unverified_input_refuses_before_interrupt() {
+  local dir out rc verb gen buffer submissions brief_before
+  for verb in exit relaunch; do
+    dir=$(new_case "busy-unverified-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+    printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+    printf '$ ambiguous composer\n' > "$dir/fake/pane"
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    printf 'legitimate queued instruction' > "$buffer"
+    : > "$submissions"
+    brief_before=$(cat "$dir/home/data/t1/brief.md")
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_INTERRUPT_CLEARS_TEXT=1 FM_FAKE_TYPED_BUFFER="$buffer" \
+        FM_FAKE_SUBMISSIONS="$submissions" run_control "$dir" t1 relaunch \
+        --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_INTERRUPT_CLEARS_TEXT=1 FM_FAKE_TYPED_BUFFER="$buffer" \
+        FM_FAKE_SUBMISSIONS="$submissions" run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse before interrupting unverified composer input"
+    assert_contains "$out" "composer reads 'unknown' before interrupt handling" \
+      "$verb refusal should identify the unverified pre-interrupt composer"
+    [ -z "$(keys_sent "$dir")" ] \
+      || fail "$verb must not interrupt when doing so could clear unverified input"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text into an unverified composer"
+    [ ! -s "$submissions" ] \
+      || fail "$verb submitted unverified input as chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'legitimate queued instruction' ] \
+      || fail "$verb must preserve input hidden behind an unverified composer"
+    [ "$(cat "$dir/home/data/t1/brief.md")" = "$brief_before" ] \
+      || fail "$verb must restore the original instructions after refusing relaunch"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+    assert_relaunch_refused_before_touching_agent "$dir" "$verb" "$out"
+  done
+  pass "fm-control: unverified queued input survives exit and relaunch without an interrupt"
+}
+
+test_post_interrupt_redraw_settles_before_the_exit_command() {
+  local dir out rc gen
+  dir=$(new_case interrupt-redraw)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(FM_FAKE_INTERRUPT_REDRAW_READS=3 run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "a composer still redrawing after the interrupt must settle, not refuse"$'\n'"$out"
+  assert_contains "$out" "stopped t1" "the exit should complete once the redraw settles"
+  assert_grep 'Escape' "$dir/fake/keys" "the busy worker should have been interrupted first"
+  [ "$(literals "$dir")" = "/exit" ] || fail "exactly one exit command should follow the settled read"
+  [ "$(wc -l < "$dir/fake/redraw-reads")" -eq 3 ] \
+    || fail "the post-interrupt read should have re-polled through the redraw"
+
+  dir=$(new_case interrupt-redraw-pending)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(FM_FAKE_INTERRUPT_RESTORES_TEXT='restored prompt' run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a positively pending composer must still refuse after the interrupt"
+  assert_contains "$out" "after interrupt handling" \
+    "the refusal should attribute the pending read to the interrupt phase"
+
+  dir=$(new_case idle-unknown)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '$ ambiguous composer\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "an idle worker with an unreadable composer must refuse"
+  assert_contains "$out" "composer reads 'unknown' with no interrupt sent" \
+    "an idle refusal must not claim an interrupt happened"
+  [ -z "$(keys_sent "$dir")" ] || fail "an idle refusal must send no keys"
+  pass "fm-control exit: the post-interrupt composer read settles through a redraw and refusals name their phase"
+}
+
+test_standalone_interrupt_is_not_gated_on_queued_input() {
+  local dir gen out rc
+  dir=$(new_case interrupt-queued)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  printf '╭────────────────────╮\n│ ❯ queued follow-up │\n╰────────────────────╯\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "interrupt types no text, so queued input must not block it"$'\n'"$out"
+  assert_grep 'Escape' "$dir/fake/keys" "interrupt should still deliver its key with queued input"
+  [ -z "$(literals "$dir")" ] || fail "interrupt must never type text"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "interrupt must leave the worker alive"
+
+  dir=$(new_case interrupt-unknown)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '$ ambiguous composer\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "interrupt must not refuse on an unreadable composer"$'\n'"$out"
+  assert_grep 'Escape' "$dir/fake/keys" "interrupt should deliver its key with an unknown composer"
+  pass "fm-control interrupt: the standalone verb is unchanged by composer contents"
+}
+
+test_interrupt_race_with_restored_input_refuses_before_lifecycle_text() {
+  local dir out rc verb gen buffer submissions brief_before
+  for verb in exit relaunch; do
+    dir=$(new_case "interrupt-restores-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+    printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    : > "$buffer"
+    : > "$submissions"
+    brief_before=$(cat "$dir/home/data/t1/brief.md")
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_INTERRUPT_RESTORES_TEXT='restored prompt' \
+        FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 relaunch --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_INTERRUPT_RESTORES_TEXT='restored prompt' \
+        FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse when input appears during interrupt handling"
+    assert_contains "$out" "composer reads 'pending" \
+      "$verb refusal should identify the post-interrupt composer race"
+    assert_grep 'Escape' "$dir/fake/keys" \
+      "$verb should interrupt before the composer changes"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text after the interrupt restores input"
+    [ ! -s "$submissions" ] \
+      || fail "$verb submitted restored input as chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'restored prompt' ] \
+      || fail "$verb must preserve input that appears during interrupt handling"
+    [ "$(cat "$dir/home/data/t1/brief.md")" = "$brief_before" ] \
+      || fail "$verb must restore the original instructions after the race refusal"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+  done
+  pass "fm-control: input restored during interrupt handling cannot concatenate with lifecycle text"
+}
+
 test_busy_agent_is_interrupted_before_the_exit_command() {
   local dir out rc
   dir=$(new_case busy)
@@ -897,6 +1183,12 @@ test_already_stopped_exit_is_idempotent
 test_missing_endpoint_refuses
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
+test_busy_agent_with_queued_input_refuses_without_touching_the_queue
+test_idle_agent_with_queued_input_refuses_without_touching_the_queue
+test_busy_agent_with_unverified_input_refuses_before_interrupt
+test_interrupt_race_with_restored_input_refuses_before_lifecycle_text
+test_post_interrupt_redraw_settles_before_the_exit_command
+test_standalone_interrupt_is_not_gated_on_queued_input
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
 test_interrupt_without_acknowledgement_preserves_busy_state

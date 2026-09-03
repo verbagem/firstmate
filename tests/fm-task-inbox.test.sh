@@ -265,6 +265,28 @@ test_concurrent_writers_never_clobber() {
   pass "inbox: concurrent writers serialize on the sequence lock and lose nothing"
 }
 
+test_lock_acquire_on_vanished_dir_fails_promptly() {
+  local state pid i=0
+  state="$TMP_ROOT/gone/state"; mkdir -p "$state"
+  # The lock's directory is removed mid-wait (a test teardown or task
+  # retirement racing a writer). Before the fix, fm_lock_try_acquire treated the
+  # missing path as an infinitely stale hold and recursed through
+  # .steal, .steal.steal, ... until bash overflowed its stack.
+  inbox_lib "$state" fm_lock_try_acquire "$state/nope/.seq.lock" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.1; i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    fail "lock acquisition on a vanished directory should fail promptly, not spin"
+  fi
+  wait "$pid" && fail "lock acquisition on a vanished directory should fail"
+  [ -z "$(ls -A "$state" 2>/dev/null)" ] \
+    || fail "a failed acquire on a vanished directory left debris:"$'\n'"$(ls -A "$state")"
+  pass "inbox: acquiring a lock whose directory vanished fails promptly and leaves nothing behind"
+}
+
 test_ladder_writes_ignore_vanished_inbox() {
   local state rec
   state="$TMP_ROOT/vanished/state"; mkdir -p "$state"
@@ -502,6 +524,7 @@ test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence
 test_concurrent_writers_never_clobber
+test_lock_acquire_on_vanished_dir_fails_promptly
 test_ladder_writes_ignore_vanished_inbox
 test_fire_and_forget_records_never_enter_the_ladder
 test_ring_ladder_policy

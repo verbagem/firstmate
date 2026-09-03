@@ -42,6 +42,11 @@ muse's session log records `terminal=cancelled` for the interrupted run, so the 
 An interrupt is not complete until the composer is empty.
 muse is the one verified adapter that restores the cancelled prompt back into its composer as real text, so its interrupt key is followed by a Ctrl+U clear; without it the next submitted line - including this plane's own exit command - would concatenate onto the restored prompt and submit both as one line.
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
+Before `exit` or `relaunch` interrupts a worker, the composer must be proven empty; queued, unreadable, or ambiguous input causes a refusal and remains untouched.
+`relaunch` takes that proof before its checkpoint, so a queued-input refusal is reported as a refusal before the agent was touched, never as a failed stop.
+The standalone `interrupt` verb is not gated on the composer: it types no text, so queued input cannot concatenate with it; on muse, whose interrupt includes the Ctrl+U clear, it also discards whatever the composer holds, so queue nothing before interrupting a muse worker.
+The exit command is typed only when a composer read taken just before it proves the composer empty, so restored or newly queued input can never concatenate with lifecycle text or enter chat.
+For an idle worker that needed no interrupt, any non-empty read refuses at once; after an interrupt, the read is re-taken through the settle budget so a TUI still redrawing from the interrupt key is not mistaken for queued input, while a positively pending composer refuses immediately.
 
 **Teardown and discard are not verbs and will not become verbs.**
 `exit` stops an agent and preserves everything else.
@@ -118,6 +123,6 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 ## Verification
 
-- `tests/fm-control.test.sh` - the adapter contract for every verified harness, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
+- `tests/fm-control.test.sh` - the adapter contract for every verified harness, the backend capability matrix, exact-id scoping, the closed verb list, busy, idle, and unverified queued-input preservation, the post-interrupt input race, dead and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, and rollback after a failed launch.
-- `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
+- `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, including busy queued-input preservation, on an isolated throwaway lab session.

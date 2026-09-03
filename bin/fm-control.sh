@@ -82,6 +82,11 @@
 #     than reported as successful blind.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
+#   - `exit` and `relaunch` refuse while the worker's composer holds queued,
+#     unreadable, or ambiguous input - before any interrupt, and again before
+#     the exit command is typed - so a lifecycle command can never concatenate
+#     with pending text; relaunch takes that proof before its checkpoint
+#     (docs/agent-control.md owns the contract).
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -318,6 +323,60 @@ busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
 }
 
+composer_state() {
+  fm_backend_composer_state "$BACKEND" "$T" "$LABEL"
+}
+
+# A queued instruction must survive lifecycle control. Every caller runs on a
+# state-verified stop backend, so an unreadable composer is refused outright:
+# cancel may clear input the plane could not prove was absent.
+require_empty_composer_before_interrupt() {
+  local state
+  state=$(composer_state)
+  case "$state" in
+    empty) ;;
+    pending|pending-unproven)
+      die "task $ID's composer holds a queued instruction; refusing lifecycle control until the worker consumes it"
+      ;;
+    *)
+      die "task $ID's composer reads '$state' before interrupt handling; refusing to risk clearing unverified input"
+      ;;
+  esac
+}
+
+# Textual lifecycle commands are safe only in a positively empty composer.
+# `after-interrupt` re-reads through SETTLE_WAIT so a TUI still redrawing from
+# the interrupt key cannot fail an empty composer; `pending` refuses at once.
+require_empty_composer() {  # <idle|after-interrupt>
+  local phase=$1 state elapsed=0 when
+  while :; do
+    state=$(composer_state)
+    case "$phase:$state" in
+      *:empty) return 0 ;;
+      idle:*|*:pending) break ;;
+    esac
+    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  case "$phase" in
+    idle) when="with no interrupt sent" ;;
+    *) when="after interrupt handling" ;;
+  esac
+  die "task $ID's composer reads '$state' $when; refusing to type a lifecycle command into unverified input"
+}
+
+# The same composer proof do_exit demands, taken on the pre-stop side of a
+# relaunch so a queued-input refusal happens before any journal or agent is
+# touched instead of surfacing as a failed stop.
+require_exit_composer_preflight() {
+  [ "$(agent_state)" = alive ] || return 0
+  case "$(busy_verdict)" in
+    busy*) require_empty_composer_before_interrupt ;;
+    *) require_empty_composer idle ;;
+  esac
+}
+
 # wait_agent_state <wanted...> <timeout>: poll until agent_state prints one of
 # the wanted values. Prints the final observed state; returns 0 on a match.
 wait_agent_state() {  # <timeout> <wanted>...
@@ -457,6 +516,7 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      require_empty_composer_before_interrupt
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -470,6 +530,10 @@ do_exit() {
         *) die "task $ID's endpoint reads '$state' after interrupt delivery rather than a positively classified state; exit cannot prove whether the agent stopped" ;;
       esac
       ;;
+  esac
+  case "$interrupt_result" in
+    not-needed) require_empty_composer idle ;;
+    *) require_empty_composer after-interrupt ;;
   esac
   cmd=$(fm_control_exit_command "$HARNESS")
   # The submit verdict is NOT the postcondition here: a successful exit command
@@ -804,6 +868,7 @@ do_relaunch() {
   else
     note_line="note=none"
   fi
+  require_exit_composer_preflight
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1

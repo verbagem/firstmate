@@ -804,6 +804,13 @@ fm_lock_try_acquire() {
   if fm_lock_try_create "$lockdir"; then
     return 0
   fi
+  # Nothing to inspect or steal when no lock exists: creation failed because
+  # the lock's directory is gone or a rival won and already released. Without
+  # this the missing path reads as infinitely stale and the steal recursion
+  # (.steal, .steal.steal, ...) never terminates.
+  if [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ]; then
+    return 1
+  fi
 
   # Compare against ${BASHPID:-$$} inline, never via a command substitution:
   # $() forks a subshell whose BASHPID is not this frame's pid. On bash 3.2,
