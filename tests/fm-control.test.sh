@@ -730,6 +730,48 @@ test_busy_agent_with_queued_input_refuses_without_touching_the_queue() {
   pass "fm-control: exit and relaunch preserve queued worker input instead of concatenating lifecycle text"
 }
 
+test_idle_agent_with_queued_input_refuses_without_touching_the_queue() {
+  local dir out rc verb inbox before buffer submissions
+  for verb in exit relaunch; do
+    dir=$(new_case "idle-queued-$verb")
+    add_task "$dir" t1 claude
+    alive_as "$dir" claude
+    printf '╭────────────────────╮\n│ ❯ queued follow-up │\n╰────────────────────╯\n' > "$dir/fake/pane"
+    inbox="$dir/home/state/t1.inbox/001.msg"
+    mkdir -p "${inbox%/*}/handled"
+    printf 'v1\n--\nlegitimate queued worker instruction\n' > "$inbox"
+    before=$(cat "$inbox")
+    buffer="$dir/fake/typed-buffer"
+    submissions="$dir/fake/submissions"
+    printf 'queued follow-up' > "$buffer"
+    : > "$submissions"
+
+    if [ "$verb" = relaunch ]; then
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 relaunch --note "continue safely"); rc=$?
+    else
+      out=$(FM_FAKE_TYPED_BUFFER="$buffer" FM_FAKE_SUBMISSIONS="$submissions" \
+        run_control "$dir" t1 exit); rc=$?
+    fi
+    expect_code 1 "$rc" "$verb must refuse queued composer input even when the worker reads idle"
+    assert_contains "$out" "composer reads 'pending" \
+      "$verb refusal should identify the queued input"
+    [ -z "$(keys_sent "$dir")" ] \
+      || fail "$verb must not submit or clear queued input"
+    [ -z "$(literals "$dir")" ] \
+      || fail "$verb must not type lifecycle text after queued input"
+    [ ! -s "$submissions" ] \
+      || fail "$verb turned queued input plus lifecycle text into chat: $(cat "$submissions")"
+    [ "$(cat "$buffer")" = 'queued follow-up' ] \
+      || fail "$verb must preserve the queued composer bytes"
+    [ "$(cat "$inbox")" = "$before" ] \
+      || fail "$verb must preserve the durable worker instruction byte-for-byte"
+    [ "$(cat "$dir/fake/command")" = claude ] \
+      || fail "$verb refusal must leave the running worker alive"
+  done
+  pass "fm-control: idle exit and relaunch preserve queued worker input without typing lifecycle text"
+}
+
 test_interrupt_race_with_restored_input_refuses_before_lifecycle_text() {
   local dir out rc verb gen buffer submissions brief_before
   for verb in exit relaunch; do
@@ -1007,6 +1049,7 @@ test_missing_endpoint_refuses
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
 test_busy_agent_with_queued_input_refuses_without_touching_the_queue
+test_idle_agent_with_queued_input_refuses_without_touching_the_queue
 test_interrupt_race_with_restored_input_refuses_before_lifecycle_text
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
