@@ -1,0 +1,32 @@
+Firstmate exceptional worker graph -- schema behavior transcript
+
+[ACCEPT] bounded 2-node graph, Fable used 2 of 3 calls, one node unresolved profile
+[REJECT] Fable call_budget=4 with no captain authorization
+         at /engagement/call_budget: 4 is greater than the maximum of 3
+[REJECT] Fable calls_used=4 with no captain authorization
+         at /engagement/calls_used: 4 is greater than the maximum of 3
+[ACCEPT] call_budget=5 with captain_authorized_extra_calls=true
+[REJECT] call_budget=5 with captain_authorized_extra_calls=false
+         at /engagement/call_budget: 5 is greater than the maximum of 3
+[REJECT] node tries to grant itself merge_authority
+         at /nodes/0: Additional properties are not allowed ('merge_authority' was unexpected)
+[REJECT] worker tries to declare can_spawn_directly
+         at /nodes/0/worker: Additional properties are not allowed ('can_spawn_directly' was unexpected)
+[REJECT] engagement smuggles a model_route field
+         at /engagement: Additional properties are not allowed ('model_route' was unexpected)
+[REJECT] node with neither selected_profile nor unresolved requirement
+         at /nodes/0/worker: {} is not valid under any of the given schemas
+[REJECT] node with BOTH selected_profile and unresolved requirement
+         at /nodes/0/worker: {'selected_profile': {'harness': 'codex', 'model': 'gpt-5', 'effort': 'high'}, 'unresolved_profile_requirement': 'x'} is valid under each of {'required': ['unresolved_profile_requirement']}, {'required': ['selected_profile']}
+[REJECT] node missing parallel_safe
+         at /nodes/1: 'parallel_safe' is a required property
+[REJECT] node missing stop_condition
+         at /nodes/1: 'stop_condition' is a required property
+[REJECT] node with empty verification
+         at /nodes/1/verification: [] should be non-empty
+[REJECT] ownership_boundary missing exclusive flag
+         at /nodes/0/ownership_boundary: 'exclusive' is a required property
+[REJECT] node id with spaces/uppercase
+         at /nodes/0/id: 'Bad Id' does not match '^[a-z0-9][a-z0-9-]*$'
+[REJECT] empty graph
+         at /nodes: [] should be non-empty
