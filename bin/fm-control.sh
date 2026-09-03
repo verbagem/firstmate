@@ -322,16 +322,20 @@ composer_state() {
   fm_backend_composer_state "$BACKEND" "$T" "$LABEL"
 }
 
-# A positively identified queued instruction must survive lifecycle control.
-# Refuse before interrupting because some adapters clear their composer as part
-# of interrupt delivery; the existing durable inbox lets the instruction be
-# re-rung after the worker consumes it.
-refuse_pending_composer() {
+# A queued instruction must survive lifecycle control. State-verified stop
+# backends must prove the composer empty before interrupting because cancel may
+# clear input; interrupt-only backends retain their existing unknown-state path.
+require_empty_composer_before_interrupt() {
   local state
   state=$(composer_state)
   case "$state" in
+    empty) ;;
     pending|pending-unproven)
       die "task $ID's composer holds a queued instruction; refusing lifecycle control until the worker consumes it"
+      ;;
+    *)
+      fm_control_backend_state_verified "$BACKEND" \
+        && die "task $ID's composer reads '$state' before interrupt handling; refusing to risk clearing unverified input"
       ;;
   esac
 }
@@ -432,7 +436,7 @@ interrupt_cancel_claim() {
 # cancellation claim available after delivery.
 deliver_interrupt() {
   local cancel
-  refuse_pending_composer
+  require_empty_composer_before_interrupt
   prepare_interrupt_ack
   send_interrupt_keys
   cancel=$(interrupt_cancel_claim)
