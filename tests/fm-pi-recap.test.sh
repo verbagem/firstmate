@@ -295,6 +295,40 @@ test_short_bearer_tokens_and_colon_space_prose_are_not_redacted() {
   pass "the digit-plus-length gate keeps bearer and colon-space prose intact while redacting real credential shapes"
 }
 
+test_credential_prefixes_are_word_anchored_and_length_gated() {
+  local rec state data id=recap-prefix-table out row prefix real embedded
+  rec=$(make_fixture prefix-table); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Fix disk-space"
+  local table='sk-|sk-abcdefghijklmnop1234|disk-space
+ghp_|ghp_abcdefghijklmnop1234|graphghp_x
+gho_|gho_abcdefghijklmnop1234|echogho_y
+github_pat_|github_pat_abcdefghijklmnop1234|mygithub_pat_z
+xoxb-|xoxb-abcdefghijklmnop1234|boxoxb-tool
+AKIA|AKIAABCDEFGHIJKLMNOP|MAKIAWAKA-thing'
+  while IFS='|' read -r prefix real embedded; do
+    printf 'working: rotated %s while touching %s\n' "$real" "$embedded" > "$state/$id.status"
+    out=$(FM_PI_RECAP_LINE_MAX=300 render "$id" "$state" "$data")
+    assert_not_contains "$out" "$real" "a real $prefix credential must be redacted"
+    assert_contains "$out" "touching $embedded" "$prefix embedded mid-word in '$embedded' must pass through"
+  done <<<"$table"
+  assert_contains "$out" 'Fix disk-space' "the title with an embedded sk- survives intact"
+  pass "every credential prefix redacts a real token and leaves the prefix embedded mid-word alone"
+}
+
+test_reserved_key_latest_line_does_not_hide_earlier_open_decision() {
+  local rec state data id=recap-reserved-key out
+  rec=$(make_fixture reserved-key); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  {
+    printf 'needs-decision: [key=pending-reply-x] pending-reply-x: first\n'
+    printf 'blocked: [key=pending-reply-x] waiting on captain\n'
+  } > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_contains "$out" 'Blocked: waiting on captain' "the latest blocker still renders as the phase"
+  assert_contains "$out" 'Needs a decision: pending-reply-x: first' "the earlier accepted decision sharing the key must keep its dedicated line"
+  pass "a latest line the fold rejected does not suppress an earlier open decision that shares its key"
+}
+
 test_secret_keywords_redact_regardless_of_case() {
   local rec state data id=recap-privacy-case out
   rec=$(make_fixture privacy-case); IFS='|' read -r state data <<<"$rec"
@@ -407,6 +441,8 @@ test_prefixed_secret_assignments_are_redacted
 test_file_urls_are_redacted_as_paths
 test_bearer_prose_is_not_redacted
 test_short_bearer_tokens_and_colon_space_prose_are_not_redacted
+test_credential_prefixes_are_word_anchored_and_length_gated
+test_reserved_key_latest_line_does_not_hide_earlier_open_decision
 test_secret_keywords_redact_regardless_of_case
 test_unrecognized_verb_renders_as_update_not_starting_up
 test_strips_osc_sequences_and_redacts_other_path_roots

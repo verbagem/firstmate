@@ -80,7 +80,7 @@ fm_pi_recap_sanitize() {
   text=$(printf '%s' "$text" | sed -E \
     -e 's#file://(/[A-Za-z0-9._-]+)+#[path]#g' \
     -e 's#(^|[^A-Za-z0-9._/-])(/Users|/home|/root|/opt|/var|/etc|/tmp|/srv|/private|/mnt)(/[A-Za-z0-9._-]+)+#\1[path]#g' \
-    -e 's/(sk-|ghp_|gho_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]+/[redacted]/g' \
+    -e 's/(^|[^A-Za-z0-9_])(sk-|ghp_|gho_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]{8,}/\1[redacted]/g' \
     -e 's/(^|[^A-Za-z0-9_[])[A-Z0-9_]+_(TOKEN|KEY|SECRET|PASSWORD)=[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
     -e 's/(^|[^A-Za-z0-9_[])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])(= ?|:)[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
     -e "s/(^|[^A-Za-z0-9_[])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]): +$digit_tok/\\1[redacted]/g" \
@@ -176,7 +176,7 @@ fm_pi_recap_render() {  # <task-id> <state-dir> <data-dir>
   local id=$1 state=$2 data=$3
   local status_file="$state/$id.status" meta_file="$state/$id.meta"
   local title last verb='' note phase open_decisions open_last open_verb open_note open_count=0 more='' pr
-  local last_key latest_in_open=0
+  local last_key last_raw_note latest_in_open=0
 
   title=$(fm_pi_recap_title "$id" "$data")
   [ -n "$title" ] || title='This task'
@@ -198,8 +198,9 @@ fm_pi_recap_render() {  # <task-id> <state-dir> <data-dir>
     case "$verb" in
       blocked|needs-decision)
         if last_key=$(_fm_decision_key "$last"); then
-          case $'\n'"$open_decisions" in
-            *$'\n'"$last_key"$'\t'*) latest_in_open=1 ;;
+          last_raw_note=$(status_line_note "$last")
+          case $'\n'"$open_decisions"$'\n' in
+            *$'\n'"$last_key"$'\t'"$verb"$'\t'"$last_raw_note"$'\n'*) latest_in_open=1 ;;
           esac
         fi
         [ "$latest_in_open" = 1 ] && [ "$open_count" -gt 1 ] && more=" (+$((open_count - 1)) more)"
