@@ -1,0 +1,13 @@
+Firstmate exceptional-worker-graph contract — validated via jsonschema 4.25.1 (Draft 2020-12)
+
+Each packet below is checked by the real schema consumer Firstmate would use before dispatch.
+
+==============================================================================
+[ACCEPT] Valid bounded graph packet (Fable planner, budget 3, selected profile)
+[REJECT] Fable node claims merge/approval authority (forbidden)  -> /nodes/0
+[REJECT] Fable node claims it can spawn workers directly (forbidden)  -> /nodes/0/worker
+[REJECT] Declared call_budget 4 without captain authorization (over 3-call cap)  -> /engagement/call_budget
+[REJECT] calls_used 4 without captain authorization (usage past cap)  -> /engagement/calls_used
+[ACCEPT] Budget 4 WITH captain explicit authorization (allowed override)
+[REJECT] Node missing parallel-safety declaration (required field)  -> /nodes/0
+[REJECT] Node with empty verification list (delivery/verification contract)  -> /nodes/0/verification
