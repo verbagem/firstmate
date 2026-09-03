@@ -61,19 +61,27 @@ fm_pi_recap_sanitize() {
   text=${text%"${text##*[![:space:]]}"}
   # Redact absolute local filesystem paths under the common roots (never show
   # the captain a machine path) and keyword-prefixed secret-shaped tokens:
-  # well-known credential prefixes, or a token=/key=/secret=/password=/bearer
-  # assignment anchored at a word start. Only absolute paths are redacted
-  # (a relative app/home/x or a URL path segment is left alone), and the
+  # well-known credential prefixes, a token=/key=/secret=/password=/bearer
+  # assignment anchored at a word start (or carrying an UPPER_CASE_ identifier
+  # prefix such as API_KEY=), and a bearer credential that is assigned, sits
+  # under an Authorization: header, or contains a digit - bare "bearer
+  # authentication" prose is left alone. Only absolute paths and file://
+  # URLs are redacted (a relative app/home/x or an http URL path segment is
+  # left alone), and the
   # project's own bracketed [key=<slug>] decision-key grammar from
   # bin/fm-classify-lib.sh is structural syntax, never a credential.
   # Portable POSIX ERE: no \b and no
   # s///I flag, neither of which BSD sed (macOS /usr/bin/sed) supports - both
   # silently no-op instead of erroring. Best-effort defense in depth, not DLP.
   text=$(printf '%s' "$text" | sed -E \
+    -e 's#file://(/[A-Za-z0-9._-]+)+#[path]#g' \
     -e 's#(^|[^A-Za-z0-9._/-])(/Users|/home|/root|/opt|/var|/etc|/tmp|/srv|/private|/mnt)(/[A-Za-z0-9._-]+)+#\1[path]#g' \
     -e 's/(sk-|ghp_|gho_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]+/[redacted]/g' \
+    -e 's/(^|[^A-Za-z0-9_[])[A-Z0-9_]+_(TOKEN|KEY|SECRET|PASSWORD)=[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
     -e 's/(^|[^A-Za-z0-9_[])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])[=:] ?[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
-    -e 's/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr][=: ]+[A-Za-z0-9_.-]{8,}/\1[redacted]/g')
+    -e 's/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr][=:] ?[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
+    -e 's/(^|[^A-Za-z0-9_])[Aa]uthorization: *[Bb][Ee][Aa][Rr][Ee][Rr] +[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
+    -e 's/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr] +[A-Za-z0-9_.-]*[0-9][A-Za-z0-9_.-]*/\1[redacted]/g')
   if [ "${#text}" -gt "$FM_PI_RECAP_LINE_MAX" ]; then
     text="${text:0:$((FM_PI_RECAP_LINE_MAX - 1))}…"
   fi

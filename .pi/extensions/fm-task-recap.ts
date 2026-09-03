@@ -85,13 +85,17 @@ async function render(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 // Turn boundaries never wait on the recap: the render (an execFile of a bash
 // script, bounded by RENDER_TIMEOUT_MS) runs off Pi's critical path and the
 // widget catches up whenever it finishes. session_start still awaits so the
-// first frame the captain sees already carries the recap.
+// first frame the captain sees already carries the recap; every render goes
+// through the same inFlight chain so no two ever run concurrently.
 function renderDetached(pi: ExtensionAPI, ctx: ExtensionContext): void {
   inFlight = inFlight.then(() => render(pi, ctx));
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("session_start", async (_event, ctx) => render(pi, ctx));
+  pi.on("session_start", (_event, ctx) => {
+    inFlight = inFlight.then(() => render(pi, ctx));
+    return inFlight;
+  });
   pi.on("turn_start", (_event, ctx) => { renderDetached(pi, ctx); });
   pi.on("turn_end", (_event, ctx) => { renderDetached(pi, ctx); });
 }

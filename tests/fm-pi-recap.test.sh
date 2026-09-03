@@ -245,6 +245,42 @@ test_decision_key_tokens_are_not_treated_as_secrets() {
   pass "the [key=<slug>] decision-key grammar is exempt from secret redaction while key= assignments are not"
 }
 
+test_prefixed_secret_assignments_are_redacted() {
+  local rec state data id=recap-prefixed-secret out
+  rec=$(make_fixture prefixed-secret); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: set API_KEY=abcdefghijkl and DB_PASSWORD=hunter2hunter2 and AUTH_TOKEN=zyxwvutsrqpo; the PRIMARY KEY constraint held\n' > "$state/$id.status"
+  out=$(FM_PI_RECAP_LINE_MAX=300 render "$id" "$state" "$data")
+  assert_not_contains "$out" 'abcdefghijkl' "an API_KEY= assignment must be redacted"
+  assert_not_contains "$out" 'hunter2hunter2' "a DB_PASSWORD= assignment must be redacted"
+  assert_not_contains "$out" 'zyxwvutsrqpo' "an AUTH_TOKEN= assignment must be redacted"
+  assert_contains "$out" 'the PRIMARY KEY constraint held' "an uppercase word followed by a bare keyword in prose stays intact"
+  pass "identifier-prefixed secret assignments are redacted while uppercase prose is untouched"
+}
+
+test_file_urls_are_redacted_as_paths() {
+  local rec state data id=recap-file-url out
+  rec=$(make_fixture file-url); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: see file:///Users/temp/secret/notes.md and https://example.com/tmp/x\n' > "$state/$id.status"
+  out=$(render "$id" "$state" "$data")
+  assert_not_contains "$out" '/Users/temp' "a file:// URL carries a machine path and must be redacted"
+  assert_contains "$out" 'see [path] and https://example.com/tmp/x' "an http URL path segment still passes through"
+  pass "file:// URLs are redacted like absolute paths while http URLs are left alone"
+}
+
+test_bearer_prose_is_not_redacted() {
+  local rec state data id=recap-bearer-prose out
+  rec=$(make_fixture bearer-prose); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: switched to bearer authentication for the client, header bearer eyJhbGci0iJIUzI1 and bearer=abcdefghijkl\n' > "$state/$id.status"
+  out=$(FM_PI_RECAP_LINE_MAX=300 render "$id" "$state" "$data")
+  assert_contains "$out" 'switched to bearer authentication for the client' "ordinary bearer prose must survive"
+  assert_not_contains "$out" 'eyJhbGci0iJIUzI1' "a digit-bearing bearer credential after a space is redacted"
+  assert_not_contains "$out" 'abcdefghijkl' "a bearer= assignment is redacted"
+  pass "the bearer pattern redacts real credentials but leaves 'bearer authentication' prose alone"
+}
+
 test_secret_keywords_redact_regardless_of_case() {
   local rec state data id=recap-privacy-case out
   rec=$(make_fixture privacy-case); IFS='|' read -r state data <<<"$rec"
@@ -353,6 +389,9 @@ test_open_count_survives_when_latest_line_is_the_blocker
 test_open_decision_still_shown_when_latest_blocker_is_rejected_by_the_fold
 test_relative_paths_and_url_segments_are_not_redacted
 test_decision_key_tokens_are_not_treated_as_secrets
+test_prefixed_secret_assignments_are_redacted
+test_file_urls_are_redacted_as_paths
+test_bearer_prose_is_not_redacted
 test_secret_keywords_redact_regardless_of_case
 test_unrecognized_verb_renders_as_update_not_starting_up
 test_strips_osc_sequences_and_redacts_other_path_roots
