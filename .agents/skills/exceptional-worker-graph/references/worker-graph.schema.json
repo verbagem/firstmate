@@ -36,6 +36,19 @@
           "type": "string",
           "minLength": 1
         }
+      },
+      "if": {
+        "not": {
+          "required": ["captain_authorized_extra_calls"],
+          "properties": {
+            "captain_authorized_extra_calls": { "const": true }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "call_budget": { "maximum": 3 }
+        }
       }
     },
     "nodes": {

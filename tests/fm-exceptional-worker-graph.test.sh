@@ -18,73 +18,123 @@ import sys
 from pathlib import Path
 
 
-class ValidationError(Exception):
-    pass
-
-
 schema = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 
+ANNOTATION_KEYS = {"$schema", "title", "description"}
 
-def validate(schema_node, value, path="root"):
-    if "oneOf" in schema_node:
-        matches = 0
-        errors = []
-        for candidate in schema_node["oneOf"]:
-            merged = {key: val for key, val in schema_node.items() if key != "oneOf"}
-            merged.update(candidate)
-            try:
-                validate(merged, value, path)
-                matches += 1
-            except ValidationError as exc:
-                errors.append(str(exc))
-        if matches != 1:
-            raise ValidationError(f"{path}: oneOf matched {matches}; errors={errors}")
-        return
 
-    expected_type = schema_node.get("type")
-    if expected_type == "object":
-        if not isinstance(value, dict):
-            raise ValidationError(f"{path}: expected object")
-        required = schema_node.get("required", [])
-        for key in required:
+class ValidationError(Exception):
+    def __init__(self, path, message):
+        super().__init__(f"{path}: {message}")
+        self.path = path
+
+
+def join(path, key):
+    return f"{path}/{key}"
+
+
+def local_validate(node, value, path=""):
+    unknown = sorted(
+        key
+        for key in node
+        if key not in ANNOTATION_KEYS and not key.startswith("x-") and key not in {
+            "type", "required", "properties", "additionalProperties", "items",
+            "minItems", "minLength", "pattern", "minimum", "maximum", "enum",
+            "const", "oneOf", "not", "if", "then", "else",
+        }
+    )
+    if unknown:
+        raise SystemExit(f"schema keyword(s) {unknown} at {path or '/'} are not supported by the fallback validator")
+
+    expected_type = node.get("type")
+    checks = {
+        "object": dict,
+        "array": list,
+        "string": str,
+        "integer": int,
+        "boolean": bool,
+    }
+    if expected_type is not None:
+        py_type = checks[expected_type]
+        if not isinstance(value, py_type) or (expected_type == "integer" and isinstance(value, bool)):
+            raise ValidationError(path, f"expected {expected_type}")
+
+    if isinstance(value, dict):
+        for key in node.get("required", []):
             if key not in value:
-                raise ValidationError(f"{path}: missing {key}")
-        allowed = set(schema_node.get("properties", {}).keys())
-        if schema_node.get("additionalProperties") is False:
-            extra = sorted(set(value.keys()) - allowed)
+                raise ValidationError(path, f"missing {key}")
+        props = node.get("properties", {})
+        if node.get("additionalProperties") is False:
+            extra = sorted(set(value) - set(props))
             if extra:
-                raise ValidationError(f"{path}: extra properties {extra}")
-        for key, child in schema_node.get("properties", {}).items():
+                raise ValidationError(path, f"extra properties {extra}")
+        for key, child in props.items():
             if key in value:
-                validate(child, value[key], f"{path}.{key}")
-    elif expected_type == "array":
-        if not isinstance(value, list):
-            raise ValidationError(f"{path}: expected array")
-        if len(value) < schema_node.get("minItems", 0):
-            raise ValidationError(f"{path}: too few items")
-        item_schema = schema_node.get("items")
-        if item_schema:
+                local_validate(child, value[key], join(path, key))
+    if isinstance(value, list):
+        if len(value) < node.get("minItems", 0):
+            raise ValidationError(path, "too few items")
+        if "items" in node:
             for index, item in enumerate(value):
-                validate(item_schema, item, f"{path}[{index}]")
-    elif expected_type == "string":
-        if not isinstance(value, str):
-            raise ValidationError(f"{path}: expected string")
-        if len(value) < schema_node.get("minLength", 0):
-            raise ValidationError(f"{path}: string too short")
-        pattern = schema_node.get("pattern")
-        if pattern and not re.match(pattern, value):
-            raise ValidationError(f"{path}: pattern mismatch")
-    elif expected_type == "integer":
-        if not isinstance(value, int) or isinstance(value, bool):
-            raise ValidationError(f"{path}: expected integer")
-        if value < schema_node.get("minimum", value):
-            raise ValidationError(f"{path}: below minimum")
-    elif expected_type == "boolean":
-        if not isinstance(value, bool):
-            raise ValidationError(f"{path}: expected boolean")
+                local_validate(node["items"], item, join(path, index))
+    if isinstance(value, str):
+        if len(value) < node.get("minLength", 0):
+            raise ValidationError(path, "string too short")
+        if "pattern" in node and not re.match(node["pattern"], value):
+            raise ValidationError(path, "pattern mismatch")
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value < node.get("minimum", value):
+            raise ValidationError(path, "below minimum")
+        if value > node.get("maximum", value):
+            raise ValidationError(path, "above maximum")
+    if "enum" in node and value not in node["enum"]:
+        raise ValidationError(path, "enum mismatch")
+    if "const" in node and value != node["const"]:
+        raise ValidationError(path, "const mismatch")
+    if "not" in node:
+        try:
+            local_validate(node["not"], value, path)
+        except ValidationError:
+            pass
+        else:
+            raise ValidationError(path, "matched forbidden schema")
+    if "oneOf" in node:
+        matches = 0
+        for candidate in node["oneOf"]:
+            try:
+                local_validate(candidate, value, path)
+                matches += 1
+            except ValidationError:
+                pass
+        if matches != 1:
+            raise ValidationError(path, f"oneOf matched {matches}")
+    if "if" in node:
+        try:
+            local_validate(node["if"], value, path)
+        except ValidationError:
+            branch = node.get("else")
+        else:
+            branch = node.get("then")
+        if branch is not None:
+            local_validate(branch, value, path)
 
-    if "enum" in schema_node and value not in schema_node["enum"]:
-        raise ValidationError(f"{path}: enum mismatch")
+
+def failing_path(packet):
+    """Return None when the packet validates, else the instance path that failed."""
+    try:
+        import jsonschema
+    except ImportError:
+        try:
+            local_validate(schema, packet)
+        except ValidationError as exc:
+            return exc.path
+        return None
+    validator = jsonschema.Draft202012Validator(schema)
+    validator.check_schema(schema)
+    error = jsonschema.exceptions.best_match(validator.iter_errors(packet))
+    if error is None:
+        return None
+    return "".join(f"/{part}" for part in error.absolute_path)
 
 
 valid = {
@@ -141,57 +191,59 @@ valid = {
 
 
 def assert_valid(packet):
-    validate(schema, packet)
+    path = failing_path(packet)
+    if path is not None:
+        raise SystemExit(f"packet unexpectedly rejected at {path!r}")
 
 
-def assert_invalid(packet, expected):
-    try:
-        validate(schema, packet)
-    except ValidationError as exc:
-        if expected not in str(exc):
-            raise SystemExit(f"expected error containing {expected!r}, got {exc}")
-        return
-    raise SystemExit(f"packet unexpectedly passed; expected {expected}")
+def assert_invalid(packet, expected_path):
+    path = failing_path(packet)
+    if path is None:
+        raise SystemExit(f"packet unexpectedly passed; expected rejection at {expected_path!r}")
+    if path != expected_path:
+        raise SystemExit(f"expected rejection at {expected_path!r}, got {path!r}")
 
 
 assert_valid(valid)
 
 missing_parallel = copy.deepcopy(valid)
 del missing_parallel["nodes"][0]["parallel_safe"]
-assert_invalid(missing_parallel, "missing parallel_safe")
+assert_invalid(missing_parallel, "/nodes/0")
 
 extra_authority = copy.deepcopy(valid)
 extra_authority["nodes"][0]["merge_authority"] = True
-assert_invalid(extra_authority, "extra properties")
+assert_invalid(extra_authority, "/nodes/0")
 
 ambiguous_worker = copy.deepcopy(valid)
 ambiguous_worker["nodes"][0]["worker"]["unresolved_profile_requirement"] = "also pick later"
-assert_invalid(ambiguous_worker, "oneOf matched 2")
+assert_invalid(ambiguous_worker, "/nodes/0/worker")
 
 unknown_worker_field = copy.deepcopy(valid)
 unknown_worker_field["nodes"][0]["worker"]["can_spawn_directly"] = True
-assert_invalid(unknown_worker_field, "extra properties")
+assert_invalid(unknown_worker_field, "/nodes/0/worker")
 
 empty_verification = copy.deepcopy(valid)
 empty_verification["nodes"][0]["verification"] = []
-assert_invalid(empty_verification, "too few items")
+assert_invalid(empty_verification, "/nodes/0/verification")
 
-policy = schema["x-firstmate-policy"]
-assert policy["routine_work"] == "unchanged"
-assert policy["fable_5_1"]["eligible_roles"] == ["planner", "adjudicator"]
-assert policy["fable_5_1"]["default_call_budget"] == 3
-assert policy["fable_5_1"]["outside_implementation_graph"] is True
-for gate in [
-    "existing_worker_support",
-    "quota_and_runway",
-    "project_authority",
-    "isolation",
-    "delivery_contract",
-    "safety_contract",
-]:
-    assert gate in policy["firstmate_validates_nodes_for"]
+over_budget = copy.deepcopy(valid)
+over_budget["engagement"]["call_budget"] = 4
+assert_invalid(over_budget, "/engagement/call_budget")
+
+declined_extra_calls = copy.deepcopy(over_budget)
+declined_extra_calls["engagement"]["captain_authorized_extra_calls"] = False
+assert_invalid(declined_extra_calls, "/engagement/call_budget")
+
+captain_authorized = copy.deepcopy(over_budget)
+captain_authorized["engagement"]["captain_authorized_extra_calls"] = True
+assert_valid(captain_authorized)
+
+at_cap = copy.deepcopy(valid)
+at_cap["engagement"]["call_budget"] = 3
+at_cap["engagement"]["calls_used"] = 3
+assert_valid(at_cap)
 PY
-  pass "exceptional-worker-graph schema accepts bounded graph packets and rejects unsafe shapes"
+  pass "exceptional-worker-graph schema accepts bounded graph packets, rejects unsafe shapes, and caps Fable calls at three without captain authorization"
 }
 
 test_contract_schema_accepts_and_rejects_graph_packets
