@@ -64,8 +64,10 @@ fm_pi_recap_sanitize() {
   # well-known credential prefixes, a token=/key=/secret=/password=/bearer
   # assignment anchored at a word start (or carrying an UPPER_CASE_ identifier
   # prefix such as API_KEY=), and a bearer credential that is assigned, sits
-  # under an Authorization: header, or contains a digit - bare "bearer
-  # authentication" prose is left alone. Only absolute paths and file://
+  # under an Authorization: header, or is an 8+ char token containing a digit;
+  # the same digit gate applies to the prose-shaped "key: word" colon-space
+  # form, so "bearer authentication" and "the key: understanding" are left
+  # alone while "password: hunter2hunter2" is still redacted. Only absolute paths and file://
   # URLs are redacted (a relative app/home/x or an http URL path segment is
   # left alone), and the
   # project's own bracketed [key=<slug>] decision-key grammar from
@@ -73,15 +75,18 @@ fm_pi_recap_sanitize() {
   # Portable POSIX ERE: no \b and no
   # s///I flag, neither of which BSD sed (macOS /usr/bin/sed) supports - both
   # silently no-op instead of erroring. Best-effort defense in depth, not DLP.
+  local c='[A-Za-z0-9_.-]' digit_tok
+  digit_tok="(${c}{7,}[0-9]${c}*|[0-9]${c}{7,}|${c}[0-9]${c}{6,}|${c}{2}[0-9]${c}{5,}|${c}{3}[0-9]${c}{4,}|${c}{4}[0-9]${c}{3,}|${c}{5}[0-9]${c}{2,}|${c}{6}[0-9]${c}+)"
   text=$(printf '%s' "$text" | sed -E \
     -e 's#file://(/[A-Za-z0-9._-]+)+#[path]#g' \
     -e 's#(^|[^A-Za-z0-9._/-])(/Users|/home|/root|/opt|/var|/etc|/tmp|/srv|/private|/mnt)(/[A-Za-z0-9._-]+)+#\1[path]#g' \
     -e 's/(sk-|ghp_|gho_|github_pat_|xox[a-z]-|AKIA)[A-Za-z0-9_-]+/[redacted]/g' \
     -e 's/(^|[^A-Za-z0-9_[])[A-Z0-9_]+_(TOKEN|KEY|SECRET|PASSWORD)=[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
-    -e 's/(^|[^A-Za-z0-9_[])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])[=:] ?[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
+    -e 's/(^|[^A-Za-z0-9_[])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])(= ?|:)[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
+    -e "s/(^|[^A-Za-z0-9_[])([Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]): +$digit_tok/\\1[redacted]/g" \
     -e 's/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr][=:] ?[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
     -e 's/(^|[^A-Za-z0-9_])[Aa]uthorization: *[Bb][Ee][Aa][Rr][Ee][Rr] +[A-Za-z0-9_.-]{8,}/\1[redacted]/g' \
-    -e 's/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr] +[A-Za-z0-9_.-]*[0-9][A-Za-z0-9_.-]*/\1[redacted]/g')
+    -e "s/(^|[^A-Za-z0-9_])[Bb][Ee][Aa][Rr][Ee][Rr] +$digit_tok/\\1[redacted]/g")
   if [ "${#text}" -gt "$FM_PI_RECAP_LINE_MAX" ]; then
     text="${text:0:$((FM_PI_RECAP_LINE_MAX - 1))}…"
   fi

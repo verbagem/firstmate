@@ -281,6 +281,20 @@ test_bearer_prose_is_not_redacted() {
   pass "the bearer pattern redacts real credentials but leaves 'bearer authentication' prose alone"
 }
 
+test_short_bearer_tokens_and_colon_space_prose_are_not_redacted() {
+  local rec state data id=recap-short-bearer out
+  rec=$(make_fixture short-bearer); IFS='|' read -r state data <<<"$rec"
+  write_backlog_entry "$data" "$id" "Ship the thing"
+  printf 'working: rotated bearer v2 keys and changed bearer 3 endpoints; the key: understanding retries; secret: rotation scheduled; password: hunter2hunter2; token: abcd1efg\n' > "$state/$id.status"
+  out=$(FM_PI_RECAP_LINE_MAX=300 render "$id" "$state" "$data")
+  assert_contains "$out" 'rotated bearer v2 keys and changed bearer 3 endpoints' "short version/count tokens after bearer are prose"
+  assert_contains "$out" 'the key: understanding retries' "a colon-space keyword followed by a plain word is prose"
+  assert_contains "$out" 'secret: rotation scheduled' "secret: followed by a plain word is prose"
+  assert_not_contains "$out" 'hunter2hunter2' "a colon-space password with a digit is still redacted"
+  assert_not_contains "$out" 'abcd1efg' "an 8-char digit-bearing colon-space token is still redacted"
+  pass "the digit-plus-length gate keeps bearer and colon-space prose intact while redacting real credential shapes"
+}
+
 test_secret_keywords_redact_regardless_of_case() {
   local rec state data id=recap-privacy-case out
   rec=$(make_fixture privacy-case); IFS='|' read -r state data <<<"$rec"
@@ -392,6 +406,7 @@ test_decision_key_tokens_are_not_treated_as_secrets
 test_prefixed_secret_assignments_are_redacted
 test_file_urls_are_redacted_as_paths
 test_bearer_prose_is_not_redacted
+test_short_bearer_tokens_and_colon_space_prose_are_not_redacted
 test_secret_keywords_redact_regardless_of_case
 test_unrecognized_verb_renders_as_update_not_starting_up
 test_strips_osc_sequences_and_redacts_other_path_roots
