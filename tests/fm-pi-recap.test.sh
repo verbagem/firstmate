@@ -296,7 +296,7 @@ test_short_bearer_tokens_and_colon_space_prose_are_not_redacted() {
 }
 
 test_credential_prefixes_are_word_anchored_and_length_gated() {
-  local rec state data id=recap-prefix-table out row prefix real embedded
+  local rec state data id=recap-prefix-table out prefix real embedded
   rec=$(make_fixture prefix-table); IFS='|' read -r state data <<<"$rec"
   write_backlog_entry "$data" "$id" "Fix disk-space"
   local table='sk-|sk-abcdefghijklmnop1234|disk-space
