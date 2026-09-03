@@ -25,10 +25,13 @@
 #          TOOL AUTO-UPDATE (opt-in, default off). A config/tool-autoupdate
 #          presence flag (same convention as config/trace-context - any content,
 #          including empty, enables it) turns on an unattended
-#          `npm install -g <pkg>@latest` for whichever of gh-axi,
-#          chrome-devtools-axi, lavish-axi, tasks-axi, quota-axi, acpx,
-#          backpass, and gnhf are already on PATH and behind the npm registry's
-#          published version. treehouse and no-mistakes are never auto-updated:
+#          `npm install -g <pkg>@<version>` (pinned to the exact registry
+#          version whose publish date was checked, never the @latest tag) for
+#          whichever of gh-axi, chrome-devtools-axi, lavish-axi, tasks-axi,
+#          quota-axi, acpx, backpass, and gnhf are already on PATH and whose
+#          installed version sorts strictly below the registry's published
+#          version (a deliberately newer or pre-release install is never
+#          downgraded). treehouse and no-mistakes are never auto-updated:
 #          both gate active use on their own version and have their own held
 #          update tasks. This is the ONLY tool detection this file ever mutates
 #          without a MISSING-driven install command; every other home leaves the
@@ -379,6 +382,12 @@ fleet_sync() {
 # iso8601_to_epoch) exists precisely so that choice stays available per home.
 TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
 
+tool_autoupdate_timeout() {
+  local timeout=${FM_TOOL_AUTOUPDATE_TIMEOUT:-60}
+  case "$timeout" in ''|*[!0-9]*) timeout=60 ;; esac
+  echo "$timeout"
+}
+
 tool_autoupdate_min_age_seconds() {
   local days=${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-0}
   case "$days" in ''|*[!0-9]*) days=0 ;; esac
@@ -509,7 +518,7 @@ tool_autoupdate_sweep() {
   tool_autoupdate_due || return 0
   local tmp timeout monitor_was_on pid start elapsed
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tool-autoupdate.XXXXXX" 2>/dev/null) || return 0
-  timeout=${FM_TOOL_AUTOUPDATE_TIMEOUT:-60}
+  timeout=$(tool_autoupdate_timeout)
   tool_autoupdate_stamp
   monitor_was_on=0
   case $- in *m*) monitor_was_on=1 ;; esac
@@ -1109,9 +1118,10 @@ treehouse_supports_lease() {
 # Extracts the first numeric major.minor.patch triple from a version string
 # ("v0.1.16", "backpass 0.1.16", "0.2.0-beta.1" -> "0 2 0"); fails when none.
 version_triple() {  # <string>
-  local parts major minor patch extra
-  parts=$(printf '%s\n' "$1" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
-  IFS=' ' read -r major minor patch extra <<< "$parts"
+  local triple major minor patch extra
+  triple=$(printf '%s\n' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+  [ -n "$triple" ] || return 1
+  IFS='.' read -r major minor patch extra <<< "$triple"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
   printf '%s %s %s\n' "$major" "$minor" "$patch"
 }

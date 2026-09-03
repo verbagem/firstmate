@@ -345,6 +345,8 @@ test_no_mistakes_min_version() {
 minimum no-mistakes version is accepted^no-mistakes version v1.46.0 (fake)^empty
 newer no-mistakes minor is accepted^no-mistakes version v1.47.0 (fake)^empty
 newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
+two-digit no-mistakes major is accepted^no-mistakes version v10.0.0 (fake)^empty
+two-digit no-mistakes minor is accepted^no-mistakes version v1.100.0 (fake)^empty
 older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing
 unparseable no-mistakes version reports an upgrade^no-mistakes development build^missing
 ROWS
@@ -577,6 +579,41 @@ test_tool_autoupdate_timeout_relays_completed_updates() {
   assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "updates completed before the timeout must still be reported"
   assert_not_contains "$out" "backpass@0.1.17" "the interrupted install must not be reported as completed"
   pass "bootstrap: tool auto-update relays already-completed updates when the sweep times out"
+}
+
+test_tool_autoupdate_compares_multidigit_components_numerically() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-multidigit"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=9.9.9 FM_FAKE_NPM_GH_AXI_LATEST=10.0.0 \
+    FM_FAKE_NPM_BACKPASS_INSTALLED=0.10.0 FM_FAKE_NPM_BACKPASS_LATEST=0.9.9 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "gh-axi@10.0.0" "9.9.9 must sort below 10.0.0 and be updated"
+  assert_not_contains "$out" "backpass@0.9.9" "0.10.0 must sort above 0.9.9 and never be downgraded"
+  pass "bootstrap: tool auto-update compares multi-digit version components numerically"
+}
+
+test_tool_autoupdate_malformed_timeout_falls_back_to_default() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/tool-autoupdate-bad-timeout"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_fake_npm "$fakebin"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_TIMEOUT=60s \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  assert_not_contains "$out" "integer expression expected" "a malformed timeout must fall back to the default, not break the deadline check"
+  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "the sweep must still complete under the default timeout"
+  pass "bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_TIMEOUT instead of running unbounded"
 }
 
 test_tool_autoupdate_installs_same_day_release_by_default() {
@@ -1487,6 +1524,8 @@ test_tool_autoupdate_never_downgrades_a_newer_install
 test_tool_autoupdate_holds_when_versions_cannot_be_compared
 test_tool_autoupdate_malformed_age_days_falls_back_to_default
 test_tool_autoupdate_timeout_relays_completed_updates
+test_tool_autoupdate_compares_multidigit_components_numerically
+test_tool_autoupdate_malformed_timeout_falls_back_to_default
 test_tool_autoupdate_installs_same_day_release_by_default
 test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set
 test_tool_autoupdate_respects_24h_throttle
