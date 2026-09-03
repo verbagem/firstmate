@@ -350,6 +350,17 @@ require_empty_composer() {
     || die "task $ID's composer reads '$state' after interrupt handling; refusing to type a lifecycle command into unverified input"
 }
 
+# The same composer proof do_exit demands, taken on the pre-stop side of a
+# relaunch so a queued-input refusal happens before any journal or agent is
+# touched instead of surfacing as a failed stop.
+require_exit_composer_preflight() {
+  [ "$(agent_state)" = alive ] || return 0
+  case "$(busy_verdict)" in
+    busy*) require_empty_composer_before_interrupt ;;
+    *) require_empty_composer ;;
+  esac
+}
+
 # wait_agent_state <wanted...> <timeout>: poll until agent_state prints one of
 # the wanted values. Prints the final observed state; returns 0 on a match.
 wait_agent_state() {  # <timeout> <wanted>...
@@ -436,7 +447,6 @@ interrupt_cancel_claim() {
 # cancellation claim available after delivery.
 deliver_interrupt() {
   local cancel
-  require_empty_composer_before_interrupt
   prepare_interrupt_ack
   send_interrupt_keys
   cancel=$(interrupt_cancel_claim)
@@ -490,6 +500,7 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      require_empty_composer_before_interrupt
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -838,6 +849,7 @@ do_relaunch() {
   else
     note_line="note=none"
   fi
+  require_exit_composer_preflight
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1

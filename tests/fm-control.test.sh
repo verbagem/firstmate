@@ -689,6 +689,18 @@ test_ambiguous_endpoint_refuses() {
   pass "fm-control exit: an endpoint whose process cannot be attributed refuses"
 }
 
+# The relaunch journal (state/<id>.control-relaunch) is the transaction's
+# durable record; a queued-input refusal must never be recorded as a failed stop.
+assert_relaunch_refused_before_touching_agent() {  # <case-dir> <verb> <output>
+  local journal="$1/home/state/t1.control-relaunch"
+  [ "$2" = relaunch ] || return 0
+  assert_not_contains "$3" "failed while stopping" \
+    "a queued-input relaunch refusal must not be reported as a failed stop"
+  if [ -e "$journal" ] && grep -q '^phase=failed:stopping$' "$journal"; then
+    fail "a queued-input relaunch refusal must not journal phase=failed:stopping"
+  fi
+}
+
 test_busy_agent_with_queued_input_refuses_without_touching_the_queue() {
   local dir out rc verb gen inbox before buffer submissions
   for verb in exit relaunch; do
@@ -731,6 +743,7 @@ test_busy_agent_with_queued_input_refuses_without_touching_the_queue() {
       "$verb must leave the queued composer input untouched"
     [ "$(cat "$dir/fake/command")" = claude ] \
       || fail "$verb refusal must leave the running worker alive"
+    assert_relaunch_refused_before_touching_agent "$dir" "$verb" "$out"
   done
   pass "fm-control: exit and relaunch preserve queued worker input instead of concatenating lifecycle text"
 }
@@ -773,6 +786,7 @@ test_idle_agent_with_queued_input_refuses_without_touching_the_queue() {
       || fail "$verb must preserve the durable worker instruction byte-for-byte"
     [ "$(cat "$dir/fake/command")" = claude ] \
       || fail "$verb refusal must leave the running worker alive"
+    assert_relaunch_refused_before_touching_agent "$dir" "$verb" "$out"
   done
   pass "fm-control: idle exit and relaunch preserve queued worker input without typing lifecycle text"
 }
@@ -815,8 +829,33 @@ test_busy_agent_with_unverified_input_refuses_before_interrupt() {
       || fail "$verb must restore the original instructions after refusing relaunch"
     [ "$(cat "$dir/fake/command")" = claude ] \
       || fail "$verb refusal must leave the running worker alive"
+    assert_relaunch_refused_before_touching_agent "$dir" "$verb" "$out"
   done
   pass "fm-control: unverified queued input survives exit and relaunch without an interrupt"
+}
+
+test_standalone_interrupt_is_not_gated_on_queued_input() {
+  local dir gen out rc
+  dir=$(new_case interrupt-queued)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  printf '╭────────────────────╮\n│ ❯ queued follow-up │\n╰────────────────────╯\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "interrupt types no text, so queued input must not block it"$'\n'"$out"
+  assert_grep 'Escape' "$dir/fake/keys" "interrupt should still deliver its key with queued input"
+  [ -z "$(literals "$dir")" ] || fail "interrupt must never type text"
+  [ "$(cat "$dir/fake/command")" = claude ] || fail "interrupt must leave the worker alive"
+
+  dir=$(new_case interrupt-unknown)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '$ ambiguous composer\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 interrupt); rc=$?
+  expect_code 0 "$rc" "interrupt must not refuse on an unreadable composer"$'\n'"$out"
+  assert_grep 'Escape' "$dir/fake/keys" "interrupt should deliver its key with an unknown composer"
+  pass "fm-control interrupt: the standalone verb is unchanged by composer contents"
 }
 
 test_interrupt_race_with_restored_input_refuses_before_lifecycle_text() {
@@ -1099,6 +1138,7 @@ test_busy_agent_with_queued_input_refuses_without_touching_the_queue
 test_idle_agent_with_queued_input_refuses_without_touching_the_queue
 test_busy_agent_with_unverified_input_refuses_before_interrupt
 test_interrupt_race_with_restored_input_refuses_before_lifecycle_text
+test_standalone_interrupt_is_not_gated_on_queued_input
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
 test_interrupt_without_acknowledgement_preserves_busy_state

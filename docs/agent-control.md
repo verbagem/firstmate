@@ -43,6 +43,8 @@ An interrupt is not complete until the composer is empty.
 muse is the one verified adapter that restores the cancelled prompt back into its composer as real text, so its interrupt key is followed by a Ctrl+U clear; without it the next submitted line - including this plane's own exit command - would concatenate onto the restored prompt and submit both as one line.
 The clear is refused before anything is sent when the recorded backend cannot deliver it.
 Before `exit` or `relaunch` interrupts a worker, the composer must be proven empty; queued, unreadable, or ambiguous input causes a refusal and remains untouched.
+`relaunch` takes that proof before its checkpoint, so a queued-input refusal is reported as a refusal before the agent was touched, never as a failed stop.
+The standalone `interrupt` verb is not gated on the composer: it types no text, so queued input cannot concatenate with it.
 After any interrupt, the exit command is typed only when a fresh composer read again proves it empty, so restored or newly queued input can never concatenate with lifecycle text or enter chat.
 
 **Teardown and discard are not verbs and will not become verbs.**
