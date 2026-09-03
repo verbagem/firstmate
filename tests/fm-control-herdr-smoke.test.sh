@@ -134,6 +134,19 @@ herdr pane get "$PANE_ID" --session "$SESSION" >/dev/null 2>&1 \
 [ -d "$WT" ] || fail "the control plane must never remove the task's local copy"
 pass "real herdr: no control verb removed the endpoint or the task's local copy"
 
+# The pane renders the fixture asynchronously and a loaded CI runner can lag
+# well past a fixed sleep, so wait for the classifier to settle on the
+# expected verdict (bounded) instead of reading a mid-redraw screen.
+wait_composer_state() {  # <expected> -> last observed verdict
+  local expected=$1 state='' _
+  for _ in $(seq 1 50); do
+    state=$(fm_backend_composer_state herdr "$SESSION:$PANE_ID")
+    [ "$state" = "$expected" ] && break
+    sleep 0.1
+  done
+  printf '%s' "$state"
+}
+
 # Reproduce the incident against the real backend: a busy worker has genuine
 # unsubmitted input in its composer when exit or relaunch arrives.
 # The lifecycle call must refuse before sending Escape or appending a command.
@@ -144,12 +157,12 @@ fm_backend_herdr_send_literal "$SESSION:$PANE_ID" "$READ_CMD" \
   || fail "could not type the pending-composer fixture"
 fm_backend_herdr_send_key "$SESSION:$PANE_ID" Enter \
   || fail "could not start the pending-composer fixture"
-sleep 0.3
+STATE=$(wait_composer_state empty)
+[ "$STATE" = empty ] || fail "real herdr pending fixture should open empty, got '$STATE': $(fm_backend_herdr_capture "$SESSION:$PANE_ID" 20 2>/dev/null || true)"
 fm_backend_herdr_send_literal "$SESSION:$PANE_ID" "queued follow-up" \
   || fail "could not type queued worker input"
-sleep 0.2
-STATE=$(fm_backend_composer_state herdr "$SESSION:$PANE_ID")
-[ "$STATE" = pending ] || fail "real herdr queued input should classify pending, got '$STATE'"
+STATE=$(wait_composer_state pending)
+[ "$STATE" = pending ] || fail "real herdr queued input should classify pending, got '$STATE': $(fm_backend_herdr_capture "$SESSION:$PANE_ID" 20 2>/dev/null || true)"
 GEN=$("$ROOT/bin/fm-busy-event.sh" arm "$HOME_DIR/state" hsmoke)
 printf 'busy_gen=%s\n' "$GEN" >> "$HOME_DIR/state/hsmoke.meta"
 mkdir -p "$HOME_DIR/state/hsmoke.inbox/handled"
@@ -201,8 +214,7 @@ fm_backend_herdr_send_literal "$SESSION:$PANE_ID" "$READ_CMD" \
   || fail "could not type the empty-composer fixture"
 fm_backend_herdr_send_key "$SESSION:$PANE_ID" Enter \
   || fail "could not start the empty-composer fixture"
-sleep 0.3
-STATE=$(fm_backend_composer_state herdr "$SESSION:$PANE_ID")
+STATE=$(wait_composer_state empty)
 [ "$STATE" = empty ] || fail "real herdr empty fixture should classify empty, got '$STATE': $(fm_backend_herdr_capture "$SESSION:$PANE_ID" 20 2>/dev/null || true)"
 if OUT=$(run_control hsmoke exit 2>&1); then
   fail "exit should fail closed when the agent does not stop: $OUT"
