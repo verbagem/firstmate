@@ -1,0 +1,4 @@
+$ bin/fm-project-mode.sh --with-name --path "$PWD"
+warn: no registry at /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M1JK42P7J5QJP8NQEZ4CG4XJ/data/projects.md; defaulting 01M1JK42P7J5QJP8NQEZ4CG4XJ to no-mistakes off
+01M1JK42P7J5QJP8NQEZ4CG4XJ no-mistakes off
+exit=0

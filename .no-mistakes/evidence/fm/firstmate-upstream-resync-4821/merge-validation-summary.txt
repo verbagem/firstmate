@@ -1,0 +1,14 @@
+PR 15 branch fm/firstmate-upstream-resync-4821 test-phase evidence
+base 8a27381 -> target 9650f88 (merge of upstream base into branch)
+
+Retrigger commit 402f6f3b: tree identical to its parent (empty commit), ancestor of target head.
+Merge delta vs branch tip 3b9ba83 (5 files): bin/fm-classify-lib.sh, bin/fm-fleet-sync.sh,
+  bin/fm-project-mode.sh, tests/fm-fleet-sync.test.sh, tests/fm-task-delivery.test.sh
+  - removed helper crew_run_generation_from_state_line: no remaining callers in bin/tests/.pi
+  - bash -n parse ok for all three merged scripts
+Coverage guard: bin/fm-test-run.sh --check-coverage -> FM_TEST_COVERAGE ok total=170
+
+Targeted runs (all exit 0, 0 failed):
+  fm-fleet-sync, fm-task-delivery, fm-classify-decision-key, fm-classify-corr-token,
+  fm-crew-state, fm-no-mistakes-required  -> 128 ok
+  fm-watch-triage, fm-daemon               -> 176 ok

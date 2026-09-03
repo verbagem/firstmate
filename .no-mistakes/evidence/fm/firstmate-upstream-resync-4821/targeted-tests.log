@@ -1,0 +1,155 @@
+FM_TEST_BEGIN 2026-09-03T03:41:41Z tests/fm-fleet-sync.test.sh family=session-bootstrap expected_gate_skip=none
+ok - detached clean ancestor is re-attached and fast-forwarded (recovered)
+ok - detached HEAD with unique commits is reported STUCK and left untouched
+ok - detached clean ancestor with diverged local default is reported STUCK and left untouched
+ok - dirty working tree is reported STUCK and left untouched
+ok - non-default named branch is reported STUCK and left untouched
+ok - diverged default branch is reported STUCK and left untouched
+ok - on-default clean behind clone still fast-forwards
+ok - already-current clone is reported unchanged
+ok - no-origin clone is skipped (benign), not flagged STUCK
+ok - local-only clone is skipped (benign), not flagged STUCK
+ok - external registered local-only project paths are skipped before remote sync
+On branch main
+nothing to commit, working tree clean
+ok - unregistered external project paths keep the full path label
+ok - single-project form accepts a bare project name
+ok - single-project bare name resolution is not cwd-sensitive
+ok - single-project form accepts a projects/<name> relative name
+ok - single-project projects/<name> resolution is not cwd-sensitive
+ok - single-project form leaves a genuinely bad name unresolved
+ok - whole-fleet form processes every clone under projects/
+ok - bootstrap relays recovered: and STUCK: fleet-sync outcomes
+ok - orphaned provably-stale packed-refs.lock is cleared and the clone syncs
+ok - a live packed-refs.lock is never removed and the sync fails loudly
+ok - a live process holding the clone worktree dir blocks lock removal (clone-dir liveness)
+ok - a transient packed-refs.lock that self-clears is retried without a force-remove
+ok - a non-packed-refs.lock fetch failure keeps today's behavior (no retry)
+ok - a non-repo directory under projects/ never fast-forwards the enclosing repo
+ok - the single-project form also refuses a directory that is not its own clone root
+ok - the clone-root guard accepts a symlinked clone directory
+FM_TEST_END 2026-09-03T03:42:35Z tests/fm-fleet-sync.test.sh exit=0 duration_ms=54081 gate_skip=false
+FM_TEST_BEGIN 2026-09-03T03:42:35Z tests/fm-task-delivery.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm-spawn: a ship spawn requires a valid explicit mode and yolo before anything is created
+ok - fm-spawn: scout and secondmate spawns refuse ship delivery flags
+ok - fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree
+ok - fm-spawn: a rigor downgrade against the registered posture is announced, never blocked
+ok - fm-spawn: an advisory registry lookup refusal degrades and warns instead of blocking the spawn
+ok - fm-spawn: registry deviation notices resolve external absolute paths to their registered project name
+ok - fm-spawn: a scout spawn resolves no delivery posture from the registry
+ok - fm-promote: promotion requires the delivery contract and records it exactly once
+ok - fm-project-mode: the conditional policy is accepted, mapped for mechanical callers, and readable raw
+ok - fm-project-mode: path lookup handles external, in-tree, unknown, ambiguous, and malformed identities
+ok - fm-project-mode: path normalization keeps relative overrides based at the caller cwd
+# all fm-task-delivery tests passed
+FM_TEST_END 2026-09-03T03:42:40Z tests/fm-task-delivery.test.sh exit=0 duration_ms=4250 gate_skip=false
+FM_TEST_BEGIN 2026-09-03T03:42:40Z tests/fm-classify-decision-key.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - a stated [key=X] opens X whether it precedes or follows the verb colon
+ok - a keyless needs-decision still opens and closes the default key
+ok - a resolution closes its decision regardless of either line's key position
+ok - blocked [key=X] opens X in both key positions
+ok - two colon-form keyed decisions never collapse into one shared bucket
+ok - a [key=x] mentioned mid-note is prose, never an opened or closed key
+ok - a malformed stated key is rejected in both positions, never folded as default
+ok - status_line_verb strips every bracket tag before the colon, in any order, and recovers the bare verb
+ok - a [corr=...] tag ahead of [key=...] no longer swallows the verb: opens and closes under the stated key
+ok - a [corr=...] tag with no stated key opens under 'default', exactly like a bare needs-decision line
+ok - a [key=x] tag alone (no corr tag) still opens x - no regression from the tag-stripping fix
+ok - blocked/resolved parse their bare verb with any bracket-tag order preceding the colon
+ok - the incremental fold matches the full fold across appends in both key positions
+ok - status_key_closing_verb separates resolution, durable transfer, and still-open
+ok - status_key_closing_verb reports the last real transition, in either key position
+FM_TEST_END 2026-09-03T03:42:40Z tests/fm-classify-decision-key.test.sh exit=0 duration_ms=898 gate_skip=false
+FM_TEST_BEGIN 2026-09-03T03:42:40Z tests/fm-classify-corr-token.test.sh family=unclassified expected_gate_skip=none
+ok - a correlation token between the verb and the key breaks neither opening nor closing
+ok - the token is read through before the key, after it, doubled, bracketed, and unkeyed
+ok - the untokened opener/closer pair behaves exactly as before
+ok - prose, malformed, wrong-length and unknown name=value tokens stay non-transitions
+ok - a token-first line cannot impersonate any opening or closing verb
+ok - untokened captain-relevance, pause, terminal-verb and captain-held verdicts are unchanged
+ok - captain-relevance, terminal-verb, pause and captain-held all read through the token
+ok - the daemon and crew-state verb case arms read through the token
+ok - reading through the token does not weaken the reserved-key namespace rule
+ok - the cursor-backed fold and the whole-file fold agree on every correlated transition
+ok - a cursor persisted under the previous reading is discarded and refolded
+ok - both real correlation-token writers produce lines this classifier reads through
+FM_TEST_END 2026-09-03T03:42:52Z tests/fm-classify-corr-token.test.sh exit=0 duration_ms=11586 gate_skip=false
+FM_TEST_BEGIN 2026-09-03T03:42:52Z tests/fm-crew-state.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - active run-step is authoritative
+ok - stale needs-decision over active run is superseded
+ok - stale blocked over active run is superseded
+ok - genuine parked run is not flagged superseded
+ok - scalar gate parked run is not flagged superseded
+ok - gate block parked run is not flagged superseded
+ok - ci-ready status log beats monitoring run
+ok - ci-monitoring run with checks already green surfaces done
+ok - top-level ci status uses ci log green marker
+ok - terminal no-checks ci-monitor marker surfaces done
+ok - base-advance rearm after green stays working
+ok - pending no-checks ci-monitor marker stays working
+ok - ci-monitoring run with checks not yet green stays working
+ok - a fresh issue after an earlier green reading is not masked
+ok - stale checks-green status log does not mask CI relapse
+ok - ci fixing is not overridden by an earlier green marker
+ok - top-level fixing is not overridden by a stale ci running row
+ok - top-level fixing is not overridden by a stale done log
+ok - terminal passed run is authoritative
+ok - terminal failed run is authoritative
+ok - cross-branch run is attributed via the real runs list
+ok - cross-branch attribution picks the branch's most recent row
+ok - coarse run does not probe another branch's ci log
+ok - another branch's run is ignored, falls back
+ok - no run + a busy semantic record reads working, attributed to its source
+ok - a converted adapter never reads working from rendered footer text
+ok - grok still reads working through its isolated rendered-tail fallback
+ok - herdr's native busy verdict reads working with no record present
+ok - a mid-tool-call crew stays working because its record outranks herdr's generation state
+ok - an idle record with idle agent_status stays not-busy (no regression for a human-blocked agent)
+ok - no run + idle pane uses the status-log verb
+ok - no run + idle pane parses keyed status syntax
+ok - no run + idle pane on a paused: status reports state: paused with its reason
+ok - no run + idle pane honors the configured paused verb
+ok - a trailing resolved: event does not corrupt state render (idle stays idle)
+ok - dead window ignores stale status log
+ok - closed pane still reports a terminal run-step
+ok - closed pane still reports an active run-step
+ok - no timeout command uses perl bound
+ok - scout skips the run lookup
+ok - torn-down worktree is handled gracefully
+ok - fm-crew-state remote: alive endpoint falls through to the routed status log
+ok - fm-crew-state remote: an idle alive endpoint reads alive, never gone or dead
+ok - fm-crew-state remote: an unreachable host reads unknown-remote, never gone or dead
+ok - fm-crew-state remote: the remote host's own dead verdict is reported truthfully
+ok - missing meta is handled gracefully
+ok - crew_is_provably_working absorbs a validating crew found only via the runs-list fallback
+ok - crew_is_provably_working still surfaces a genuinely stopped crew (safety property preserved)
+ok - usage error exits 2
+ok - historical same-branch rewritten head is not attributed as current
+ok - active run with valid descendant fix head remains current
+ok - local work advanced past run head invalidates attribution
+ok - pipeline-owned active run binds without head equality and beats the failed row
+ok - a genuinely failed run with no later run is not hidden
+ok - coarse scan stops on an unresolvable active row instead of binding an older one
+ok - the exemption requires branch_sync.state=pipeline_owned
+ok - the exemption never applies to a terminal run
+ok - missing run head falls back instead of matching by branch
+all fm-crew-state tests passed
+FM_TEST_END 2026-09-03T03:43:17Z tests/fm-crew-state.test.sh exit=0 duration_ms=25300 gate_skip=false
+FM_TEST_BEGIN 2026-09-03T03:43:17Z tests/fm-no-mistakes-required.test.sh family=unclassified expected_gate_skip=none
+ok - shared action accepts a matching head_sha with completed required steps
+ok - shared action rejects a mismatched head_sha and names both SHAs
+ok - shared action rejects an attestation with no head_sha
+ok - live-body script polls past the stale push-time body and hands the shared action a passing body
+ok - live-body script times out on a never-bound body and the shared action still fails it
+FM_TEST_END 2026-09-03T03:43:19Z tests/fm-no-mistakes-required.test.sh exit=0 duration_ms=1078 gate_skip=false
+FM_TEST_SUMMARY total=6 failed=0 skipped_gate=0 duration_ms=97424
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=3 duration_ms=30448 failed=0
+FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=1 duration_ms=54081 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=2 duration_ms=12664 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-fleet-sync.test.sh duration_ms=54081
+FM_TEST_SLOWEST rank=2 script=tests/fm-crew-state.test.sh duration_ms=25300
+FM_TEST_SLOWEST rank=3 script=tests/fm-classify-corr-token.test.sh duration_ms=11586
+FM_TEST_SLOWEST rank=4 script=tests/fm-task-delivery.test.sh duration_ms=4250
+FM_TEST_SLOWEST rank=5 script=tests/fm-no-mistakes-required.test.sh duration_ms=1078
+FM_TEST_SLOWEST rank=6 script=tests/fm-classify-decision-key.test.sh duration_ms=898
+fm-test-run: wrote timing artifact: /Users/temp/.no-mistakes/evidence/01M1JK42P7J5QJP8NQEZ4CG4XJ/fm-test-timing-merge-targeted.json
