@@ -408,18 +408,24 @@ assert_grep 'stdin=payload byte two' "$TMP_ROOT/payload-out" "--stdin lost part 
 pass "--stdin still delivers a payload caller's bytes"
 
 # Stage litter: an abandoned .stage.* older than the reap age does not survive
-# a worker pass, while fresh staging is left alone.
+# a worker pass, while staging with a live owner is left alone. The in-use
+# stage carries the same owner markers the entrypoint writes: with the 1s
+# reap age and whole-second mtimes, an ownerless stage would be reapable at
+# the next clock tick and the assertion would race the worker's sweep.
 OLD_STAGE="$STATE_ROOT/jobs/.stage.abandoned"
 FRESH_STAGE="$STATE_ROOT/jobs/.stage.fresh"
 mkdir -p "$OLD_STAGE" "$FRESH_STAGE"
-touch -t 200001010000 "$OLD_STAGE"
+printf '%s\n' "$$" > "$FRESH_STAGE/.owner-pid"
+fm_remote_job_process_start "$$" > "$FRESH_STAGE/.owner-start" \
+  || fail "the stage-litter fixture could not record its own owner start"
+touch -t 200001010000 "$OLD_STAGE" "$FRESH_STAGE"
 for _ in $(seq 1 100); do
   [ ! -d "$OLD_STAGE" ] && break
   sleep 0.05
 done
 [ ! -d "$OLD_STAGE" ] || fail "stage litter older than the reap age survived the worker pass"
 assert_present "$FRESH_STAGE" "the worker reaped fresh staging that is still in use"
-rmdir "$FRESH_STAGE"
+rm -rf -- "$FRESH_STAGE"
 pass "abandoned stage litter is reaped by age while fresh staging survives"
 
 echo "ALL TESTS PASSED"
