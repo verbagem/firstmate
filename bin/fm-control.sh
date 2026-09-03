@@ -322,9 +322,9 @@ composer_state() {
   fm_backend_composer_state "$BACKEND" "$T" "$LABEL"
 }
 
-# A queued instruction must survive lifecycle control. State-verified stop
-# backends must prove the composer empty before interrupting because cancel may
-# clear input; interrupt-only backends retain their existing unknown-state path.
+# A queued instruction must survive lifecycle control. Every caller runs on a
+# state-verified stop backend, so an unreadable composer is refused outright:
+# cancel may clear input the plane could not prove was absent.
 require_empty_composer_before_interrupt() {
   local state
   state=$(composer_state)
@@ -334,20 +334,31 @@ require_empty_composer_before_interrupt() {
       die "task $ID's composer holds a queued instruction; refusing lifecycle control until the worker consumes it"
       ;;
     *)
-      fm_control_backend_state_verified "$BACKEND" \
-        && die "task $ID's composer reads '$state' before interrupt handling; refusing to risk clearing unverified input"
+      die "task $ID's composer reads '$state' before interrupt handling; refusing to risk clearing unverified input"
       ;;
   esac
 }
 
 # Textual lifecycle commands are safe only in a positively empty composer.
-# This second check runs after any interrupt, catching restored or newly queued
-# input before /exit or /quit can concatenate with it.
-require_empty_composer() {
-  local state
-  state=$(composer_state)
-  [ "$state" = empty ] \
-    || die "task $ID's composer reads '$state' after interrupt handling; refusing to type a lifecycle command into unverified input"
+# `after-interrupt` re-reads through SETTLE_WAIT so a TUI still redrawing from
+# the interrupt key cannot fail an empty composer; `pending` refuses at once.
+require_empty_composer() {  # <idle|after-interrupt>
+  local phase=$1 state elapsed=0 when
+  while :; do
+    state=$(composer_state)
+    case "$phase:$state" in
+      *:empty) return 0 ;;
+      idle:*|*:pending) break ;;
+    esac
+    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  case "$phase" in
+    idle) when="with no interrupt sent" ;;
+    *) when="after interrupt handling" ;;
+  esac
+  die "task $ID's composer reads '$state' $when; refusing to type a lifecycle command into unverified input"
 }
 
 # The same composer proof do_exit demands, taken on the pre-stop side of a
@@ -357,7 +368,7 @@ require_exit_composer_preflight() {
   [ "$(agent_state)" = alive ] || return 0
   case "$(busy_verdict)" in
     busy*) require_empty_composer_before_interrupt ;;
-    *) require_empty_composer ;;
+    *) require_empty_composer idle ;;
   esac
 }
 
@@ -515,7 +526,10 @@ do_exit() {
       esac
       ;;
   esac
-  require_empty_composer
+  case "$interrupt_result" in
+    not-needed) require_empty_composer idle ;;
+    *) require_empty_composer after-interrupt ;;
+  esac
   cmd=$(fm_control_exit_command "$HARNESS")
   # The submit verdict is NOT the postcondition here: a successful exit command
   # destroys the composer the verdict is read from, so a post-exit read can

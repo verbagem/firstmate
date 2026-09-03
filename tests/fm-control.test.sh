@@ -124,6 +124,10 @@ case "${1:-}" in
           "$FM_FAKE_INTERRUPT_RESTORES_TEXT" > "$D/pane"
         printf '%s' "$FM_FAKE_INTERRUPT_RESTORES_TEXT" > "$FM_FAKE_TYPED_BUFFER"
       fi
+      if [ -n "${FM_FAKE_INTERRUPT_REDRAW_READS:-}" ] \
+         && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
+        printf '%s' "$FM_FAKE_INTERRUPT_REDRAW_READS" > "$D/redraw-remaining"
+      fi
       if [ -n "${FM_FAKE_INTERRUPT_CLEARS_TEXT:-}" ] \
          && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
         : > "$FM_FAKE_TYPED_BUFFER"
@@ -147,6 +151,13 @@ case "${1:-}" in
     done
     printf 'fakepane\n'; exit 0 ;;
   capture-pane)
+    if [ -s "$D/redraw-remaining" ]; then
+      left=$(cat "$D/redraw-remaining")
+      if [ "$left" -gt 1 ]; then printf '%s' $((left - 1)) > "$D/redraw-remaining"; else rm -f "$D/redraw-remaining"; fi
+      printf 'Esc to interrupt\n'
+      echo "$left" >> "$D/redraw-reads"
+      exit 0
+    fi
     if [ -f "$D/pane" ]; then cat "$D/pane"; else printf '╭────╮\n│    │\n╰────╯\n'; fi
     exit 0 ;;
   list-windows)
@@ -221,6 +232,7 @@ run_control() {
     FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
     FM_FAKE_INTERRUPT_RESTORES_TEXT="${FM_FAKE_INTERRUPT_RESTORES_TEXT:-}" \
     FM_FAKE_INTERRUPT_CLEARS_TEXT="${FM_FAKE_INTERRUPT_CLEARS_TEXT:-}" \
+    FM_FAKE_INTERRUPT_REDRAW_READS="${FM_FAKE_INTERRUPT_REDRAW_READS:-}" \
     FM_FAKE_TYPED_BUFFER="${FM_FAKE_TYPED_BUFFER:-}" \
     FM_FAKE_SUBMISSIONS="${FM_FAKE_SUBMISSIONS:-}" \
     "$CONTROL" "$@" 2>&1
@@ -834,6 +846,43 @@ test_busy_agent_with_unverified_input_refuses_before_interrupt() {
   pass "fm-control: unverified queued input survives exit and relaunch without an interrupt"
 }
 
+test_post_interrupt_redraw_settles_before_the_exit_command() {
+  local dir out rc gen
+  dir=$(new_case interrupt-redraw)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(FM_FAKE_INTERRUPT_REDRAW_READS=3 run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "a composer still redrawing after the interrupt must settle, not refuse"$'\n'"$out"
+  assert_contains "$out" "stopped t1" "the exit should complete once the redraw settles"
+  assert_grep 'Escape' "$dir/fake/keys" "the busy worker should have been interrupted first"
+  [ "$(literals "$dir")" = "/exit" ] || fail "exactly one exit command should follow the settled read"
+  [ "$(wc -l < "$dir/fake/redraw-reads")" -eq 3 ] \
+    || fail "the post-interrupt read should have re-polled through the redraw"
+
+  dir=$(new_case interrupt-redraw-pending)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
+  printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
+  out=$(FM_FAKE_INTERRUPT_RESTORES_TEXT='restored prompt' run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a positively pending composer must still refuse after the interrupt"
+  assert_contains "$out" "after interrupt handling" \
+    "the refusal should attribute the pending read to the interrupt phase"
+
+  dir=$(new_case idle-unknown)
+  add_task "$dir" t1 claude
+  alive_as "$dir" claude
+  printf '$ ambiguous composer\n' > "$dir/fake/pane"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "an idle worker with an unreadable composer must refuse"
+  assert_contains "$out" "composer reads 'unknown' with no interrupt sent" \
+    "an idle refusal must not claim an interrupt happened"
+  [ -z "$(keys_sent "$dir")" ] || fail "an idle refusal must send no keys"
+  pass "fm-control exit: the post-interrupt composer read settles through a redraw and refusals name their phase"
+}
+
 test_standalone_interrupt_is_not_gated_on_queued_input() {
   local dir gen out rc
   dir=$(new_case interrupt-queued)
@@ -1138,6 +1187,7 @@ test_busy_agent_with_queued_input_refuses_without_touching_the_queue
 test_idle_agent_with_queued_input_refuses_without_touching_the_queue
 test_busy_agent_with_unverified_input_refuses_before_interrupt
 test_interrupt_race_with_restored_input_refuses_before_lifecycle_text
+test_post_interrupt_redraw_settles_before_the_exit_command
 test_standalone_interrupt_is_not_gated_on_queued_input
 test_busy_agent_is_interrupted_before_the_exit_command
 test_idle_agent_is_not_interrupted
