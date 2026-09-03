@@ -34,8 +34,8 @@
 #          without a MISSING-driven install command; every other home leaves the
 #          plain detect-then-consent contract in AGENTS.md section 3 unchanged
 #          because the flag defaults off. A publish-age gate exists for this
-#          package list (FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS, in days, converted to
-#          TOOL_AUTOUPDATE_MIN_AGE_SECONDS) but DEFAULTS TO 0: the captain has
+#          package list (FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS, in days; anything
+#          non-numeric falls back to the default) but DEFAULTS TO 0: the captain has
 #          stated standing trust in this specific curated set and wants it kept
 #          current without a wait. Set FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS to
 #          restore the standing 14-day supply-chain wait for an opted-in home
@@ -378,7 +378,12 @@ fleet_sync() {
 # "Tool auto-update"); the mechanism this gate uses (npm_registry_version_publish_iso,
 # iso8601_to_epoch) exists precisely so that choice stays available per home.
 TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
-TOOL_AUTOUPDATE_MIN_AGE_SECONDS=$(( ${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-0} * 86400 ))
+
+tool_autoupdate_min_age_seconds() {
+  local days=${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-0}
+  case "$days" in ''|*[!0-9]*) days=0 ;; esac
+  echo $((days * 86400))
+}
 
 tool_autoupdate_enabled() {
   [ -f "$CONFIG/tool-autoupdate" ] && [ ! -L "$CONFIG/tool-autoupdate" ]
@@ -442,7 +447,8 @@ iso8601_to_epoch() {  # <YYYY-MM-DDTHH:MM:SS(.fff)?Z>
 # relays those with the TOOL_AUTOUPDATE: prefix and folds successful updates
 # into a single BOOTSTRAP_INFO line.
 tool_autoupdate_body() {
-  local pkg installed latest updated="" publish_iso publish_epoch now
+  local pkg installed latest cmp publish_iso publish_epoch now min_age
+  min_age=$(tool_autoupdate_min_age_seconds)
   if ! command -v npm >/dev/null 2>&1; then
     echo "DIAG:npm not found on PATH, cannot check for updates"
     return 0
@@ -456,7 +462,11 @@ tool_autoupdate_body() {
       echo "DIAG:registry lookup failed for $pkg (network unavailable?)"
       continue
     fi
-    [ "$installed" != "$latest" ] || continue
+    if ! cmp=$(version_cmp "$installed" "$latest"); then
+      echo "DIAG:cannot compare $pkg versions (installed $installed, latest $latest), holding"
+      continue
+    fi
+    [ "$cmp" -lt 0 ] || continue
     # The standing supply-chain age rule: hold a too-recent release rather
     # than install it same-day. An unparseable or missing publish date is
     # treated the same as "still held" - never install on evidence we could
@@ -469,16 +479,15 @@ tool_autoupdate_body() {
       continue
     fi
     now=$(date +%s)
-    if [ $((now - publish_epoch)) -lt "$TOOL_AUTOUPDATE_MIN_AGE_SECONDS" ]; then
+    if [ $((now - publish_epoch)) -lt "$min_age" ]; then
       continue
     fi
-    if npm install -g "$pkg@latest" >/dev/null 2>&1; then
-      updated="$updated $pkg@$latest"
+    if npm install -g "$pkg@$latest" >/dev/null 2>&1; then
+      echo "UPDATED:$pkg@$latest"
     else
-      echo "DIAG:npm install -g $pkg@latest failed (was $installed)"
+      echo "DIAG:npm install -g $pkg@$latest failed (was $installed)"
     fi
   done
-  [ -z "$updated" ] || echo "UPDATED:$updated"
 }
 
 tool_autoupdate_relay_output() {
@@ -486,14 +495,15 @@ tool_autoupdate_relay_output() {
   while IFS= read -r line; do
     case "$line" in
       DIAG:*) echo "TOOL_AUTOUPDATE: ${line#DIAG:}" ;;
-      UPDATED:*) updated="${line#UPDATED:}" ;;
+      UPDATED:*) updated="$updated ${line#UPDATED:}" ;;
     esac
   done < "$tmp"
   [ -z "$updated" ] || echo "BOOTSTRAP_INFO: tool-autoupdate updated$updated"
 }
 
-# Bounded exactly like fleet_sync: one background job, wall-clock timeout, no
-# output relayed until the job either finishes or is killed at the timeout.
+# Bounded exactly like fleet_sync: one background job, wall-clock timeout;
+# whatever the job already wrote (completed updates, diagnostics) is relayed
+# whether it finishes or is killed at the timeout.
 tool_autoupdate_sweep() {
   tool_autoupdate_enabled || return 0
   tool_autoupdate_due || return 0
@@ -513,6 +523,7 @@ tool_autoupdate_sweep() {
       kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
       [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+      tool_autoupdate_relay_output "$tmp"
       echo "TOOL_AUTOUPDATE: check timed out (timeout=${timeout}s elapsed=${elapsed}s)"
       rm -f "$tmp"
       return 0
@@ -1095,21 +1106,38 @@ treehouse_supports_lease() {
 # cannot be parsed into exactly one major.minor.patch triple is incompatible,
 # never assumed current, so a development or vendored build cannot pass a floor
 # it was never checked against.
-tool_version_at_least() {  # <tool> <min-version>
-  local tool=$1 min=$2 output parts major minor patch extra
-  local min_major min_minor min_patch min_extra
-  command -v "$tool" >/dev/null 2>&1 || return 1
-  output=$("$tool" --version 2>/dev/null) || return 1
-  parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
+# Extracts the first numeric major.minor.patch triple from a version string
+# ("v0.1.16", "backpass 0.1.16", "0.2.0-beta.1" -> "0 2 0"); fails when none.
+version_triple() {  # <string>
+  local parts major minor patch extra
+  parts=$(printf '%s\n' "$1" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
-  IFS='.' read -r min_major min_minor min_patch min_extra <<< "$min"
-  [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
-  [ "$major" -gt "$min_major" ] && return 0
-  [ "$major" -eq "$min_major" ] || return 1
-  [ "$minor" -gt "$min_minor" ] && return 0
-  [ "$minor" -eq "$min_minor" ] || return 1
-  [ "$patch" -ge "$min_patch" ]
+  printf '%s %s %s\n' "$major" "$minor" "$patch"
+}
+
+# Numeric major.minor.patch comparison (no `sort -V`: unavailable on macOS/BSD).
+# Prints -1, 0, or 1 for a<b, a=b, a>b; fails when either side is unparseable.
+version_cmp() {  # <a> <b>
+  local a b a1 a2 a3 b1 b2 b3 x y
+  a=$(version_triple "$1") || return 1
+  b=$(version_triple "$2") || return 1
+  read -r a1 a2 a3 <<< "$a"
+  read -r b1 b2 b3 <<< "$b"
+  for x in "$a1:$b1" "$a2:$b2" "$a3:$b3"; do
+    y=${x#*:}; x=${x%%:*}
+    if [ "$x" -lt "$y" ]; then echo -1; return 0; fi
+    if [ "$x" -gt "$y" ]; then echo 1; return 0; fi
+  done
+  echo 0
+}
+
+tool_version_at_least() {  # <tool> <min-version>
+  local tool=$1 min=$2 output cmp
+  command -v "$tool" >/dev/null 2>&1 || return 1
+  output=$("$tool" --version 2>/dev/null) || return 1
+  cmp=$(version_cmp "$output" "$min") || return 1
+  [ "$cmp" -ge 0 ]
 }
 
 x_mode_write_if_changed() {
