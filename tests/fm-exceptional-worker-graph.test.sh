@@ -242,6 +242,15 @@ at_cap = copy.deepcopy(valid)
 at_cap["engagement"]["call_budget"] = 3
 at_cap["engagement"]["calls_used"] = 3
 assert_valid(at_cap)
+
+over_used = copy.deepcopy(valid)
+over_used["engagement"]["calls_used"] = 4
+assert_invalid(over_used, "/engagement/calls_used")
+
+over_used_authorized = copy.deepcopy(over_used)
+over_used_authorized["engagement"]["call_budget"] = 5
+over_used_authorized["engagement"]["captain_authorized_extra_calls"] = True
+assert_valid(over_used_authorized)
 PY
   pass "exceptional-worker-graph schema accepts bounded graph packets, rejects unsafe shapes, and caps Fable calls at three without captain authorization"
 }

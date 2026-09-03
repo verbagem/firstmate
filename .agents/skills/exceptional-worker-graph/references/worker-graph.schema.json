@@ -47,7 +47,8 @@
       },
       "then": {
         "properties": {
-          "call_budget": { "maximum": 3 }
+          "call_budget": { "maximum": 3 },
+          "calls_used": { "maximum": 3 }
         }
       }
     },
@@ -170,26 +171,7 @@
     }
   },
   "x-firstmate-policy": {
-    "routine_work": "unchanged",
-    "fable_5_1": {
-      "eligible_roles": ["planner", "adjudicator"],
-      "default_call_budget": 3,
-      "outside_implementation_graph": true,
-      "forbidden_authority": [
-        "edit_project_files",
-        "invoke_project_tools",
-        "spawn_workers",
-        "bypass_dispatch_profile_or_quota_checks",
-        "merge_or_approve"
-      ]
-    },
-    "firstmate_validates_nodes_for": [
-      "existing_worker_support",
-      "quota_and_runway",
-      "project_authority",
-      "isolation",
-      "delivery_contract",
-      "safety_contract"
-    ]
+    "owner": "../SKILL.md",
+    "note": "Fable boundary, eligibility, and Firstmate node validation are defined only in SKILL.md; the call cap above is the machine-enforced part."
   }
 }
