@@ -317,6 +317,7 @@ Kimi continues to use the captain's normal Kimi home, including the existing con
 The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config.toml`, `python3` with `tomllib`, and `jq`; it validates but never serializes the captain's TOML and refuses before writing when the config is missing, malformed, or surprising or when either tool requirement is unavailable.
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
+For Pi and pi-signed ship and scout launches, `fm-spawn.sh` also loads the tracked `.pi/extensions/fm-task-recap.ts` widget, which renders `bin/fm-pi-recap.sh`'s sanitized task recap (title, phase, open blocker or decision, PR) below the crewmate's editor; secondmates never get it, and the `FM_RECAP_*` variables below carry its task identity ([runtime-backends.md](verification/runtime-backends.md#pi-task-recap) holds the live evidence).
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
