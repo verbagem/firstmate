@@ -88,7 +88,8 @@
 #          treehouse is also MISSING when its installed version lacks
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
-#          1.46.0 (structured pipeline attestation floor; see CONTRIBUTING.md).
+#          1.60.2 (the pipeline must rebind the PR-body attestation after each
+#          CI-repair push, or the Require no-mistakes gate stays red; see CONTRIBUTING.md).
 #          backpass is also MISSING when its installed version is older than
 #          BACKPASS_MIN (0.1.16), a compatibility floor in the same class as
 #          NO_MISTAKES_MIN (not an axi-family "current latest" floor), so a
@@ -1096,7 +1097,7 @@ if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
   BACKEND_TOOLS=""
 fi
 TOOLS="$BACKEND_TOOLS $COMMON_TOOLS"
-NO_MISTAKES_MIN=1.46.0
+NO_MISTAKES_MIN=1.60.2
 BACKPASS_MIN=0.1.16
 # AXI-FAMILY FLOOR POLICY. Every axi-family floor is the CURRENT LATEST published
 # version of that tool, captain-bumped periodically to keep the whole fleet on the
