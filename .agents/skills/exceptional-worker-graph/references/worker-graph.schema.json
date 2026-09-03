@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "properties": {
     "version": {
+      "type": "integer",
       "enum": [1]
     },
     "engagement": {
