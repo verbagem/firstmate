@@ -5,16 +5,15 @@
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
 # 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
-# 'MISSING: gh-axi (install: ...)', 'MISSING: lavish-axi (install: ...)',
-# 'MISSING: backpass (install: ...)', and 'BOOTSTRAP_INFO: ...' lines, so those
-# contracts are pinned verbatim. The cases are table-driven over the inputs that
-# vary: whether `treehouse get --help` advertises --lease, which (if any)
-# tasks-axi version is on PATH, whether tasks-axi update advertises
-# --archive-body, whether its mv help advertises multi-ID moves, whether
-# quota-axi is on PATH, whether the local backend config opts out of tasks-axi
-# backlog mutations, which no-mistakes version is on PATH, which backpass
-# version is on PATH, which gh-axi version is on PATH, and which lavish-axi
-# version is on PATH.
+# 'MISSING: gh-axi (install: ...)', 'MISSING: lavish-axi (install: ...)', and
+# 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
+# are table-driven over the inputs that vary: whether `treehouse get --help`
+# advertises --lease, which (if any) tasks-axi version is on PATH, whether
+# tasks-axi update advertises --archive-body, whether its mv help advertises
+# multi-ID moves, whether quota-axi is on PATH,
+# whether the local backend config opts out of tasks-axi backlog mutations,
+# which no-mistakes version is on PATH, which gh-axi version is on PATH, and
+# which lavish-axi version is on PATH.
 # Dedicated fleet-sync cases pin the computed bootstrap timeout, explicit
 # override, blank-env defaulting, partial-output relay, and pre-launch timeout
 # scan.
@@ -80,21 +79,12 @@ SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_NO_MISTAKES_VERSION:-no-mistakes version v1.60.2 (fake) 2026-06-27T00:02:18Z}"
+  printf '%s\n' "${FM_FAKE_NO_MISTAKES_VERSION:-no-mistakes version v1.46.0 (fake) 2026-06-27T00:02:18Z}"
   exit 0
 fi
 exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
-  cat > "$fakebin/backpass" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --version ] || [ "${1:-}" = -v ]; then
-  printf '%s\n' "${FM_FAKE_BACKPASS_VERSION:-0.1.16}"
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/backpass"
   add_tasks_axi "$fakebin" "0.2.4"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
@@ -342,369 +332,13 @@ test_no_mistakes_min_version() {
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
     esac
   done <<'ROWS'
-minimum no-mistakes version is accepted^no-mistakes version v1.60.2 (fake)^empty
-newer no-mistakes minor is accepted^no-mistakes version v1.61.0 (fake)^empty
+minimum no-mistakes version is accepted^no-mistakes version v1.46.0 (fake)^empty
+newer no-mistakes minor is accepted^no-mistakes version v1.47.0 (fake)^empty
 newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
-two-digit no-mistakes major is accepted^no-mistakes version v10.0.0 (fake)^empty
-two-digit no-mistakes minor is accepted^no-mistakes version v1.100.0 (fake)^empty
-older no-mistakes patch reports an upgrade^no-mistakes version v1.60.1 (fake)^missing
-pre-restamp no-mistakes reports an upgrade^no-mistakes version v1.53.0 (fake)^missing
+older no-mistakes patch reports an upgrade^no-mistakes version v1.45.4 (fake)^missing
 unparseable no-mistakes version reports an upgrade^no-mistakes development build^missing
 ROWS
   pass "bootstrap enforces no-mistakes minimum version"
-}
-
-test_backpass_min_version() {
-  local label version mode case_dir fakebin out missing n
-  missing='MISSING: backpass (install: npm install -g backpass)'
-  n=0
-  while IFS='^' read -r label version mode; do
-    [ -n "$label" ] || continue
-    n=$((n + 1))
-    case_dir="$TMP_ROOT/backpass-$n"
-    mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-    fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_BACKPASS_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
-    case "$mode" in
-      empty)
-        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
-      missing)
-        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
-    esac
-  done <<'ROWS'
-minimum backpass version is accepted^0.1.16^empty
-newer backpass minor is accepted^0.1.17^empty
-newer backpass major is accepted^1.0.0^empty
-older backpass patch reports an upgrade^0.1.15^missing
-unparseable backpass version reports an upgrade^development build^missing
-ROWS
-  pass "bootstrap enforces backpass minimum version"
-}
-
-test_backpass_absent_reports_missing() {
-  local case_dir fakebin out missing
-  missing='MISSING: backpass (install: npm install -g backpass)'
-  case_dir="$TMP_ROOT/backpass-absent"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  rm -f "$fakebin/backpass"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "$missing" "an absent backpass must report MISSING like any other common tool"
-  pass "bootstrap reports backpass MISSING when absent from PATH"
-}
-
-# Fake npm for the tool-autoupdate sweep: reports each package's fake
-# "installed" and "latest" versions via env vars, a controllable publish date
-# for the "latest" version (default old enough to clear the 14-day supply-chain
-# hold), and either succeeds or fails `npm install -g` per
-# FM_FAKE_NPM_INSTALL_FAIL.
-add_fake_npm() {
-  local fakebin=$1
-  cat > "$fakebin/npm" <<'SH'
-#!/usr/bin/env bash
-if [ "$1" = list ] && [ "$2" = -g ]; then
-  pkg=$3
-  case "$pkg" in
-    gh-axi) inst=${FM_FAKE_NPM_GH_AXI_INSTALLED:-} ;;
-    backpass) inst=${FM_FAKE_NPM_BACKPASS_INSTALLED:-} ;;
-    *) exit 1 ;;
-  esac
-  [ -n "$inst" ] || exit 1
-  printf '/x/lib\n'
-  printf '└── %s@%s\n' "$pkg" "$inst"
-  exit 0
-fi
-if [ "$1" = view ] && [ "$3" = version ]; then
-  case "$2" in
-    gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-} ;;
-    backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-} ;;
-    *) exit 1 ;;
-  esac
-  [ -n "$latest" ] || exit 1
-  printf '%s\n' "$latest"
-  exit 0
-fi
-if [ "$1" = view ] && [ "$3" = time ]; then
-  pkg=$2
-  case "$pkg" in
-    gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-}; iso=${FM_FAKE_NPM_GH_AXI_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
-    backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-}; iso=${FM_FAKE_NPM_BACKPASS_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
-    *) exit 1 ;;
-  esac
-  [ -n "$latest" ] || exit 1
-  printf "{ '%s': '%s' }\n" "$latest" "$iso"
-  exit 0
-fi
-if [ "$1" = install ]; then
-  [ -z "${FM_FAKE_NPM_INSTALL_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_NPM_INSTALL_LOG"
-  case "$3" in "${FM_FAKE_NPM_INSTALL_HANG:-}"@*) sleep 30 ;; esac
-  [ "${FM_FAKE_NPM_INSTALL_FAIL:-0}" != 1 ]
-  exit $?
-fi
-exit 1
-SH
-  chmod +x "$fakebin/npm"
-}
-
-test_tool_autoupdate_disabled_by_default() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-default-off"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # config/tool-autoupdate is absent: this is the plain, unmodified template
-  # contract every non-opted-in home keeps.
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "TOOL_AUTOUPDATE" "an un-opted-in home must never run the auto-update sweep"
-  assert_not_contains "$out" "tool-autoupdate updated" "an un-opted-in home must never auto-install anything"
-  pass "bootstrap: tool auto-update stays off without an explicit config/tool-autoupdate opt-in"
-}
-
-test_tool_autoupdate_updates_outdated_and_skips_current() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-mixed"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.16 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "an outdated opted-in package must be auto-updated"
-  assert_contains "$out" "gh-axi@0.1.35" "the update summary must name the outdated package and its new version"
-  assert_not_contains "$out" "backpass@0.1.16" "an already-current package must not appear in the update summary"
-  [ -f "$case_dir/home/state/.tool-autoupdate-checked" ] || fail "the 24h throttle marker must be written after a run"
-  pass "bootstrap: tool auto-update installs an outdated package and leaves a current one alone"
-}
-
-test_tool_autoupdate_installs_pinned_verified_version() {
-  local case_dir fakebin out log
-  case_dir="$TMP_ROOT/tool-autoupdate-pinned"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  log="$case_dir/npm-install.log"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_LOG="$log" \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "gh-axi@0.1.35" "the reported version must be the one that was installed"
-  assert_contains "$(cat "$log")" "install -g gh-axi@0.1.35" "the install must pin the exact version whose publish date was age-checked, not re-resolve @latest"
-  pass "bootstrap: tool auto-update installs the exact version it age-checked"
-}
-
-test_tool_autoupdate_never_downgrades_a_newer_install() {
-  local case_dir fakebin out log
-  case_dir="$TMP_ROOT/tool-autoupdate-newer-pinned"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  log="$case_dir/npm-install.log"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_LOG="$log" \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.2.0-beta.1 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.16 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "tool-autoupdate updated" "an install that sorts above the registry's latest must be left alone"
-  assert_not_contains "$out" "TOOL_AUTOUPDATE:" "a deliberately newer install is not a failure to report"
-  [ ! -e "$log" ] || fail "npm install must never run for a newer or equal install (ran: $(cat "$log"))"
-  pass "bootstrap: tool auto-update never downgrades a deliberately newer install"
-}
-
-test_tool_autoupdate_holds_when_versions_cannot_be_compared() {
-  local case_dir fakebin out log
-  case_dir="$TMP_ROOT/tool-autoupdate-unparseable"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  log="$case_dir/npm-install.log"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_LOG="$log" \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=nightly \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "TOOL_AUTOUPDATE:" "an unparseable registry version must surface as a diagnostic"
-  assert_not_contains "$out" "tool-autoupdate updated" "an unparseable version must not be treated as behind"
-  [ ! -e "$log" ] || fail "npm install must not run when the versions cannot be compared"
-  pass "bootstrap: tool auto-update holds instead of assuming behind when versions cannot be compared"
-}
-
-test_tool_autoupdate_malformed_age_days_falls_back_to_default() {
-  local case_dir fakebin out recent
-  case_dir="$TMP_ROOT/tool-autoupdate-bad-age-days"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14d \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
-    "$ROOT/bin/fm-bootstrap.sh") || fail "a malformed FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS must never abort bootstrap (exit $?)"
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "a malformed age value must fall back to the default (0), not hold or abort"
-  pass "bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS instead of aborting"
-}
-
-test_tool_autoupdate_timeout_relays_completed_updates() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-timeout"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # gh-axi updates first; the backpass install then hangs past the timeout.
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_TIMEOUT=2 FM_FAKE_NPM_INSTALL_HANG=backpass \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.17 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "TOOL_AUTOUPDATE: check timed out" "a hung install must hit the wall-clock timeout"
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "updates completed before the timeout must still be reported"
-  assert_not_contains "$out" "backpass@0.1.17" "the interrupted install must not be reported as completed"
-  pass "bootstrap: tool auto-update relays already-completed updates when the sweep times out"
-}
-
-test_tool_autoupdate_compares_multidigit_components_numerically() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-multidigit"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=9.9.9 FM_FAKE_NPM_GH_AXI_LATEST=10.0.0 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.10.0 FM_FAKE_NPM_BACKPASS_LATEST=0.9.9 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "gh-axi@10.0.0" "9.9.9 must sort below 10.0.0 and be updated"
-  assert_not_contains "$out" "backpass@0.9.9" "0.10.0 must sort above 0.9.9 and never be downgraded"
-  pass "bootstrap: tool auto-update compares multi-digit version components numerically"
-}
-
-test_tool_autoupdate_malformed_timeout_falls_back_to_default() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-bad-timeout"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_TIMEOUT=60s \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
-  assert_not_contains "$out" "integer expression expected" "a malformed timeout must fall back to the default, not break the deadline check"
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "the sweep must still complete under the default timeout"
-  pass "bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_TIMEOUT instead of running unbounded"
-}
-
-test_tool_autoupdate_installs_same_day_release_by_default() {
-  local case_dir fakebin out recent
-  case_dir="$TMP_ROOT/tool-autoupdate-trusted-default"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # The publish-age gate defaults to 0 for this curated, captain-trusted
-  # package list, so a release published seconds ago is still installed.
-  recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "the default age gate (0) must not hold a same-day release for this trusted list"
-  assert_contains "$out" "gh-axi@0.1.35" "a same-day release must still be installed under the default age gate"
-  pass "bootstrap: tool auto-update installs a same-day release by default for the trusted package list"
-}
-
-test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set() {
-  local case_dir fakebin out recent
-  case_dir="$TMP_ROOT/tool-autoupdate-recent-hold"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # An operator who sets FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS explicitly restores
-  # the standing supply-chain wait for their own opted-in auto-update.
-  recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "tool-autoupdate updated" "an explicit age gate must hold a release still inside its window"
-  assert_not_contains "$out" "gh-axi@0.1.35" "a held release must not appear in any update summary"
-  pass "bootstrap: tool auto-update holds a release still inside an explicitly configured age window"
-}
-
-test_tool_autoupdate_respects_24h_throttle() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-throttled"
-  mkdir -p "$case_dir/home/config" "$case_dir/home/state"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  date +%s > "$case_dir/home/state/.tool-autoupdate-checked"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "TOOL_AUTOUPDATE" "a fresh marker must suppress the registry check entirely"
-  assert_not_contains "$out" "tool-autoupdate updated" "a fresh marker must skip the install, not just its diagnostics"
-  pass "bootstrap: tool auto-update rate-limits registry checks to once per 24h"
-}
-
-test_tool_autoupdate_reports_install_failure() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-install-fail"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_FAIL=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "TOOL_AUTOUPDATE:" "a failed npm install must surface as an actionable diagnostic"
-  assert_not_contains "$out" "tool-autoupdate updated" "a failed install must not be reported as a success"
-  pass "bootstrap: tool auto-update reports a failed npm install as an actionable diagnostic"
-}
-
-test_tool_autoupdate_reports_npm_unavailable() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-no-npm"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "TOOL_AUTOUPDATE:" "a missing npm must be reported, not silently skipped"
-  pass "bootstrap: tool auto-update reports when npm itself is unavailable"
 }
 
 test_gh_axi_min_version() {
@@ -885,7 +519,7 @@ test_orca_backend_gates_orca_tool_only_when_selected() {
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' orca > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" orca)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ "$out" = "$missing_orca" ] || fail "backend=orca should require only the Orca-specific missing tool, got: $out"
 
@@ -1267,17 +901,17 @@ exit 1
 SH
   chmod +x "$fakebin/gh"
 
-  all_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  all_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$all_out" "MISSING: node (install:" "the unsplit run lost its local diagnostic"
   assert_contains "$all_out" "NEEDS_GH_AUTH" "the unsplit run lost its network diagnostic"
 
-  skip_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  skip_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=skip "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$skip_out" "MISSING: node (install:" "the local half lost its own diagnostic"
   assert_not_contains "$skip_out" "NEEDS_GH_AUTH" "the local half still made a network call"
 
-  only_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  only_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$only_out" "NEEDS_GH_AUTH" "the network half lost its own diagnostic"
   assert_not_contains "$only_out" "MISSING: node" "the network half repeated the local half's work"
@@ -1288,7 +922,7 @@ SH
 
   # A typo must never silently drop a safety sweep, so anything unrecognized
   # resolves to the complete run.
-  [ "$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  [ "$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=sikp "$ROOT/bin/fm-bootstrap.sh")" = "$all_out" ] \
     || fail "an unrecognized FM_BOOTSTRAP_NETWORK value did not fall back to the complete run"
   pass "bootstrap: FM_BOOTSTRAP_NETWORK partitions one run into local and network halves"
@@ -1487,6 +1121,12 @@ unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harn
 unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
 unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:max
 unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:xhigh
+native pi ultra is accepted^{"rules":[],"default":{"harness":"pi","model":"codex-native/gpt-6-astra","effort":"ultra"}}^empty^
+native signed pi ultra is accepted^{"rules":[{"when":"native reasoning","use":{"harness":"pi-signed","model":"codex-native/gpt-6-astra","effort":"ultra"}}]}^empty^
+ordinary pi ultra is refused^{"default":{"harness":"pi","model":"openai-codex/gpt-6-astra","effort":"ultra"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
+missing native model ultra is refused^{"default":{"harness":"pi","effort":"ultra"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
+empty native model ultra is refused^{"default":{"harness":"pi","model":"codex-native/","effort":"ultra"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
+codex harness ultra is refused^{"default":{"harness":"codex","model":"codex-native/gpt-6-astra","effort":"ultra"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:ultra
 pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
 pi-signed max effort is accepted^{"rules":[{"when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
 muse shared efforts are accepted^{"rules":[{"when":"muse low","use":{"harness":"muse","effort":"low"}},{"when":"muse medium","use":{"harness":"muse","effort":"medium"}},{"when":"muse high","use":{"harness":"muse","effort":"high"}},{"when":"muse xhigh","use":{"harness":"muse","effort":"xhigh"}},{"when":"muse max","use":{"harness":"muse","effort":"max"}}]}^empty^
@@ -1516,22 +1156,6 @@ ROWS
 
 test_bootstrap_reporting
 test_no_mistakes_min_version
-test_backpass_min_version
-test_backpass_absent_reports_missing
-test_tool_autoupdate_disabled_by_default
-test_tool_autoupdate_updates_outdated_and_skips_current
-test_tool_autoupdate_installs_pinned_verified_version
-test_tool_autoupdate_never_downgrades_a_newer_install
-test_tool_autoupdate_holds_when_versions_cannot_be_compared
-test_tool_autoupdate_malformed_age_days_falls_back_to_default
-test_tool_autoupdate_timeout_relays_completed_updates
-test_tool_autoupdate_compares_multidigit_components_numerically
-test_tool_autoupdate_malformed_timeout_falls_back_to_default
-test_tool_autoupdate_installs_same_day_release_by_default
-test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set
-test_tool_autoupdate_respects_24h_throttle
-test_tool_autoupdate_reports_install_failure
-test_tool_autoupdate_reports_npm_unavailable
 test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version

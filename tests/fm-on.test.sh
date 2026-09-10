@@ -12,29 +12,17 @@ TMP_ROOT=$(fm_test_tmproot fm-on)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 cleanup() {
-  local worker_pid _
+  local pid
   if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
-    worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid" 2>/dev/null || true)
-    if [ -n "$worker_pid" ]; then
-      kill "$worker_pid" 2>/dev/null || true
-      # Wait for the worker to actually exit before removing the tree. A live
-      # worker still flushing state into remote-jobs races rm -rf, which then
-      # fails with "Directory not empty" and, as the trap's last command under
-      # set -e, flips an otherwise-passing test to exit 1.
-      for _ in $(seq 1 100); do
-        kill -0 "$worker_pid" 2>/dev/null || break
-        sleep 0.05
-      done
-    fi
+    pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
+    # Stop the detached Linux supervisor's whole process group and wait for its
+    # cleanup before removing the fixture tree.
+    # shellcheck source=bin/fm-remote-job-lib.sh
+    . "$ROOT/bin/fm-remote-job-lib.sh"
+    FM_REMOTE_JOB_STATE="$TMP_ROOT/remote-jobs"
+    fm_remote_job_stop_worker_tree "$pid" 2>/dev/null || true
   fi
-  # Bounded retry so any writer that outlives the wait cannot flip the result.
-  # Removal here is teardown, not an asserted contract (tests/fm-teardown.test.sh
-  # owns teardown behavior), so a benign leftover is swallowed, not propagated.
-  for _ in $(seq 1 20); do
-    rm -rf -- "$TMP_ROOT" 2>/dev/null && break
-    sleep 0.05
-  done
-  return 0
+  rm -rf -- "$TMP_ROOT"
 }
 trap cleanup EXIT
 LOCAL_HOME="$TMP_ROOT/local-home"
@@ -80,7 +68,7 @@ case "\${1:-}:\${2:-}" in
 esac
 SH
 cp "$ROOT/bin/fm-remote-doctor.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
-  "$ROOT/bin/fm-backend.sh" "$REMOTE_ROOT/bin/"
+  "$ROOT/bin/fm-remote-herdr-owner-lib.sh" "$ROOT/bin/fm-backend.sh" "$REMOTE_ROOT/bin/"
 mkdir -p "$REMOTE_ROOT/bin/backends"
 cp "$ROOT/bin/backends/herdr.sh" "$REMOTE_ROOT/bin/backends/herdr.sh"
 cat > "$REMOTE_ROOT/bin/fm-mutate.sh" <<'SH'

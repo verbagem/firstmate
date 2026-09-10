@@ -21,23 +21,10 @@ export FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims"
 pe()   { FM_HOME="$1" "$ROOT/bin/fm-procevent.sh" "${@:2}"; }
 when() { FM_HOME="$1" "$ROOT/bin/fm-procevent-when.sh" "${@:2}"; }
 
-# Every home this suite arms is tracked so teardown can stop any runner still
-# blocked on a condition that never fires.
-WHEN_HOMES=()
-when_teardown() {
-  local home seen=$'\n'
-  for home in ${WHEN_HOMES[@]+"${WHEN_HOMES[@]}"}; do
-    case "$seen" in
-      *$'\n'"$home"$'\n'*) continue ;;
-    esac
-    seen+="$home"$'\n'
-    FM_HOME="$home" "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  done
-  fm_test_cleanup
-}
-trap when_teardown EXIT
-
-new_home() { mkdir -p "$1/state"; WHEN_HOMES+=("$1"); }
+# Every home this suite arms is registered with tests/lib.sh, which sweeps it
+# from every cleanup path so a runner still blocked on a condition that never
+# fires cannot survive the run.
+new_home() { mkdir -p "$1/state"; fm_test_track_procevent_home "$1"; }
 
 wake_payloads() { awk -F '\t' '{print $5}' "$1/state/.wake-queue" 2>/dev/null; }
 
@@ -90,24 +77,7 @@ exit "$exit_code"
 SH
 chmod +x "$ACT"
 
-# grep -c prints 0 AND exits 1 on no-match, so a bare `|| echo 0` fires too and
-# yields "0\n0" for an existing-but-empty file. Swallow the exit code instead.
-count_lines() { if [ -e "$1" ]; then grep -c . "$1" || true; else echo 0; fi; }
-
-# The helper above is load-bearing for every "ran exactly once" assertion below,
-# so pin its three cases: a missing file, an existing-but-empty file, and a file
-# with content each yield exactly one integer.
-CL="$TMP_ROOT/count-lines"; mkdir -p "$CL"
-: > "$CL/empty"; printf 'a\nb\nc\n' > "$CL/three"
-expect_count() {  # <fixture> <expected>
-  local got; got=$(count_lines "$CL/$1")
-  [ "$got" = "$2" ] || fail "count_lines on a $1 file yielded '$got', expected exactly '$2'"
-}
-expect_count missing 0
-expect_count empty 0
-expect_count three 3
-pass "count_lines yields exactly one integer for missing, empty, and non-empty files"
-
+count_lines() { [ -e "$1" ] && grep -c . "$1" || echo 0; }
 
 # --- arm binds the pair and refuses a duplicate ------------------------------
 H="$TMP_ROOT/h-arm"; new_home "$H"

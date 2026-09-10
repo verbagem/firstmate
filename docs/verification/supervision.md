@@ -48,6 +48,13 @@ That cold positional-prompt check established eventual custom-message delivery, 
 The installed pi-signed 0.82.0 wrapper repeated the shared Pi primary extension and session-start path on 2026-07-27.
 [`runtime-backends.md`](runtime-backends.md#tmux) owns the shared-ancestry evidence and authoritative selection-marker boundary.
 
+### omp (Oh My Pi) native delivery, 2026-09-05
+
+The omp Run-tier adapter was verified on 2026-09-05 with omp 18.1.11 and the openai-codex `gpt-6-astra` model through `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh`, which drives a real omp in its JSON-RPC stdio mode inside an isolated lab clone.
+Both tracked `.omp/extensions/*.ts` files loaded by auto-discovery alone (no `-e`, no trust dialog), `before_agent_start` returned the digest as a persistent context message, the model quoted the lab's `SESSION START -` heading back on its first turn, `state/.session-start-complete` was recorded, and `state/.lock` named the omp process, so ancestry detection identified the markerless binary.
+omp's `session_start` payload carries no reason field, so the adapter derives the source: the first start of the process is `startup` (or `resume` from a `--continue`/`--resume` launch line) and a later in-process start is `clear`; `tests/fm-omp-harness.test.sh` pins that mapping over a fake omp API.
+A file named both by `-e` and by auto-discovery loads twice (two factory calls, doubled `session_stop` continuations), which is why the secondmate launch names no `-e` and the per-task worker extension lives in `state/`.
+
 ### Run-tier source vocabulary and context-reset injection
 
 The run tier depends on three facts only the vendor can supply: the session-open source it reports, whether hook stdout reaches model context on a context-RESET open rather than only a cold one, and whether a worker the hook detaches survives the hook returning.
@@ -204,6 +211,7 @@ Each pass polled `state/<id>.busy-state` while a real turn ran.
 | Harness | Version verified | Semantic source | Observed result |
 | --- | --- | --- | --- |
 | Pi | 0.82.0 | Extension `agent_start` / `agent_settled` with `ctx.isIdle()` | The spawn seed `busy source=fm-spawn`, then `busy source=pi-ext event=agent-start`, then `idle source=pi-ext event=agent-settled`; the turn-end marker was still touched. |
+| omp | 18.1.11 | Extension `agent_start` / `agent_end` without `willContinue` | Live Herdr scout on `openai-codex/gpt-6-astra` (2026-09-05): the spawn seed `busy source=fm-spawn`, then `busy source=omp-ext event=agent-start`, then `idle source=omp-ext event=agent-end` at the natural end of the brief; a steer through `fm-send` reopened `busy … agent-start`, and a control-plane interrupt closed it with `idle … agent-end` (omp fires `agent_end` on an interrupted turn). `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end`. |
 | OpenCode | 1.17.18 | Plugin `session.status` | In a real TUI pane: seed, then `busy source=opencode-plugin event=session-busy`, then `idle source=opencode-plugin event=session-status-idle`. |
 | Claude | 2.1.220 (Claude Code) | Hooks `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd` | `UserPromptSubmit` fired for the argv launch prompt and each steer, and `Stop` closed every completed turn. A mid-stream Escape interrupt fired no closing hook, which is why the firstmate-controlled clear exists. `StopFailure` and `SessionEnd` are wired from the four hook names present in the installed binary; only the abnormal paths they cover were not reproduced live. |
 | Codex | codex-cli 0.145.0 | None usable | See below; classifies `unknown codex-unverified`. |
@@ -232,7 +240,7 @@ tests/fm-crew-state.test.sh
 
 ## Turn-end guard
 
-The blocking and bounded-follow-up mechanisms were validated across six harnesses on 2026-07-08 through 2026-08-13, with Claude's replacement Stop-owned path revalidated on 2026-07-24 and Cursor's stop-hook park validated on 2026-08-13.
+The blocking and bounded-follow-up mechanisms were validated across seven harnesses on 2026-07-08 through 2026-09-05, with Claude's replacement Stop-owned path revalidated on 2026-07-24, Cursor's stop-hook park validated on 2026-08-13, and omp's blocking `session_stop` hook validated on 2026-09-05.
 
 | Harness | Version verified | Mechanism | Observed result |
 | --- | --- | --- | --- |
@@ -240,6 +248,7 @@ The blocking and bounded-follow-up mechanisms were validated across six harnesse
 | Codex | 0.142.1 | Blocking `Stop` hook | Hook process root stayed anchored to the trusted checkout and one continuation ran. |
 | OpenCode | 1.17.6 | Passive `session.idle` callback | Throwing could not block, while `promptAsync` scheduled one TUI follow-up; headless remained fail-open. |
 | Pi | 0.80.5 | Passive `agent_settled` callback | Exactly one guard follow-up ran for an unhealthy cycle, with no recursion across tool turns. |
+| omp | 18.1.11 | Blocking `session_stop` hook returning `{ continue: true, additionalContext }` | In the isolated rpc lab (2026-09-05), the successor watcher was frozen with `SIGSTOP` until its beacon passed the lab `FM_GUARD_GRACE` of 20s while its arm child stayed attached (a killed watcher closes its arm child and the extension re-arms before the guard can fire); the next turn end raised the guard, the guard spy recorded `rc=2` followed by a stop carrying `stop_hook_active: true`, omp compelled a continuation carrying the `turn-end-guard` operational text, the `fm_watch_arm_omp` invocation count then rose to at least two, and a live watcher held the home lock after the thaw; the flagged stop was allowed, so exactly one continuation ran. `session_stop` never fired for an interrupted turn. |
 | Grok | 0.2.112 native and 0.2.73 pre-native | Running-payload adaptive `Stop` | Native false-to-true continuation stayed in one process with two model turns and zero resume launches; the field-absent pre-native process launched exactly one guarded resume. |
 | Cursor | 2026.08.11-e8db854 | Awaited `stop` hook park returning one `followup_message` | Exit 2 ended the turn normally, proving it cannot block; a returned follow-up ran a genuine second turn; a sleeping hook held the boundary open and the wake landed after it; `loop_limit` stopped the hook being invoked at its ceiling. |
 
@@ -320,41 +329,6 @@ Harness identity is read from the executable path and `argv[0]` as well as the c
 `tests/fm-watch-arm.test.sh` runs real watcher and arm cycles against durable on-disk state to verify that a delivered reason survives until post-handling acknowledgement and stops replaying after acknowledgement, while an unrelated queue append cannot make a watcher cycle that delivered nothing look successful.
 The same suite ingests a keyed remote-secondmate parent reply through the real adapter, establishes the incremental OPEN DECISIONS cursor, interrupts supervision, and proves re-arm replays every unacknowledged queue row plus the still-open decision through the ordinary drain path.
 It also covers decision-only recovery, interrupted handling, handling-window generation reuse, non-fatal moved-generation acknowledgement with sequence-bounded consumption, and a persistent successor remaining live after recovery is acknowledged.
-### Pi rearm follow-up storm regression (2026-08-20)
-
-A live Pi restart is still necessary after this fix lands: the already-enqueued Pi follow-up messages are outside Firstmate's durable wake queue, and the current Pi process has already loaded the old extension code.
-The restart should happen only after the landed extension fix is available, and this verification did not perform that restart.
-Validation limits are up front: one combined four-suite runner invocation had an intermittent `tests/fm-watch-arm.test.sh` failure that did not reproduce in immediate direct and single-runner reruns, and `tests/fm-pi-primary-types.test.sh` self-skipped because `tsc` is absent in this worktree.
-`tests/fm-pi-watch-extension.test.sh` verified that a quiet Pi `check: rearm-resurface` continuity handoff — one where `bin/fm-wake-drain.sh --captain-work-pending` reports an empty durable wake queue, no open decisions, and no unread informational status lines — produces zero follow-ups across repeated child-close cycles, while real `signal`, `stale`, `check`, `heartbeat`, queued recovery, open-decision, and unread-note re-arm reasons still deliver exactly once through the real drain peek.
-`tests/fm-turnend-guard.test.sh` verified that repeated healthy Pi `agent_settled` turn boundaries remain silent while unhealthy boundaries still inject one bounded guard follow-up.
-Acceptance criteria for that regression were: stop Pi follow-up storms from empty `check: rearm-resurface` recovery handoffs, preserve exactly-one delivery for real durable wake rows and explicit failure or unhealthy repair conditions, keep session-generation and duplicate-owner behavior intact, and state whether a live Pi restart is still needed for already-enqueued messages.
-The focused command `tests/fm-pi-watch-extension.test.sh` exited 0 and included these new pass lines:
-
-```text
-ok - Pi empty rearm-resurface cycles stay silent while a successor remains owned
-ok - Pi real signal, stale, check, heartbeat, queued recovery, open-decision, and unread-note reasons still deliver once
-ok - Pi session transitions use a generation owner across /new /resume /fork, stale callbacks, and quit
-```
-
-The focused command `tests/fm-turnend-guard.test.sh` exited 0 and included these pass lines:
-
-```text
-ok - .pi primary extension: no-tool and multi-tool runs each inject exactly one guard follow-up
-ok - .pi primary extension: healthy settled turns stay silent across repeated assistant turns
-ok - .pi primary extension: delivery failure resets the logical-run latch
-```
-
-The focused command `tests/fm-wake-drain-unread-status.test.sh` exited 0 and included these new pass lines covering the shared `--captain-work-pending` peek contract:
-
-```text
-ok - the captain-work peek reports queue rows, open decisions, and unread notes without consuming them
-ok - fresh-state peeks before the first drain leave the unread note presentable
-```
-
-The focused command `tests/fm-watch-arm.test.sh` exited 0 directly and exited 0 through `bin/fm-test-run.sh tests/fm-watch-arm.test.sh`, preserving the shared durable recovery contract.
-A combined `bin/fm-test-run.sh tests/fm-pi-watch-extension.test.sh tests/fm-turnend-guard.test.sh tests/fm-watch-arm.test.sh tests/fm-pi-primary-types.test.sh` run first failed once in `tests/fm-watch-arm.test.sh` with `not ok - re-arm stayed live instead of surfacing durable wakes and the still-open remote decision`; immediate direct and single-runner reruns of `tests/fm-watch-arm.test.sh` both passed, so the failure is recorded as intermittent rather than hidden.
-`tests/fm-pi-primary-types.test.sh` self-skipped with `skip: tsc not found for Pi extension typecheck` in this worktree environment.
-`bin/fm-doc-audience-check.sh`, `PATH="$PWD/.validation-bin:$PATH" bin/fm-lint.sh` with local pinned `actionlint` 1.7.12, and `git diff --check` all exited 0.
 
 The Claude product live path ran with Claude Code 2.1.219 on 2026-07-24:
 
@@ -395,7 +369,7 @@ fm-doc-audience-check: ok surfaces=61 local_links=174
 FM_TEST_SUMMARY total=4 failed=0 skipped_gate=0 duration_ms=102585
 ```
 
-The model-aware pull-guard predicate correction (`bin/fm-guard.sh` no longer reports a false watcher-down mid-turn under the Claude Stop auto-arm model, where the watcher runs only between turns) was verified on 2026-08-04 with the installed ShellCheck 0.11.0 and the same isolated behavior suites.
+The fresh-beacon portion of the model-aware pull-guard predicate (`bin/fm-guard.sh` accepts a beacon within grace without a live watcher under the Claude Stop auto-arm model) was verified on 2026-08-04 with the installed ShellCheck 0.11.0 and the same isolated behavior suites.
 
 ```sh
 bin/fm-lint.sh
@@ -490,11 +464,12 @@ grok 0.2.103 (89c3d36fb6f1) [stable]
 | Codex | `FM_CODEX_LIVE_E2E=1 tests/fm-codex-continuity-live-e2e.test.sh` | The one-second foreground checkpoint returned without switching to the arm wrapper. |
 | OpenCode | `FM_OPENCODE_LIVE_E2E=1 tests/fm-opencode-primary-live-e2e.test.sh` | A verified successor existed before prompt handling, with no model re-arm or turn-end fallback. |
 | Pi | `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` | One initial tool call led to extension-owned successors and clean child retirement on exit. |
+| omp | `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` | One initial `fm_watch_arm_omp` invocation (the openai-codex model reaches extension tools through omp's `xd://` virtual-file bridge, a `write` to `xd://fm_watch_arm_omp`, counted as the same invocation) started a live watcher; an actionable close spawned a ledger-linked successor and woke main exactly once; the lab is reaped by path, and omp 18.1.11 did not exit within 30s of its rpc stdin closing, recorded as a note. omp 18.1.11, 2026-09-05. |
 | Grok | `FM_GROK_LIVE_E2E=1 tests/fm-grok-continuity-live-e2e.test.sh` | Native task completion surfaced the actionable close and the cycle ledger recorded `reason=actionable-signal`. |
 
 Pi 0.81.1 repeated the continuity and clean-exit lifecycle on 2026-07-23 after the Calm presentation changes.
 
-Pi same-process session-transition ownership was verified on 2026-07-27 against the tracked extension with a faithful in-process factory rebind (module cache retained, real arm children):
+Pi same-process session-transition ownership was verified on 2026-09-01 against the tracked extension with provider-free public lifecycle events, retained and fresh extension-module rebinds, and real arm children:
 
 ```sh
 pi --version
@@ -502,9 +477,14 @@ tests/fm-pi-watch-extension.test.sh
 tests/fm-pi-primary-types.test.sh
 ```
 
-Observed guarantee: after ordinary `session_shutdown` for `/new`, `/resume`, and `/fork`, plus same-instance shutdown-plus-start, the replacement generation armed again without a Pi restart and without the `watcher: not armed - Pi session is shutting down` refusal.
+Observed guarantee: after ordinary `session_shutdown` for `/new`, `/resume`, `/fork`, and reload, plus same-instance shutdown-plus-start, an owning `session_start` armed the replacement generation before any model turn and without the `watcher: not armed - Pi session is shutting down` refusal.
+A fresh module rebind also received exactly once the actionable close whose first delivery was still in flight at shutdown, while retaining one live successor.
 Stale prior-generation tool callbacks could not mutate the active child, repeated transitions kept exactly one live arm cycle, and terminal `quit` still refused late rearm.
+The strict no-emit check used the installed Pi SDK declarations to hold the lifecycle event contract.
 Plain Pi and pi-signed share the same tracked `.pi/extensions/fm-primary-pi-watch.ts` path, so both inherit the generation owner; other primary harnesses are not applicable because they do not use this Pi extension lifecycle.
+
+On 2026-09-02 the same suite, the strict typecheck, and the credential-free real-SDK guard were rerun against `@earendil-works/pi-coding-agent` 0.84.4 after the extension stopped waiting for `before_agent_start` before settling a main delivery; [`runtime-backends.md`](runtime-backends.md#2026-09-02-streaming-time-watcher-delivery) owns the exact commands and output.
+Observed guarantee: a wake delivered while main was streaming was followed by a verified successor and by delivery of the next actionable close, a replacement replayed only the follow-up Pi had not consumed, an exhausted restoration delivered its typed failure without launching an arm past the retry bound, and a verified successor that failed while a branch settlement still held its wake took the ordinary bounded retry once that delivery settled.
 
 The once-per-generation recovery bound and immediate handling-successor poll were verified on 2026-08-21 with the tracked Pi extension, real watcher processes, and an isolated home.
 The regression forced handling confirmation to fail, observed one recovery follow-up across the former repeat window, confirmed the successor remained live, and then proved a separate handling successor durably queued a crew event within the bounded poll window.

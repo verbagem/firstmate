@@ -34,10 +34,12 @@
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
-#              of this verb. With no explicit axis, a secondmate re-resolves its
-#              durable config/secondmate-harness pin (harness plus its optional
-#              model and effort tokens) exactly as any other respawn does, while
-#              a ship or scout keeps the exact adapter already recorded for it.
+#              of this verb. An explicit `default` model or effort clears that
+#              axis for the replacement. With no explicit axis, a secondmate
+#              re-resolves its durable config/secondmate-harness pin (harness
+#              plus its optional model and effort tokens) exactly as any other
+#              respawn does, while a ship or scout keeps the exact adapter
+#              already recorded for it.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
 #              --note is required for a ship or scout, whose replacement
@@ -82,11 +84,6 @@
 #     than reported as successful blind.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
-#   - `exit` and `relaunch` refuse while the worker's composer holds queued,
-#     unreadable, or ambiguous input - before any interrupt, and again before
-#     the exit command is typed - so a lifecycle command can never concatenate
-#     with pending text; relaunch takes that proof before its checkpoint
-#     (docs/agent-control.md owns the contract).
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -200,45 +197,48 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
-want_value=
-for a in "$@"; do
-  if [ -n "$want_value" ]; then
-    case "$a" in
-      --*) die "--$want_value requires a value" ;;
+control_want_value=
+for control_arg in "$@"; do
+  if [ -n "$control_want_value" ]; then
+    case "$control_arg" in
+      --*) die "--$control_want_value requires a value" ;;
     esac
-    case "$want_value" in
-      harness) NEW_HARNESS=$a; HARNESS_SET=1 ;;
-      model) NEW_MODEL=$a; MODEL_SET=1 ;;
-      effort) NEW_EFFORT=$a; EFFORT_SET=1 ;;
-      note) NOTE=$a; NOTE_SET=1 ;;
-      note-file)
-        [ -f "$a" ] || die "--note-file '$a' is not a readable file"
-        NOTE=$(cat "$a")
+    case "$control_want_value" in
+      harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
+      model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
+      effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      note) NOTE=$control_arg; NOTE_SET=1 ;;
+      note_file)
+        [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
+        NOTE=$(cat "$control_arg")
         NOTE_SET=1
         ;;
     esac
-    want_value=
+    control_want_value=
     continue
   fi
-  case "$a" in
-    --harness) want_value=harness ;;
-    --harness=*) NEW_HARNESS=${a#--harness=}; HARNESS_SET=1 ;;
-    --model) want_value=model ;;
-    --model=*) NEW_MODEL=${a#--model=}; MODEL_SET=1 ;;
-    --effort) want_value=effort ;;
-    --effort=*) NEW_EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
-    --note) want_value=note ;;
-    --note=*) NOTE=${a#--note=}; NOTE_SET=1 ;;
-    --note-file) want_value=note-file ;;
+  case "$control_arg" in
+    --harness) control_want_value=harness ;;
+    --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
+    --model) control_want_value=model ;;
+    --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
+    --effort) control_want_value=effort ;;
+    --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --note) control_want_value=note ;;
+    --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
+    --note-file) control_want_value=note_file ;;
     --note-file=*)
-      [ -f "${a#--note-file=}" ] || die "--note-file '${a#--note-file=}' is not a readable file"
-      NOTE=$(cat "${a#--note-file=}")
+      [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
+      NOTE=$(cat "${control_arg#--note-file=}")
       NOTE_SET=1
       ;;
-    *) die "unexpected argument '$a'" ;;
+    *) die "unexpected argument '$control_arg'" ;;
   esac
 done
-[ -z "$want_value" ] || die "--$want_value requires a value"
+if [ -n "$control_want_value" ]; then
+  [ "$control_want_value" = note_file ] && die "--note-file requires a value"
+  die "--$control_want_value requires a value"
+fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
@@ -248,8 +248,8 @@ fi
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
 case "$NEW_EFFORT" in
-  ''|low|medium|high|xhigh|max) ;;
-  *) die "--effort must be one of low, medium, high, xhigh, max" ;;
+  ''|default|low|medium|high|xhigh|max|ultra) ;;
+  *) die "--effort must be one of default, low, medium, high, xhigh, max, ultra" ;;
 esac
 
 # --- exact task-id resolution ----------------------------------------------
@@ -321,60 +321,6 @@ agent_state() {
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
-}
-
-composer_state() {
-  fm_backend_composer_state "$BACKEND" "$T" "$LABEL"
-}
-
-# A queued instruction must survive lifecycle control. Every caller runs on a
-# state-verified stop backend, so an unreadable composer is refused outright:
-# cancel may clear input the plane could not prove was absent.
-require_empty_composer_before_interrupt() {
-  local state
-  state=$(composer_state)
-  case "$state" in
-    empty) ;;
-    pending|pending-unproven)
-      die "task $ID's composer holds a queued instruction; refusing lifecycle control until the worker consumes it"
-      ;;
-    *)
-      die "task $ID's composer reads '$state' before interrupt handling; refusing to risk clearing unverified input"
-      ;;
-  esac
-}
-
-# Textual lifecycle commands are safe only in a positively empty composer.
-# `after-interrupt` re-reads through SETTLE_WAIT so a TUI still redrawing from
-# the interrupt key cannot fail an empty composer; `pending` refuses at once.
-require_empty_composer() {  # <idle|after-interrupt>
-  local phase=$1 state elapsed=0 when
-  while :; do
-    state=$(composer_state)
-    case "$phase:$state" in
-      *:empty) return 0 ;;
-      idle:*|*:pending) break ;;
-    esac
-    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
-    sleep "$POLL"
-    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
-  done
-  case "$phase" in
-    idle) when="with no interrupt sent" ;;
-    *) when="after interrupt handling" ;;
-  esac
-  die "task $ID's composer reads '$state' $when; refusing to type a lifecycle command into unverified input"
-}
-
-# The same composer proof do_exit demands, taken on the pre-stop side of a
-# relaunch so a queued-input refusal happens before any journal or agent is
-# touched instead of surfacing as a failed stop.
-require_exit_composer_preflight() {
-  [ "$(agent_state)" = alive ] || return 0
-  case "$(busy_verdict)" in
-    busy*) require_empty_composer_before_interrupt ;;
-    *) require_empty_composer idle ;;
-  esac
 }
 
 # wait_agent_state <wanted...> <timeout>: poll until agent_state prints one of
@@ -516,7 +462,6 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
-      require_empty_composer_before_interrupt
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -530,10 +475,6 @@ do_exit() {
         *) die "task $ID's endpoint reads '$state' after interrupt delivery rather than a positively classified state; exit cannot prove whether the agent stopped" ;;
       esac
       ;;
-  esac
-  case "$interrupt_result" in
-    not-needed) require_empty_composer idle ;;
-    *) require_empty_composer after-interrupt ;;
   esac
   cmd=$(fm_control_exit_command "$HARNESS")
   # The submit verdict is NOT the postcondition here: a successful exit command
@@ -696,9 +637,9 @@ resolve_relaunch_profile() {
     CONFIG_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     CONFIG_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "$CONFIG_EFFORT" in
-      ''|low|medium|high|xhigh|max) ;;
+      ''|low|medium|high|xhigh|max|ultra) ;;
       *)
-        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max; ignoring" >&2
+        echo "warning: config/secondmate-harness effort token '$CONFIG_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2
         CONFIG_EFFORT=
         ;;
     esac
@@ -740,6 +681,9 @@ resolve_relaunch_profile() {
     TARGET_EFFORT=$PRIOR_EFFORT
   else
     TARGET_EFFORT=default
+  fi
+  if [ "$TARGET_EFFORT" = ultra ]; then
+    "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$TARGET_HARNESS" "$TARGET_MODEL" "$TARGET_EFFORT" || return 1
   fi
 }
 
@@ -831,6 +775,10 @@ record_note() {
         echo "This task was relaunched. Continue from here; the local copy and every"
         echo "uncommitted change are exactly as the previous worker left them."
         echo
+        echo "First, check your instruction inbox: list $STATE/$ID.inbox/*.msg, act on"
+        echo "each message in numeric order, then mv each handled file into"
+        echo "$STATE/$ID.inbox/handled/. A steer sent before the relaunch survives there."
+        echo
         printf '%s\n' "$NOTE"
       } >> "$RELAUNCH_BRIEF" \
         || die "could not append the progress note to task $ID's instructions"
@@ -868,7 +816,6 @@ do_relaunch() {
   else
     note_line="note=none"
   fi
-  require_exit_composer_preflight
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1

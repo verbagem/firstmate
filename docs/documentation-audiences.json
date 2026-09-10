@@ -141,10 +141,6 @@
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/exceptional-worker-graph/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
       "path": ".agents/skills/firstmate-codexapp/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -157,15 +153,71 @@
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/friction-retro/SKILL.md",
-      "audience": "agent-runtime"
-    },
-    {
       "path": ".agents/skills/fmx-respond/SKILL.md",
       "audience": "agent-runtime"
     },
     {
       "path": ".agents/skills/harness-adapters/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/control-and-recovery.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/dispatch.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/model-and-effort.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/common/primary-hooks.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/claude.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/codex.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/cursor.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/gemini.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/grok.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/kimi.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/muse.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/omp.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/opencode.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/pi.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/harness-adapters/references/harness/rovo.md",
       "audience": "agent-runtime"
     },
     {
@@ -217,44 +269,12 @@
       "audience": "public-product"
     },
     {
-      "path": "Plans/bubbly-stargazing-quilt.md",
-      "audience": "maintainer-architecture"
-    },
-    {
       "path": "README.md",
       "audience": "public-product"
     },
     {
       "path": "VISION.md",
       "audience": "public-product"
-    },
-    {
-      "path": "evals/README.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "evals/completeness-eval.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "evals/principles-eval.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "evals/publish-safety-eval.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "evals/task-definition-eval.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "evals/tov-eval.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "evals/visual-asset-eval.md",
-      "audience": "agent-runtime"
     },
     {
       "path": "docs/agent-control.md",
@@ -301,15 +321,23 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/extension-bindings.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/examples/crew-dispatch.json",
       "audience": "operator-example"
     },
     {
-      "path": "docs/examples/watched-tools.json",
+      "path": "docs/examples/process-event-extension/file-signal.mjs",
       "audience": "operator-example"
     },
     {
-      "path": "docs/examples/local-inference-catalog.json",
+      "path": "docs/examples/process-event-extension/firstmate-extension.json",
+      "audience": "operator-example"
+    },
+    {
+      "path": "docs/examples/watched-tools.json",
       "audience": "operator-example"
     },
     {
@@ -333,10 +361,6 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/local-inference.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "docs/orca-backend.md",
       "audience": "operator-current"
     },
@@ -347,6 +371,10 @@
     {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
+    },
+    {
+      "path": "docs/secondmate-parent-channel.md",
+      "audience": "maintainer-architecture"
     },
     {
       "path": "docs/scripts.md",
@@ -374,6 +402,10 @@
     },
     {
       "path": "docs/supervision-protocols/grok.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/supervision-protocols/omp.md",
       "audience": "agent-runtime"
     },
     {
@@ -405,7 +437,7 @@
       "audience": "maintainer-verification"
     },
     {
-      "path": "docs/verification/local-inference.md",
+      "path": "docs/verification/lint-option-a.md",
       "audience": "maintainer-verification"
     },
     {
@@ -421,7 +453,15 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/rovo.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/runtime-backends.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/secondmate-parent-channel.md",
       "audience": "maintainer-verification"
     },
     {

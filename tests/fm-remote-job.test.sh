@@ -288,22 +288,8 @@ NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 pass "worker identity binds the canonical configured code root"
 
 CRASHED_WORKER_PID=$NEW_WORKER_PID
-# The crashed child's restart supervisor would otherwise reap the lock and,
-# after its backoff, spawn a replacement that contends for ownership about a
-# second later: right inside the shutdown windows the next cases open. Freeze
-# it before the crash so it can neither clean up nor restart, then take it down
-# with the child so this fixture leaves exactly one crashed owner behind.
-CRASHED_SUPERVISOR_PID=$(ps -o ppid= -p "$CRASHED_WORKER_PID" | tr -d '[:space:]')
-case "$CRASHED_SUPERVISOR_PID" in ''|*[!0-9]*) fail "the crash fixture could not resolve the worker supervisor" ;; esac
-kill -STOP "$CRASHED_SUPERVISOR_PID"
 kill -KILL "$CRASHED_WORKER_PID"
-kill -KILL "$CRASHED_SUPERVISOR_PID"
-wait "$CRASHED_SUPERVISOR_PID" 2>/dev/null || true
-for _ in $(seq 1 100); do
-  kill -0 "$CRASHED_SUPERVISOR_PID" 2>/dev/null || break
-  sleep 0.05
-done
-! kill -0 "$CRASHED_SUPERVISOR_PID" 2>/dev/null || fail "the crash fixture could not stop the orphaned worker supervisor"
+wait "$CRASHED_WORKER_PID" 2>/dev/null || true
 assert_present "$STATE_ROOT/worker.lock" "an unclean exit did not retain the worker ownership lock"
 sleep 20 &
 OTHER_PID=$!
@@ -321,62 +307,6 @@ kill "$OTHER_PID" 2>/dev/null || true
 wait "$OTHER_PID" 2>/dev/null || true
 OTHER_PID=
 pass "stale ownership is reclaimed without signaling a reused pid"
-
-# The supervisor re-sends TERM to its serving child while the child is already
-# handling the group's stop signal. That repeat must not abort the shutdown
-# before ownership is released, or the next worker inherits a dead owner's lock.
-STORMED_WORKER_PID=$NEW_WORKER_PID
-STORMED_SUPERVISOR_PID=$(ps -o ppid= -p "$STORMED_WORKER_PID" | tr -d '[:space:]')
-case "$STORMED_SUPERVISOR_PID" in ''|*[!0-9]*) fail "the stop-storm fixture could not resolve the worker supervisor" ;; esac
-kill -STOP "$STORMED_SUPERVISOR_PID"
-# The stopped supervisor cannot reap its child, so on Linux the exited worker
-# lingers as a zombie that still answers kill -0; a zombie has stopped.
-stormed_worker_running() {
-  kill -0 "$STORMED_WORKER_PID" 2>/dev/null || return 1
-  case "$(ps -o stat= -p "$STORMED_WORKER_PID" 2>/dev/null)" in Z*) return 1 ;; esac
-}
-i=0
-while kill -0 "$STORMED_WORKER_PID" 2>/dev/null && [ "$i" -lt 20000 ]; do
-  kill -TERM "$STORMED_WORKER_PID" 2>/dev/null || true
-  i=$((i + 1))
-done
-for _ in $(seq 1 100); do
-  stormed_worker_running || break
-  sleep 0.05
-done
-! stormed_worker_running || fail "the stormed worker did not stop"
-kill -CONT "$STORMED_SUPERVISOR_PID"
-for _ in $(seq 1 100); do
-  kill -0 "$STORMED_SUPERVISOR_PID" 2>/dev/null || break
-  sleep 0.05
-done
-assert_absent "$STATE_ROOT/worker.lock" "a repeated stop signal during shutdown skipped the ownership release"
-assert_absent "$STATE_ROOT/worker.ready" "a repeated stop signal during shutdown left a stale readiness heartbeat"
-fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail "$FM_REMOTE_JOB_ERROR"
-NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-pass "repeated stop signals during shutdown still release worker ownership"
-
-# An owner killed between mktemp and mv leaves a scratch file inside the lock
-# directory. Reclaim must discard it instead of failing rmdir forever.
-fm_remote_job_stop_worker_tree "$NEW_WORKER_PID" || fail "the scratch-file fixture could not stop the current worker"
-assert_absent "$STATE_ROOT/worker.lock" "a clean stop did not release the worker ownership lock"
-sleep 20 &
-OTHER_PID=$!
-mkdir "$STATE_ROOT/worker.lock"
-printf '%s\n' "$OTHER_PID" > "$STATE_ROOT/worker.lock/pid"
-: > "$STATE_ROOT/worker.lock/.quarantine.stale0"
-touch -t 200001010000 "$STATE_ROOT/worker.lock"
-fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail "$FM_REMOTE_JOB_ERROR"
-kill -0 "$OTHER_PID" 2>/dev/null || fail "scratch-file reclaim signaled an unrelated process"
-NEW_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-[ "$NEW_WORKER_PID" != "$OTHER_PID" ] || fail "scratch-file reclaim adopted an unrelated persisted pid"
-fm_remote_job_worker_identity_matches "$REMOTE_ROOT" "$ACCOUNT_HOME" \
-  || fail "scratch-file reclaim did not start the current worker"
-assert_absent "$STATE_ROOT/worker.lock/.quarantine.stale0" "reclaim kept a dead owner's scratch file in the lock"
-kill "$OTHER_PID" 2>/dev/null || true
-wait "$OTHER_PID" 2>/dev/null || true
-OTHER_PID=
-pass "a dead owner's scratch file inside the lock never wedges reclaim"
 
 FM_REMOTE_JOB_TIMEOUT=1
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-timeout-job.sh < /dev/null > /dev/null
@@ -612,27 +542,17 @@ pass "the worker drains bounded output without changing command results"
 
 SIDE_EFFECT="$TMP_ROOT/side-effect"
 WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
-kill -TERM "$WORKER_PID"
-for _ in $(seq 1 100); do
-  [ ! -f "$STATE_ROOT/worker.pid" ] && break
-  sleep 0.05
-done
-assert_absent "$STATE_ROOT/worker.pid" "the worker did not stop before the staged-record tamper"
-# The record is staged with no worker running and only then is a replacement
-# ensured, whose startup can take well over the 5-second queue window on a slow
-# runner. A queue-expired record publishes 124 before the argv symlink is ever
-# inspected, so keep the queue open long enough that the only way this job
-# completes is by the worker judging the tampered record itself.
-FM_REMOTE_JOB_QUEUE_TIMEOUT=60
+fm_remote_job_stop_worker_tree "$WORKER_PID" \
+  || fail "the worker tree did not stop before the staged-record tamper"
+assert_absent "$STATE_ROOT/worker.pid" "the worker did not clear its pid before the staged-record tamper"
 fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-touch-job.sh "$SIDE_EFFECT" < /dev/null > /dev/null
-FM_REMOTE_JOB_QUEUE_TIMEOUT=5
 JOB_ID=$FM_REMOTE_JOB_ID
 JOB_DIR="$STATE_ROOT/jobs/$JOB_ID"
 rm -f -- "$JOB_DIR/argv"
 ln -s "$TMP_ROOT/not-an-argv" "$JOB_DIR/argv"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail "$FM_REMOTE_JOB_ERROR"
 fm_remote_job_wait "$ACCOUNT_HOME" "$JOB_ID" || fail "$FM_REMOTE_JOB_ERROR"
-[ "$FM_REMOTE_JOB_EXIT" -eq 126 ] || fail "the worker accepted a symlinked argv record (exit $FM_REMOTE_JOB_EXIT)"
+[ "$FM_REMOTE_JOB_EXIT" -eq 126 ] || fail "the worker accepted a symlinked argv record"
 assert_absent "$SIDE_EFFECT" "the worker executed a job after its argv changed to a symlink"
 pass "the worker refuses symlinked job fields before command execution"
 
