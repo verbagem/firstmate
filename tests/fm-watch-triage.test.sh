@@ -4022,6 +4022,12 @@ seed_captured_procevent_result() {  # <dir>
     sleep 0.1
     i=$((i + 1))
   done
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ ! -e "$dir/claims/delivery-src.claim" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
   pe_case "$dir" retire delivery-src >/dev/null || return 1
   [ -s "$dir/state/.wake-queue" ]
 }
