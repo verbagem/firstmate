@@ -244,7 +244,7 @@ test_attached_arm_still_fails_on_a_wake_it_did_not_deliver() {
 }
 
 test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
-  local dir home state fakebin result armout drainout status watcher_pid sequence generation decision_recovery_arm decision_successor
+  local dir home state fakebin result armout drainout status watcher_pid sequence generation decision_recovery_arm decision_successor i
   dir=$(make_case rearm-resurface)
   home="$dir/home"
   state="$dir/state"
@@ -288,7 +288,23 @@ test_rearm_resurfaces_durable_queue_and_remote_open_decision() {
   append_wake "$state" check startup-network 'check: startup-network'
 
   start_rearm_arm "$home" "$state" "$fakebin" "$armout"
-  wait_for_exit "$ARM_PID" 80
+  # The re-arm must surface the durable wakes and close on its own. Poll for
+  # that exit with a bounded budget instead of a fixed sleep: a loaded runner
+  # can take longer than a few hundred milliseconds to reach it, and a fixed
+  # sleep turned that scheduling delay into a false failure.
+  i=0
+  while [ "$i" -lt 80 ] && is_live_non_zombie "$ARM_PID"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if is_live_non_zombie "$ARM_PID"; then
+    # End the fixture through an ordinary actionable status transition so this
+    # failing pre-fix path leaves no child behind.
+    printf 'done: fixture cleanup\n' > "$state/cleanup.status"
+    wait_for_exit "$ARM_PID" 80 || true
+    fail "re-arm stayed live instead of surfacing durable wakes and the still-open remote decision"
+  fi
+  wait "$ARM_PID"
   status=$?
   [ "$status" -ne 124 ] \
     || fail "re-arm stayed live instead of surfacing durable wakes and the still-open remote decision"
