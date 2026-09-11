@@ -1020,7 +1020,7 @@ TRIG4="$TMP_ROOT/trigger-four"
 HZ="$TMP_ROOT/hz"; new_home "$HZ"
 pe_register "$HZ" lavish orphan-src -- "$BLOCKER" "$TRIG4" "orphan" >/dev/null
 pe "$HZ" reconcile >/dev/null
-sleep 0.5
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/orphan-src.claim" || fail "orphan fixture never claimed its source"
 orphan_pid=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/orphan-src.claim" 2>/dev/null)
 if [ -z "$orphan_pid" ] || ! kill -0 "$orphan_pid" 2>/dev/null; then
   fail "orphan fixture runner did not start"
@@ -1081,8 +1081,7 @@ for _ in $(seq 1 24); do
   pe "$HR" start race-src >/dev/null &
   race_pids+=("$!")
 done
-wait_for "$RACE_LOG" || fail "no contender acquired the stale claim"
-sleep 0.5
+wait_for_lines "$RACE_LOG" 1 200 || fail "no contender acquired the stale claim"
 [ "$(wc -l < "$RACE_LOG" | tr -d ' ')" = 1 ] || fail "stale-claim race started more than one runner"
 : > "$RACE_TRIGGER"
 for race_pid in "${race_pids[@]}"; do wait "$race_pid" 2>/dev/null || true; done
