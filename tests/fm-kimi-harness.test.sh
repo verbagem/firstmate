@@ -16,7 +16,20 @@ TEARDOWN="$ROOT/bin/fm-teardown.sh"
 KIMI_HOOK="$ROOT/bin/fm-kimi-turnend-hook.sh"
 TMP_ROOT=$(fm_test_tmproot fm-kimi-harness)
 KIMI_RUNTIME_TASK_TMP=
-PYTHON_BIN=$(command -v python3) || fail "test needs python3"
+find_python_with_tomllib() {
+  local candidate path seen=
+  for candidate in python3 /opt/homebrew/bin/python3 /opt/homebrew/bin/python3.14 /usr/local/bin/python3; do
+    path=$(command -v "$candidate" 2>/dev/null) || continue
+    case "|$seen|" in *"|$path|"*) continue ;; esac
+    seen="$seen|$path"
+    "$path" -c 'import tomllib' >/dev/null 2>&1 || continue
+    printf '%s\n' "$path"
+    return 0
+  done
+  return 1
+}
+
+PYTHON_BIN=$(find_python_with_tomllib) || fail "test needs python3 with tomllib"
 PYTHON_BIN_DIR=$(dirname "$PYTHON_BIN")
 JQ_BIN=$(command -v jq) || fail "test needs jq"
 BASE_PATH=${FM_TEST_BASE_PATH:-$PYTHON_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin}
@@ -357,7 +370,7 @@ test_kimi_hook_install_refuses_without_jq() {
   printf '# Captain config\nmodel = "test"\n' > "$config"
   cp "$config" "$before"
   ln -s "$(command -v bash)" "$fakebin/bash"
-  ln -s "$(command -v python3)" "$fakebin/python3"
+  ln -s "$PYTHON_BIN" "$fakebin/python3"
 
   rc=0
   out=$(HOME="$home" PATH="$fakebin" "$KIMI_HOOK" install 2>&1) || rc=$?

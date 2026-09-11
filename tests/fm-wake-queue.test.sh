@@ -233,7 +233,7 @@ test_drain_dedupes_obvious_duplicates() {
 # when work is in flight with no live watcher, and stay silent right after a
 # normal fire from a live watcher with a fresh beacon, so it never false-alarms.
 test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once() {
-  local dir state sub fakebin out row_before row_after stall_count real_date
+  local dir state sub fakebin out row_before row_after stall_count real_date capture_file
   dir=$(make_case secondmate-foreign-stall)
   state="$dir/state"
   sub="$dir/secondmate"
@@ -243,6 +243,8 @@ test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once() {
   printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
     "$sub" > "$state/mate.meta"
   fakebin="$dir/fakebin"
+  capture_file="$dir/idle-pane.txt"
+  printf 'idle prompt\n' > "$capture_file"
   real_date=$(command -v date)
   cat > "$fakebin/date" <<SH
 #!/usr/bin/env bash
@@ -260,9 +262,10 @@ SH
   printf '100\t7\tcheck\trouted\tcheck: routed row\n' > "$sub/state/.wake-queue"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-first.out" 2> "$dir/watch-first.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-first.out" 2> "$dir/watch-first.err" || true
   [ ! -s "$state/.wake-queue" ] \
     || fail "the first observation of an old foreign row produced an age-only alert"
 
@@ -272,9 +275,10 @@ SH
   printf '100\t8\tcheck\thealthy\tcheck: healthy progress\n' > "$sub/state/.wake-queue"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-progress.out" 2> "$dir/watch-progress.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-progress.out" 2> "$dir/watch-progress.err" || true
   [ ! -s "$state/.wake-queue" ] \
     || fail "an advancing foreign queue produced a stall alert because its oldest row was old"
 
@@ -287,9 +291,10 @@ SH
   out="$dir/watch-stalled.out"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$out" 2> "$dir/watch-stalled.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$out" 2> "$dir/watch-stalled.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=8 idle=2s' "$out" >/dev/null \
     || fail "a foreign queue with no progress did not alert: $(cat "$out")"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
@@ -307,9 +312,10 @@ SH
   printf '100\t9\tcheck\tnext\tcheck: next row\n' > "$sub/state/.wake-queue"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-next.out" 2> "$dir/watch-next.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-next.out" 2> "$dir/watch-next.err" || true
   [ ! -s "$state/.wake-queue" ] \
     || fail "a newly-oldest row cascaded an immediate second alert after progress"
   cp "$sub/state/.wake-queue" "$row_after"
@@ -320,9 +326,10 @@ SH
   printf '1012\n' > "$dir/now"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-refrozen.out" 2> "$dir/watch-refrozen.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-refrozen.out" >/dev/null \
     || fail "a genuine later no-progress episode was hidden after earlier progress"
   stall_count=$(grep -c 'secondmate-wake-loop-mate-' "$state/.wake-queue" || true)
@@ -379,7 +386,7 @@ EOF
 # no-progress interval: inheriting that interval fires a wake-loop stall against
 # a queue the mate has only just created.
 test_secondmate_reprovisioned_queue_starts_a_fresh_interval() {
-  local dir state sub fakebin real_date
+  local dir state sub fakebin real_date capture_file
   dir=$(make_case secondmate-reprovisioned-queue)
   state="$dir/state"
   sub="$dir/secondmate"
@@ -388,6 +395,8 @@ test_secondmate_reprovisioned_queue_starts_a_fresh_interval() {
   printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
     "$sub" > "$state/mate.meta"
   fakebin="$dir/fakebin"
+  capture_file="$dir/idle-pane.txt"
+  printf 'idle prompt\n' > "$capture_file"
   real_date=$(command -v date)
   cat > "$fakebin/date" <<SH
 #!/usr/bin/env bash
@@ -404,9 +413,10 @@ SH
   printf '100\t9\tcheck\told\tcheck: retired generation row\n' > "$sub/state/.wake-queue"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-old.out" 2> "$dir/watch-old.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-old.out" 2> "$dir/watch-old.err" || true
   [ ! -s "$state/.wake-queue" ] || fail "the first observation of the retired generation alerted"
 
   # Reprovisioning under the same task id restarts the sequence on 9 again, long
@@ -416,9 +426,10 @@ SH
   printf '200\t9\tcheck\tregen\tcheck: reprovisioned row\n' > "$sub/state/.wake-queue"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-regen.out" 2> "$dir/watch-regen.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-regen.out" 2> "$dir/watch-regen.err" || true
   [ ! -s "$state/.wake-queue" ] \
     || fail "a reprovisioned queue generation inherited the retired generation's idle interval and alerted"
 
@@ -426,9 +437,10 @@ SH
   printf '1012\n' > "$dir/now"
   PATH="$fakebin:$PATH" FM_FAKE_NOW_FILE="$dir/now" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' \
+    FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=0 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 1 > "$dir/watch-regen-frozen.out" 2> "$dir/watch-regen-frozen.err" || true
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$dir/watch-regen-frozen.out" 2> "$dir/watch-regen-frozen.err" || true
   grep -F 'check: secondmate wake-loop stalled: mate=mate row=9 idle=2s' "$dir/watch-regen-frozen.out" >/dev/null \
     || fail "a frozen reprovisioned queue generation was hidden: $(cat "$dir/watch-regen-frozen.out")"
   pass "a reprovisioned queue generation starts a fresh no-progress interval"
@@ -725,12 +737,12 @@ test_enrichment_preserves_all_unread_lines_and_status_file_failures() {
   [ "$raw_count" -eq 13 ] || fail "missing, unreadable, malformed, empty, or oversized status input hid a raw row"
 
   expected="wake annotation: latest wake-EVENT observed at drain, not current state: huge.status: $(cat "$state/huge.status")"
-  grep -Fx "$expected" "$out" >/dev/null \
+  awk -v expected="$expected" '$0 == expected { found = 1; exit } END { exit !found }' "$out" \
     || fail "the oversized unread status line was truncated or omitted"
   i=1
   while [ "$i" -le 8 ]; do
     expected="wake annotation: latest wake-EVENT observed at drain, not current state: many-$i.status: $(cat "$state/many-$i.status")"
-    grep -Fx "$expected" "$out" >/dev/null \
+    awk -v expected="$expected" '$0 == expected { found = 1; exit } END { exit !found }' "$out" \
       || fail "readable status many-$i was truncated or omitted"
     i=$((i + 1))
   done

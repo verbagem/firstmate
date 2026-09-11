@@ -33,16 +33,29 @@ if [ -z "${HOME:-}" ]; then
   printf 'fm-kimi-turnend-hook: refused: HOME is unset.\n' >&2
   exit 1
 fi
-if ! command -v python3 >/dev/null 2>&1; then
+fm_kimi_python_with_tomllib() {
+  local candidate path seen=
+  for candidate in python3 /opt/homebrew/bin/python3 /opt/homebrew/bin/python3.14 /usr/local/bin/python3; do
+    path=$(command -v "$candidate" 2>/dev/null) || continue
+    case "|$seen|" in *"|$path|"*) continue ;; esac
+    seen="$seen|$path"
+    "$path" -c 'import tomllib' >/dev/null 2>&1 || continue
+    printf '%s\n' "$path"
+    return 0
+  done
+  return 1
+}
+
+PYTHON_BIN=$(fm_kimi_python_with_tomllib) || {
   printf 'fm-kimi-turnend-hook: refused: python3 with tomllib is required to validate config.toml.\n' >&2
   exit 1
-fi
+}
 if [ "$ACTION" = install ] && ! command -v jq >/dev/null 2>&1; then
   printf 'fm-kimi-turnend-hook: refused: jq is required by the installed Kimi turn-end hook.\n' >&2
   exit 1
 fi
 
-python3 - "$ACTION" "$HOME/.kimi-code" <<'PY'
+"$PYTHON_BIN" - "$ACTION" "$HOME/.kimi-code" <<'PY'
 import os
 import re
 import shutil
