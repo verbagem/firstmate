@@ -113,6 +113,24 @@ The classifier was not at fault: the guard resolved the harness through a generi
 That binary exits immediately, leaving a bare shell in the pane.
 The guard now asks `fm_cursor_resolve_binary` first for `cursor`, which is the same verified owner `bin/fm-spawn.sh` uses, so the probe launches `cursor-agent` and the editor CLI can no longer masquerade as the harness.
 
+### 2026-09-11 Kimi 1.16.0 product-name foreground refresh
+
+Running the default-on liveness drift guard on macOS arm64 during the upstream sync checked 6 installed harnesses and classified every installed one `alive`.
+Kimi Code 1.16.0 reported `#{pane_current_command}` as `python3.14`, while the foreground process group reported `Kimi Code`, so `fm_backend_tmux_classify_process_name` now accepts that exact product-name `comm` beside the older `kimi` and `kimi-code` identities.
+The portable counterpart `tests/fm-tmux-agent-liveness.test.sh` pins that spaced foreground name without widening Muse's anchored `muse-bin-*` match.
+
+```sh
+bash tests/fm-harness-liveness-drift-live-e2e.test.sh
+```
+
+Bounded output:
+
+```text
+# kimi kimi, version 1.16.0: title='python3.14' foreground=[Kimi Code ]
+ok - harness liveness: kimi kimi, version 1.16.0 classifies alive
+# checked 6 installed harness(es)
+```
+
 Bounded output from the 2026-08-03 run that produced the first table above:
 
 ```text

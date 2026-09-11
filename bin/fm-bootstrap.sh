@@ -926,7 +926,9 @@ tool_version_at_least() {  # <tool> <min-version>
   local min_major min_minor min_patch min_extra
   command -v "$tool" >/dev/null 2>&1 || return 1
   output=$("$tool" --version 2>/dev/null) || return 1
-  parts=$(printf '%s\n' "$output" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
+  parts=$(printf '%s\n' "$output" \
+    | sed -nE 's/.*[^0-9]([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p; s/^([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' \
+    | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
   IFS='.' read -r min_major min_minor min_patch min_extra <<< "$min"

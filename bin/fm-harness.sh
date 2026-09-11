@@ -148,7 +148,7 @@ detect_own() {
       *codex*) echo codex; return ;;
       *opencode*) echo opencode; return ;;
       *grok*) echo grok; return ;;
-      kimi) echo kimi; return ;;
+      kimi|Kimi\ Code) echo kimi; return ;;
       rovo) echo rovo; return ;;
       # muse's installed launcher ~/.local/bin/muse execs ~/.local/bin/muse-bin-<version>
       # (verified in the published launcher, muse 0.1.0-R708.1), so the live process

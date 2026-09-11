@@ -70,6 +70,7 @@ ln -s "$SLEEP_BIN" "$LAB/bin/musescore"
 ln -s "$SLEEP_BIN" "$LAB/bin/amuse"
 ln -s "$SLEEP_BIN" "$LAB/bin/muse-binary"
 ln -s "$SLEEP_BIN" "$LAB/bin/muse-bind"
+ln -s "$SLEEP_BIN" "$LAB/bin/Kimi Code"
 
 # A launcher whose own process identity is a bare shell, running the harness as
 # a child in the same foreground process group - the shape the real Pi Launcher
@@ -169,6 +170,11 @@ new_window muse "$LAB/bin/muse-bin-0.1.0-R708.1" 900
 wait_for_state "$SESSION:muse" alive \
   || fail "muse's version-suffixed binary name must classify alive"
 pass "tmux liveness: muse's version-suffixed muse-bin-<version> classifies alive"
+
+new_window kimi-code "$LAB/bin/Kimi Code" 900
+wait_for_state "$SESSION:kimi-code" alive \
+  || fail "Kimi Code's spaced process name must classify alive"
+pass "tmux liveness: Kimi Code's spaced process name classifies alive"
 
 for decoy in musescore amuse muse-binary muse-bind; do
   new_window "decoy-$decoy" "$LAB/bin/$decoy" 900

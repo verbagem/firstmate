@@ -30,7 +30,9 @@ PI_STOCK_RENDER_FLOOR=0.84.4
 pi_version_at_least() {  # <version> <min-version>
   local version=$1 min=$2 parts major minor patch extra
   local min_major min_minor min_patch min_extra
-  parts=$(printf '%s\n' "$version" | sed -nE 's/.*[vV]?([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' | head -n 1)
+  parts=$(printf '%s\n' "$version" \
+    | sed -nE 's/.*[^0-9]([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p; s/^([0-9]+)\.([0-9]+)\.([0-9]+).*/\1 \2 \3/p' \
+    | head -n 1)
   IFS=' ' read -r major minor patch extra <<< "$parts"
   [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
   IFS='.' read -r min_major min_minor min_patch min_extra <<< "$min"
