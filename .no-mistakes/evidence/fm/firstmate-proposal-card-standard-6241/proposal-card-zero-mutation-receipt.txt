@@ -1,0 +1,1 @@
+zero mutation confirmed: before and after SHA-256 manifests are identical

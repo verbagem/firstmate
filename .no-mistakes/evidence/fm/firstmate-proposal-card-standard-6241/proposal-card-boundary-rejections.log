@@ -1,0 +1,4 @@
+fm-proposal-card: invalid proposal card: /Users/temp/.no-mistakes/evidence/01M2RAG66GPJKGTBKNWEA7VG1H/proposal-card-invalid-cadence.json
+expected rejection: invalid cadence
+fm-proposal-card: invalid proposal card: /Users/temp/.no-mistakes/evidence/01M2RAG66GPJKGTBKNWEA7VG1H/proposal-card-missing-required-field.json
+expected rejection: missing permission_boundary
