@@ -213,6 +213,7 @@ family_for_basename() {
     fm-herdr-lab.test.sh|fm-lint.test.sh|\
     fm-lint-workflows.test.sh|\
     fm-operational-input.test.sh|fm-pi-primary-types.test.sh|fm-pi-recap.test.sh|\
+    fm-proposal-card.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
     fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
@@ -521,6 +522,7 @@ tests/fm-busy-adapter-wiring.test.sh 14880
 tests/fm-busy-state.test.sh 714
 tests/fm-calm-pi-extension.test.sh 464
 tests/fm-classify-decision-key.test.sh 928
+tests/fm-proposal-card.test.sh 500
 tests/fm-claude-stop-autoarm-live-e2e.test.sh 30
 tests/fm-claude-stop-autoarm.test.sh 60633
 tests/fm-cmux-claude-composer-live-e2e.test.sh 20
@@ -1200,7 +1202,7 @@ families_for_changed_path() {
     bin/fm-lint.sh|bin/fm-lint-workflows.sh|bin/fm-install-shellcheck.sh|\
     bin/fm-install-actionlint.sh|\
     bin/fm-brief.sh|bin/fm-ensure-agents-md.sh|bin/fm-crew-state.sh|\
-    bin/fm-captain-hold.sh|bin/fm-decision-hold.sh|bin/fm-supervision*|bin/fm-transition-lib.sh|\
+    bin/fm-proposal-card.sh|bin/fm-captain-hold.sh|bin/fm-decision-hold.sh|bin/fm-supervision*|bin/fm-transition-lib.sh|\
     bin/fm-tmux-lib.sh|bin/fm-marker-lib.sh|bin/fm-operational-input.sh|bin/fm-tasks-axi-lib.sh|\
     bin/fm-local-inference.mjs|bin/fm-local-inference.sh|bin/fm-vendor-auth-probe.sh|\
     bin/fm-primary-scope-lib.sh|bin/fm-project-mode.sh|bin/fm-promote.sh|\
@@ -1224,7 +1226,7 @@ families_for_changed_path() {
       ;;
     .github/*|.tasks.toml|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|\
     docs/configuration.md|docs/local-inference.md|docs/verification/local-inference.md|\
-    docs/supervision-protocols/*)
+    docs/verification/proposal-cards.md|docs/supervision-protocols/*)
       printf '%s\n' pure-contract-unit
       ;;
     evals/*)
