@@ -421,6 +421,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/proposal-cards.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/runtime-backends.md",
       "audience": "maintainer-verification"
     },
