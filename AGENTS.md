@@ -303,9 +303,9 @@ Resolve every ship task's concrete delivery mode and `yolo` merge posture at int
 Pass the mode explicitly to the brief, and pass both values explicitly to the spawn and any scout promotion; each command refuses to guess the values it consumes.
 A current explicit captain instruction wins; otherwise the project's registry entry is the captain's standing posture, and dropping below its rigor needs a reason you can state.
 Select rigor the way a trusted human reviewer would before allowing the same change to land.
-Production impact, credentials, external sends, money movement, customer or private data, legal or financial consequences, and brand-sensitive work require the strongest existing review path unless a current explicit captain instruction says otherwise.
+Production impact, credentials, external sends, money or money-touching work, customer or private data, legal or financial consequences, and brand-sensitive work require the strongest existing review path unless a current explicit captain instruction says otherwise.
 The strongest existing review path is no-mistakes plus the existing merge authority; do not create a new delivery mode, reviewer, score, gate, or control plane.
-On a `no-mistakes-prod-only` project, classify the task's surface: internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR`, while product-facing, mixed, and uncertain work ships `no-mistakes`; never infer internal-only from file location or project name.
+On a `no-mistakes-prod-only` project, classify the task's surface: internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR` only when it avoids every strongest-path category, including external sends and brand-sensitive work; product-facing, strongest-path, mixed, and uncertain work ships `no-mistakes`; never infer internal-only from file location or project name.
 An unregistered project or absent registry resolves to `no-mistakes` with yolo off, and the registration gap goes to the captain.
 Record the resulting mode, `yolo` merge posture, and the one-line reason for any deviation in the backlog item note.
 
