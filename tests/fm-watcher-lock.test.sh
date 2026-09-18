@@ -261,10 +261,16 @@ test_lock_stale_steal_single_winner_under_concurrency() {
   while [ "$i" -le 40 ]; do
     FM_STATE_OVERRIDE="$state" bash -c '
       . "$1"
-      if fm_lock_try_acquire "$2"; then
-        printf "%s\n" "${BASHPID:-$$}" >> "$3"
-        sleep 1
-      fi
+      attempts=0
+      while [ "$attempts" -lt 200 ] && [ ! -s "$3" ]; do
+        if fm_lock_try_acquire "$2"; then
+          printf "%s\n" "${BASHPID:-$$}" >> "$3"
+          sleep 1
+          exit 0
+        fi
+        attempts=$((attempts + 1))
+        sleep 0.02
+      done
     ' _ "$LIB" "$lockdir" "$marker" &
     pids="$pids $!"
     i=$((i + 1))
