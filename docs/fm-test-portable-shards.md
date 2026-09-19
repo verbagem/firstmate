@@ -71,20 +71,20 @@ Hints only affect balance: the coverage guard keeps the partition complete and d
 Balance is still worth keeping current, because enough unmeasured scripts let one shard carry more than twice another shard's real work and reach the job cap while another runner sits idle.
 Refresh the hints whenever the serial lane gains scripts, rather than waiting for a shard to time out.
 
-The multi-brain Pi supervision branch (persistent branch session, outcome store, lease guards) roughly doubled this remainder's total weight - 120 scripts summing to 2187781 ms (~36.5 min) by current hints, against 1143762 ms at the 2026-08-02 baseline - without a matching shard-count increase, which silently compressed the "Timeouts" section's intended ~3x hang-tripwire margin to under 2x and produced a spurious `portable-serial-4of4` cancellation exactly at the 15-minute job boundary on an otherwise-green PR.
+The multi-brain Pi supervision branch (persistent branch session, outcome store, lease guards) roughly doubled this remainder's total weight - now 139 scripts summing to 2659694 ms (~44.3 min) by current hints plus default weights, against 1143762 ms at the 2026-08-02 baseline - without a matching shard-count increase, which silently compressed the "Timeouts" section's intended ~3x hang-tripwire margin to under 2x and produced a spurious `portable-serial-4of4` cancellation exactly at the 15-minute job boundary on an otherwise-green PR.
 `PORTABLE_SERIAL_SHARDS` was raised from 4 to 8 to restore that margin; refresh the hints below (procedure below) after any future test addition materially changes the remainder's total weight.
 
 | Lane | Script count | Estimated duration |
 |---|---:|---:|
-| `portable-serial-1of8` | 7 | 273925 ms (~273.9 s) |
-| `portable-serial-2of8` | 13 | 273422 ms (~273.4 s) |
-| `portable-serial-3of8` | 17 | 273405 ms (~273.4 s) |
-| `portable-serial-4of8` | 17 | 273413 ms (~273.4 s) |
-| `portable-serial-5of8` | 14 | 273396 ms (~273.4 s) |
-| `portable-serial-6of8` | 16 | 273406 ms (~273.4 s) |
-| `portable-serial-7of8` | 19 | 273413 ms (~273.4 s) |
-| `portable-serial-8of8` | 17 | 273401 ms (~273.4 s) |
-| imbalance | | 529 ms |
+| `portable-serial-1of8` | 18 | 338053 ms (~338.1 s) |
+| `portable-serial-2of8` | 14 | 338090 ms (~338.1 s) |
+| `portable-serial-3of8` | 17 | 338051 ms (~338.1 s) |
+| `portable-serial-4of8` | 19 | 323056 ms (~323.1 s) |
+| `portable-serial-5of8` | 13 | 323254 ms (~323.3 s) |
+| `portable-serial-6of8` | 21 | 323052 ms (~323.1 s) |
+| `portable-serial-7of8` | 16 | 338079 ms (~338.1 s) |
+| `portable-serial-8of8` | 21 | 338059 ms (~338.1 s) |
+| imbalance | | 15038 ms |
 
 The single longest script, `tests/fm-pr-check-security.test.sh` at 250417 ms, is the floor for any shard count.
 
@@ -118,7 +118,7 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 | Lane | Bound | Rationale |
 |---|---|---|
 | portable parallel 1/2 | job `timeout-minutes: 10` | The measured shard sums are about three minutes and the timeout is a hang tripwire. |
-| portable serial 1-8 | job `timeout-minutes: 20` | Each balanced shard was about 4.6 minutes at the last measured hints; the wider margin absorbs the additional portable-serial weight this branch's merge with upstream brought in, pending a fresh hint refresh (see "Verification inputs" above). |
+| portable serial 1-8 | job `timeout-minutes: 20` | Each balanced shard is now about 5.6 minutes by current hints plus default weights; the wider margin absorbs the additional portable-serial weight, pending a fresh hint refresh from a green CI run (see "Verification inputs" above). |
 | Herdr | family-run step `timeout-minutes: 20`; job `timeout-minutes: 75` backstop | Healthy runs finish around 7 minutes, so the step bound is the hang tripwire (cleanup and timing artifacts still upload) while the job cap stays a last-resort backstop. |
 
 Timeouts are hang tripwires rather than expected healthy durations.

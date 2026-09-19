@@ -6,9 +6,8 @@
 # token (bin/fm-x-lib.sh and its callers) and the optional typesafe.ai
 # dispatch key (bin/fm-dispatch-resolve.sh) both resolve their value through
 # fmx_env_get, so those opt-in secrets in $FM_HOME/.env are parsed by one rule.
-# (bin/fm-mail.sh loads its whole .env block itself under the same env-wins
-# contract.) The value is printed to the caller's command substitution only;
-# nothing is logged.
+# The value is printed to the caller's command substitution only; nothing is
+# logged.
 
 # fmx_env_get <key> <file>
 # Read the value of KEY from a .env-style file: last assignment wins; tolerates a
