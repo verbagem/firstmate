@@ -1,0 +1,39 @@
+Manual CLI evidence for bin/fm-dispatch-resolve.sh
+Fixture: fake curl and fake quota-axi are first on PATH; no live network is available to the resolver in this transcript.
+
+$ FM_HOME=<fixture-without-typesafe-key> bin/fm-dispatch-resolve.sh brief.md --project pager
+exit: 0
+stdout:
+  <empty>
+stderr:
+  dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and /Users/temp/.no-mistakes/evidence/01M2W4KVR86C0DHNXKV0RZKWSR/dispatch-resolve-cli-fixture/home/.env)
+fake curl calls: 0
+fake quota-axi calls: 0
+
+$ TYPESAFE_API_KEY=<set-only-on-resolver-process> FM_HOME=<fixture> bin/fm-dispatch-resolve.sh brief.md --project pager
+exit: 0
+stdout:
+  dispatch-resolve:
+    status: clear
+    model: jev-1.13.0   latency_ms: 1000   tokens: 344/42
+    rule: rule_1 (A simple bug fix with a stated root cause.)   confidence: 0.92
+    probabilities: rule_1=0.97 default=0.03
+    note: rule matched
+    note: 1 eligible candidate(s) unranked (kimi)
+    candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible
+    candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=91%  spendPriority=0.7597  runway=through_reset  -> eligible
+    candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked: provider kimi unmeasured (unknown): disclosed uncertainty
+    profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'
+stderr:
+  <empty>
+fake curl calls: 1
+fake quota-axi calls: 1
+curl child env: clean
+quota child env: clean
+curl argv contained fake key: no
+curl fd3 Authorization header: bearer-present
+request criteria keys: ["default","rule_1"]
+request summary: model=jev-latest project=pager brief_has_root_cause=true
+request contains why text: false
+request contains quota/spendPriority: false
+request contains profile model ids: false

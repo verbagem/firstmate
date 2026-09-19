@@ -1,0 +1,357 @@
+FM_TEST_BEGIN 2026-09-19T06:15:55Z tests/fm-dispatch-resolve.test.sh family=standalone expected_gate_skip=none
+ok - absent key is off: one stderr line, exit 0, no network call
+ok - TYPESAFE_API_KEY= in .env activates the tool; environment and config overrides work
+ok - clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate
+ok - rules snapshots and shell quoting preserve the profile protocol
+ok - no-rule fallback, explicit provider, and documented configurations resolve
+ok - ambiguous: confidence below the fixed floor hands the decision back
+ok - escalate: a rule declared approval: captain never yields a profile
+ok - rule floor: known shortfall falls through while unavailable evidence escalates
+ok - declared provider and profile floor evidence are applied in code
+ok - nonnumeric spendPriority evidence is never ranked
+ok - partial and missing quota evidence remain eligible but unranked
+ok - provider-wide and exact quota rows combine into one limiting candidate
+ok - default: no rule matched resolves among the default profiles
+ok - tie: equal spendPriority never breaks by array order
+ok - no rankable candidate: the tool escalates instead of guessing
+ok - quota evidence comes from one quota-axi --json read, and its failure is an error outcome
+ok - API, transport, and response failures are error outcomes with exit 0
+ok - configuration errors exit 2 before any network call
+# all fm-dispatch-resolve tests passed
+FM_TEST_END 2026-09-19T06:15:59Z tests/fm-dispatch-resolve.test.sh exit=0 duration_ms=4722 gate_skip=false
+FM_TEST_BEGIN 2026-09-19T06:15:59Z tests/fm-bootstrap.test.sh family=session-bootstrap expected_gate_skip=none
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap enforces no-mistakes minimum version
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap enforces backpass minimum version
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap reports backpass MISSING when absent from PATH
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update stays off without an explicit config/tool-autoupdate opt-in
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update installs an outdated package and leaves a current one alone
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update installs the exact version it age-checked
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update never downgrades a deliberately newer install
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update holds instead of assuming behind when versions cannot be compared
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS instead of aborting
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update relays already-completed updates when the sweep times out
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update compares multi-digit version components numerically
+ok - bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_TIMEOUT instead of running unbounded
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update installs a same-day release by default for the trusted package list
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update holds a release still inside an explicitly configured age window
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update rate-limits registry checks to once per 24h
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update reports a failed npm install as an actionable diagnostic
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: tool auto-update reports when npm itself is unavailable
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap enforces gh-axi minimum version
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap enforces lavish-axi minimum version
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap enforces tasks-axi minimum version
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap enforces quota-axi minimum version
+ok - bootstrap requires git with an install instruction
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: backend=orca gates the Orca CLI without requiring it on the default backend
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: session-provider backends require their own CLI + jq + treehouse, never tmux
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: a session-provider backend gates its own CLI, never a false tmux requirement
+ok - bootstrap: Herdr manual-install guidance is never executed as a shell command
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: the bundled cmux CLI satisfies the active backend dependency
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: unknown resolved backends fail closed with an actionable diagnostic
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: JSON-emitting backends require jq (their genuine dep), never tmux
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: the treehouse lease check follows the resolved backend's worktree provider
+ok - bootstrap computes a fleet-size-aware default timeout and preserves partial fleet-sync output
+ok - bootstrap keeps the quick 20s default for small fleets
+ok - bootstrap preserves FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT as an explicit override
+ok - bootstrap treats a blank timeout override as unset
+ok - bootstrap computes the timeout before launching fleet sync
+ok - bootstrap keeps routine tasks-axi, harness, dispatch, and already-live liveness confirmations silent
+ok - bootstrap routine contract runs under system /bin/bash
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: FM_BOOTSTRAP_NETWORK partitions one run into local and network halves
+ok - bootstrap: every deferred mutating sweep rechecks fleet-lock ownership
+ok - bootstrap: each deferred network phase, secondmate, and clone records its own elapsed time
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap: the tasks-axi compatibility verdict travels exactly one process hop
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap validates crew-dispatch.json and reports malformed or unverified configs
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+ok - bootstrap validates typed dispatch fields only when TYPESAFE_API_KEY opts in
+FM_TEST_END 2026-09-19T06:19:49Z tests/fm-bootstrap.test.sh exit=0 duration_ms=229074 gate_skip=false
+FM_TEST_BEGIN 2026-09-19T06:19:49Z tests/fm-spawn-dispatch-profile.test.sh family=backend-dispatch expected_gate_skip=none
+ok - no --model/--effort records defaults and types the claude launch instructions
+ok - non-cursor launches clear inherited Cursor identity markers
+ok - relative home overrides ignore CDPATH and become absolute before spawn launch construction
+ok - FM_HOME defaults resolve relative paths and preserve absolute spellings
+ok - absolute override spellings are preserved in spawn launch paths
+ok - unresolvable relative spawn overrides fail with named diagnostics
+ok - active crew-dispatch profile requires an explicit harness for ship spawns
+ok - active crew-dispatch profile requires an explicit harness for scout spawns
+ok - active crew-dispatch profile allows an explicit resolved harness
+ok - active crew-dispatch profile allows the legacy positional harness form
+ok - active crew-dispatch profile allows the raw launch-command escape hatch
+ok - claude receives --model and --effort profile flags
+ok - codex receives --model and model_reasoning_effort profile flags
+ok - codex omits unsupported max effort instead of passing a bad config value
+ok - grok receives --model and --reasoning-effort profile flags
+ok - grok omits unsupported max reasoning effort
+ok - grok omits unsupported xhigh reasoning effort
+ok - cursor receives its model-qualified reasoning class and exact task workspace
+ok - cursor refuses model ids absent from its resolved binary's live catalog
+ok - cursor preserves the requested model when its live catalog is unreachable
+ok - opencode receives --model and omits the unsupported effort axis
+ok - pi receives --model and --thinking max profile flags
+ok - Pi launch probing omits --tui-mode on older Pi and preserves it on supporting Pi
+ok - pi-signed shares Pi launch semantics while preserving its configured and recorded identity
+ok - pi-signed refuses safely and actionably when the selected executable is unavailable
+ok - pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics
+ok - pi ship launches carry the recap widget and its FM_RECAP_* env; secondmates get neither
+ok - batch dispatch forwards shared --harness, --model, and --effort to every pair
+ok - claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store
+ok - claude omits the config-dir prefix when firstmate runs with the single-store default
+ok - non-claude harnesses do not receive the claude CLAUDE_CONFIG_DIR prefix
+ok - active crew-dispatch profile does not block secondmate launches
+# all fm-spawn-dispatch-profile tests passed
+FM_TEST_END 2026-09-19T06:21:24Z tests/fm-spawn-dispatch-profile.test.sh exit=0 duration_ms=95615 gate_skip=false
+FM_TEST_BEGIN 2026-09-19T06:21:24Z tests/fm-gotmp.test.sh family=session-bootstrap expected_gate_skip=none
+ok - fm-teardown removes the dir pointed to by tasktmp= in meta
+ok - fm-teardown skips gracefully when tasktmp= is absent (backward compat)
+ok - fm-teardown skips gracefully when tasktmp= points to a nonexistent dir
+FM_TEST_END 2026-09-19T06:21:27Z tests/fm-gotmp.test.sh exit=0 duration_ms=2968 gate_skip=false
+FM_TEST_SUMMARY total=4 failed=0 skipped_gate=0 duration_ms=332538
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=95615 failed=0
+FM_TEST_SUMMARY_FAMILY family=session-bootstrap count=2 duration_ms=232042 failed=0
+FM_TEST_SUMMARY_FAMILY family=standalone count=1 duration_ms=4722 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-bootstrap.test.sh duration_ms=229074
+FM_TEST_SLOWEST rank=2 script=tests/fm-spawn-dispatch-profile.test.sh duration_ms=95615
+FM_TEST_SLOWEST rank=3 script=tests/fm-dispatch-resolve.test.sh duration_ms=4722
+FM_TEST_SLOWEST rank=4 script=tests/fm-gotmp.test.sh duration_ms=2968
+fm-test-run: wrote timing artifact: /Users/temp/.no-mistakes/evidence/01M2W4KVR86C0DHNXKV0RZKWSR/targeted-test-timing.json
