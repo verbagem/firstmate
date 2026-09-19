@@ -1514,6 +1514,29 @@ ROWS
   pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
 }
 
+test_crew_dispatch_typed_validation_is_opt_in() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/dispatch-typed"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' '{"rules":[{"when":"typed","approval":"firstmate","use":{"harness":"claude","provider":"CLAUDE","floor":{"scope":"all_models","min_percent":101}}}]}' \
+    > "$case_dir/home/config/crew-dispatch.json"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  add_real_jq "$fakebin"
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "typed resolver-only fields must be inert without TYPESAFE_API_KEY, got: $out"
+
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key-not-secret' > "$case_dir/home/.env"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' ] \
+    || fail "typed resolver-only fields must be validated with TYPESAFE_API_KEY, got: $out"
+
+  pass "bootstrap validates typed dispatch fields only when TYPESAFE_API_KEY opts in"
+}
+
 test_bootstrap_reporting
 test_no_mistakes_min_version
 test_backpass_min_version
@@ -1558,3 +1581,4 @@ test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
+test_crew_dispatch_typed_validation_is_opt_in
