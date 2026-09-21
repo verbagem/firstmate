@@ -1,0 +1,25 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "valid-no-executable-contract",
+  "claimed_outcome": "A documentation-only maintainer note does not require an executable test receipt.",
+  "acceptance_criteria": [
+    "The packet states there is no executable contract.",
+    "The evidence directly supports the documentation-only change."
+  ],
+  "changed_files": [
+    {
+      "path": "docs/jev-evidence-screening.md",
+      "summary": "The advisory boundary and future evaluation criteria are documented."
+    }
+  ],
+  "test_receipts": [],
+  "evidence_excerpts": [
+    {
+      "id": "doc-evidence",
+      "text": "The doc states this pilot is advisory, report-only, and not a CI or merge authority."
+    }
+  ],
+  "truth_label": "proven",
+  "executable_contract": false,
+  "expected_evidence_span": "doc-evidence"
+}

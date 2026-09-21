@@ -1,0 +1,34 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "deceptive-summary",
+  "claimed_outcome": "The change only updates documentation.",
+  "acceptance_criteria": [
+    "The changed-file summary matches the evidence excerpts."
+  ],
+  "changed_files": [
+    {
+      "path": "docs/jev-evidence-screening.md",
+      "summary": "Documentation only."
+    },
+    {
+      "path": "bin/fm-jev-evidence-screen.sh",
+      "summary": "Documentation helper."
+    }
+  ],
+  "test_receipts": [
+    {
+      "name": "bin/fm-doc-audience-check.sh",
+      "status": "passed",
+      "kind": "documentation"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "bin-file-changed",
+      "text": "The diff includes bin/fm-jev-evidence-screen.sh, an executable command surface."
+    }
+  ],
+  "truth_label": "contradicted",
+  "executable_contract": true,
+  "expected_evidence_span": "bin-file-changed"
+}

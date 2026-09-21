@@ -1,0 +1,34 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "stale-head",
+  "claimed_outcome": "The PR evidence belongs to the current branch head.",
+  "acceptance_criteria": [
+    "The evidence head matches the observed branch head."
+  ],
+  "changed_files": [
+    {
+      "path": "bin/fm-no-mistakes-attestation-body.sh",
+      "summary": "Attestation evidence was refreshed."
+    }
+  ],
+  "test_receipts": [
+    {
+      "name": "Require no-mistakes",
+      "status": "passed",
+      "kind": "ci"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "old-attestation",
+      "text": "The attestation is bound to abc111 while the local branch now observes def222."
+    }
+  ],
+  "head": {
+    "expected": "abc111",
+    "observed": "def222"
+  },
+  "truth_label": "ambiguous",
+  "executable_contract": true,
+  "expected_evidence_span": "old-attestation"
+}
