@@ -17,6 +17,7 @@ const REQUESTED_JEV_MODEL = 'jev-latest';
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
 const CONFIDENCE_FLOOR = 0.6;
 const USAGE_FIELDS = ['input_tokens', 'output_tokens', 'total_tokens', 'cost_usd'];
+const TOKEN_USAGE_FIELDS = new Set(['input_tokens', 'output_tokens', 'total_tokens']);
 
 function usage() {
   process.stdout.write(`fm-jev-evidence-screen.sh - advisory-only Jev evidence/completion screening pilot
@@ -129,6 +130,15 @@ function existingFileIdentity(filePath) {
   }
 }
 
+function outputPathIsSymlink(filePath) {
+  try {
+    return fs.lstatSync(filePath).isSymbolicLink();
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes(error.code)) return false;
+    throw error;
+  }
+}
+
 function canonicalFuturePath(filePath) {
   const resolved = path.resolve(filePath);
   const parent = path.dirname(resolved);
@@ -142,6 +152,7 @@ function canonicalFuturePath(filePath) {
 
 function sameOutputFile(left, right) {
   if (path.resolve(left) === path.resolve(right)) return true;
+  if (outputPathIsSymlink(left) || outputPathIsSymlink(right)) return true;
   const leftIdentity = existingFileIdentity(left);
   const rightIdentity = existingFileIdentity(right);
   if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
@@ -153,7 +164,11 @@ function safeUsage(usage) {
   const result = {};
   for (const field of USAGE_FIELDS) {
     const value = usage[field];
-    if (typeof value === 'number' && Number.isFinite(value)) result[field] = value;
+    if (TOKEN_USAGE_FIELDS.has(field)) {
+      if (Number.isSafeInteger(value) && value >= 0) result[field] = value;
+    } else if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      result[field] = value;
+    }
   }
   return result;
 }

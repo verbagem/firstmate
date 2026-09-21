@@ -52,7 +52,8 @@ const supported = new Set([
   'no-expected-span',
   'input-output-only-usage',
   'empty-changed-files',
-  'model-echo'
+  'model-echo',
+  'bad-usage'
 ]).has(id);
 const unsupported = new Set(['unsupported', 'missing-test']).has(id);
 const contradicted = new Set(['contradictory', 'deceptive-summary', 'unrelated-diff']).has(id);
@@ -78,6 +79,7 @@ const span = {
   'input-output-only-usage': 'receipt-proposal-card-pass',
   'empty-changed-files': 'receipt-proposal-card-pass',
   'model-echo': 'receipt-proposal-card-pass',
+  'bad-usage': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
 }[id] || 'none';
 
@@ -92,6 +94,12 @@ const usage = {
   cache_read_tokens: 7
 };
 if (id === 'input-output-only-usage') delete usage.total_tokens;
+if (id === 'bad-usage') {
+  usage.input_tokens = -100;
+  usage.output_tokens = 20.5;
+  usage.total_tokens = -10;
+  usage.cost_usd = -1;
+}
 const model = id === 'model-echo' ? request.state.packet.evidence_excerpts[0]?.text || 'echoed-private-evidence' : 'jev-fake-1.13.0';
 process.stdout.write(JSON.stringify({
   model,
@@ -190,9 +198,11 @@ test_screen_requires_summary_and_distinct_outputs() {
 }
 
 test_output_aliases_are_rejected_without_receipts() {
-  local symlink_target symlink_ledger hardlink_target hardlink_summary
+  local symlink_target symlink_ledger dangling_target dangling_ledger hardlink_target hardlink_summary
   symlink_target="$TMP_ROOT/alias-summary.json"
   symlink_ledger="$TMP_ROOT/alias-ledger.jsonl"
+  dangling_target="$TMP_ROOT/dangling-summary.json"
+  dangling_ledger="$TMP_ROOT/dangling-ledger.jsonl"
   hardlink_target="$TMP_ROOT/hardlink-ledger.jsonl"
   hardlink_summary="$TMP_ROOT/hardlink-summary.json"
   printf 'sentinel symlink\n' > "$symlink_target"
@@ -206,6 +216,18 @@ test_output_aliases_are_rejected_without_receipts() {
   fi
   assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/symlink-output.err" "symlinked output alias was not rejected"
   assert_grep "sentinel symlink" "$symlink_target" "symlinked output rejection changed the target"
+
+  rm -f "$dangling_target" "$dangling_ledger"
+  ln -s "$dangling_target" "$dangling_ledger"
+  if env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$dangling_ledger" \
+    --summary "$dangling_target" \
+    > "$TMP_ROOT/dangling-output.out" 2> "$TMP_ROOT/dangling-output.err"; then
+    fail "dangling symlink ledger and summary should be rejected"
+  fi
+  assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/dangling-output.err" "dangling symlink output alias was not rejected"
+  [ ! -e "$dangling_target" ] || fail "dangling symlink rejection created the target"
 
   printf 'sentinel hardlink\n' > "$hardlink_target"
   ln "$hardlink_target" "$hardlink_summary"
@@ -248,6 +270,24 @@ test_summary_metric_edges_are_scored_from_public_outputs() {
   jq -e '.metrics.tokens_total == 120' "$SUMMARY" >/dev/null \
     || fail "summary did not sum input and output tokens without total_tokens"
   pass "summary metrics score only expected spans and complete token totals"
+}
+
+test_invalid_usage_values_are_filtered() {
+  local usage_packet
+  usage_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" bad-usage)
+  rm -f "$LEDGER" "$SUMMARY"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$usage_packet" \
+    --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/bad-usage.out" \
+    || fail "bad usage packet should still produce report-only records"
+  jq -e '.jev_advisory.usage == {}' "$LEDGER" >/dev/null \
+    || fail "invalid negative or fractional usage values reached the ledger"
+  jq -e '.metrics.tokens_total == 0 and .metrics.cost_usd_total == 0' "$SUMMARY" >/dev/null \
+    || fail "invalid usage values reached summary metrics"
+  pass "invalid usage values are filtered from receipts and metrics"
 }
 
 test_empty_changed_files_route_to_review() {
@@ -424,6 +464,7 @@ test_fixture_corpus_metrics_and_append_only_receipts
 test_screen_requires_summary_and_distinct_outputs
 test_output_aliases_are_rejected_without_receipts
 test_summary_metric_edges_are_scored_from_public_outputs
+test_invalid_usage_values_are_filtered
 test_empty_changed_files_route_to_review
 test_empty_fixture_directory_is_rejected_without_receipts
 test_authority_boundaries_reject_control_flags
