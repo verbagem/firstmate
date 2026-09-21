@@ -31,6 +31,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
 | `fm-proposal-card.sh`    | Own the agent-initiated proposal-card contract, validation, rendering, and rejection helper |
+| `fm-jev-evidence-screen.sh` | Evaluate advisory-only evidence packets into required ledger and summary receipts |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, secondmate-charter, and Herdr-lab briefs   |
 | `fm-exec-council.sh`     | Assemble an advisory-only executive-council packet from private role cards and a context packet, for a scout brief |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |

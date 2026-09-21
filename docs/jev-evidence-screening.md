@@ -9,9 +9,10 @@ It does not add a reviewer daemon, dashboard, approval system, delivery mode, or
 The current fixture packet includes a claimed outcome, acceptance criteria, changed-file summaries, test or check receipts, evidence excerpts, and a known truth label.
 The supported truth labels are `proven`, `unsupported`, `contradicted`, `ambiguous`, and `out-of-scope`.
 The label is used for corpus metrics, not for approving work.
+The executable owner validates the exact packet schema, mode-specific inputs, and `--help` usage.
 
 Deterministic checks run before any Jev advisory step.
-They identify missing changed-file summaries, stale head evidence, failed or missing executable receipts, and out-of-scope changed files.
+They identify malformed packets, missing changed-file summaries, stale head evidence, failed or missing executable receipts, and out-of-scope changed files.
 When a deterministic check needs review, the final recommendation remains `needs_review` even if Jev reports support.
 
 The Jev step is narrow and optional.
@@ -19,8 +20,11 @@ It asks for direct support, contradiction, missing evidence category, risk categ
 The default is report-only and no live TypeSafe transport is enabled unless a caller passes an explicit `--typesafe-command`.
 Tests use a fake TypeSafe transport.
 Missing keys, absent transport, transport errors, malformed responses, and below-floor confidence all route to `needs_review`.
+The transport request includes only packet id, claim, acceptance criteria, changed-file path and summary, receipt name/status/kind, and evidence excerpt id/text.
 
 The output is an append-only JSONL ledger plus a required summary.
+The ledger and summary paths must be distinct non-symlink file paths; same-file aliases, hardlinks, directories, unwritable targets, and case-only future aliases are rejected before any transport call.
+The ledger stores sanitized usage metrics and the local requested model id, not arbitrary model text returned by a transport.
 The summary reports unsupported-claim recall, false-escalation rate, evidence-span quality, deterministic disagreement count, latency and cost totals, and abstention rate.
 These metrics are for deciding whether a future integration is worth more study.
 
