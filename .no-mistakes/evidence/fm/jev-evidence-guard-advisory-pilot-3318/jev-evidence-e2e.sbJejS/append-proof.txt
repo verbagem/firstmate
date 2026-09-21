@@ -1,0 +1,3 @@
+fixture-ledger lines after first evaluate: 8
+fixture-ledger lines after second evaluate: 16
+no-key screen created no fake-transport call log

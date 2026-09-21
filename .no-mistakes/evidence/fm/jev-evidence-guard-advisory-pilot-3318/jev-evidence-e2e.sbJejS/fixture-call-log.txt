@@ -1,0 +1,16 @@
+truthful
+unsupported
+contradictory
+stale-head
+missing-test
+deceptive-summary
+unrelated-diff
+valid-no-executable-contract
+truthful
+unsupported
+contradictory
+stale-head
+missing-test
+deceptive-summary
+unrelated-diff
+valid-no-executable-contract
