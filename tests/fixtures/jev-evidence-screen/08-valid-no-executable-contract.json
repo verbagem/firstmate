@@ -16,10 +16,7 @@
   "evidence_excerpts": [
     {
       "id": "doc-evidence",
-      "text": "The doc states this pilot is advisory, report-only, and not a CI or merge authority.",
-      "supports_claim": true,
-      "contradicts_claim": false,
-      "supports_criteria": [0, 1]
+      "text": "The doc states this pilot is advisory, report-only, and not a CI or merge authority."
     }
   ],
   "truth_label": "proven",

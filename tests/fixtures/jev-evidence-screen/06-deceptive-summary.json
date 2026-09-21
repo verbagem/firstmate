@@ -25,10 +25,7 @@
   "evidence_excerpts": [
     {
       "id": "bin-file-changed",
-      "text": "The diff includes bin/fm-jev-evidence-screen.sh, an executable command surface.",
-      "supports_claim": false,
-      "contradicts_claim": true,
-      "supports_criteria": []
+      "text": "The diff includes bin/fm-jev-evidence-screen.sh, an executable command surface."
     }
   ],
   "truth_label": "contradicted",

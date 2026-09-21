@@ -11,7 +11,7 @@ The supported truth labels are `proven`, `unsupported`, `contradicted`, `ambiguo
 The label is used for corpus metrics, not for approving work.
 
 Deterministic checks run before any Jev advisory step.
-They identify stale head evidence, failed or missing executable receipts, out-of-scope changed files, explicitly contradicting excerpts, missing direct support, and unsupported acceptance criteria.
+They identify missing changed-file summaries, stale head evidence, failed or missing executable receipts, and out-of-scope changed files.
 When a deterministic check needs review, the final recommendation remains `needs_review` even if Jev reports support.
 
 The Jev step is narrow and optional.

@@ -21,10 +21,7 @@
   "evidence_excerpts": [
     {
       "id": "old-attestation",
-      "text": "The attestation is bound to abc111 while the local branch now observes def222.",
-      "supports_claim": false,
-      "contradicts_claim": true,
-      "supports_criteria": []
+      "text": "The attestation is bound to abc111 while the local branch now observes def222."
     }
   ],
   "head": {

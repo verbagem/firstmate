@@ -52,7 +52,6 @@ const supported = new Set([
   'no-expected-span',
   'input-output-only-usage',
   'empty-changed-files',
-  'semantic-labels-ignored',
   'model-echo',
   'bad-usage'
 ]).has(id);
@@ -79,7 +78,6 @@ const span = {
   'no-expected-span': 'receipt-proposal-card-pass',
   'input-output-only-usage': 'receipt-proposal-card-pass',
   'empty-changed-files': 'receipt-proposal-card-pass',
-  'semantic-labels-ignored': 'receipt-proposal-card-pass',
   'model-echo': 'receipt-proposal-card-pass',
   'bad-usage': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
@@ -200,13 +198,16 @@ test_screen_requires_summary_and_distinct_outputs() {
 }
 
 test_output_aliases_are_rejected_without_receipts() {
-  local symlink_target symlink_ledger dangling_target dangling_ledger hardlink_target hardlink_summary
+  local symlink_target symlink_ledger dangling_target dangling_ledger hardlink_target hardlink_summary case_dir case_ledger case_summary
   symlink_target="$TMP_ROOT/alias-summary.json"
   symlink_ledger="$TMP_ROOT/alias-ledger.jsonl"
   dangling_target="$TMP_ROOT/dangling-summary.json"
   dangling_ledger="$TMP_ROOT/dangling-ledger.jsonl"
   hardlink_target="$TMP_ROOT/hardlink-ledger.jsonl"
   hardlink_summary="$TMP_ROOT/hardlink-summary.json"
+  case_dir="$TMP_ROOT/case-output"
+  case_ledger="$case_dir/Run.JSONL"
+  case_summary="$case_dir/run.jsonl"
   printf 'sentinel symlink\n' > "$symlink_target"
   ln -s "$symlink_target" "$symlink_ledger"
   if env -u TYPESAFE_API_KEY "$TOOL" screen \
@@ -242,6 +243,18 @@ test_output_aliases_are_rejected_without_receipts() {
   fi
   assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/hardlink-output.err" "hardlinked output alias was not rejected"
   assert_grep "sentinel hardlink" "$hardlink_target" "hardlinked output rejection changed the target"
+
+  mkdir -p "$case_dir"
+  if env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$case_ledger" \
+    --summary "$case_summary" \
+    > "$TMP_ROOT/case-output.out" 2> "$TMP_ROOT/case-output.err"; then
+    fail "case-only ledger and summary paths should be rejected"
+  fi
+  assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/case-output.err" "case-only output alias was not rejected"
+  [ ! -e "$case_ledger" ] || fail "case-only output rejection wrote a ledger"
+  [ ! -e "$case_summary" ] || fail "case-only output rejection wrote a summary"
   pass "output aliases are rejected before receipts"
 }
 
@@ -478,35 +491,6 @@ test_evidence_span_choice_set_is_validated() {
   pass "evidence span choices are validated as a bounded set"
 }
 
-test_semantic_fixture_labels_do_not_drive_deterministic_screening() {
-  local semantic_packet semantic_ledger semantic_summary
-  semantic_packet="$TMP_ROOT/semantic-labels-ignored.json"
-  semantic_ledger="$TMP_ROOT/semantic-labels-ignored.jsonl"
-  semantic_summary="$TMP_ROOT/semantic-labels-ignored-summary.json"
-  jq '.id = "semantic-labels-ignored" |
-      .evidence_excerpts[0].supports_claim = false |
-      .evidence_excerpts[0].contradicts_claim = true |
-      .evidence_excerpts[0].supports_criteria = []' \
-    "$FIXTURE_DIR/01-truthful.json" > "$semantic_packet"
-  rm -f "$semantic_ledger" "$semantic_summary"
-
-  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
-    --packet "$semantic_packet" \
-    --ledger "$semantic_ledger" \
-    --summary "$semantic_summary" \
-    --typesafe-command "$FAKE" \
-    > "$TMP_ROOT/semantic-labels-ignored.out" \
-    || fail "semantic label variant should still screen"
-
-  jq -e '
-    .deterministic_checks.status == "passed" and
-    .deterministic_checks.findings == [] and
-    .jev_advisory.status == "advisory_supported" and
-    .recommendation.review_priority == "normal"
-  ' "$semantic_ledger" >/dev/null || fail "semantic fixture labels drove deterministic screening"
-  pass "semantic fixture labels do not drive deterministic screening"
-}
-
 test_low_confidence_and_malformed_response_route_to_review() {
   local low_packet malformed_packet
   low_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" low-confidence)
@@ -612,7 +596,6 @@ test_authority_boundaries_reject_control_flags
 test_json_stdout_surface_is_rejected
 test_malformed_packet_metadata_is_sanitized
 test_evidence_span_choice_set_is_validated
-test_semantic_fixture_labels_do_not_drive_deterministic_screening
 test_low_confidence_and_malformed_response_route_to_review
 test_confidence_floor_option_is_not_public
 test_malformed_confidence_and_span_route_to_review

@@ -26,10 +26,7 @@
   "evidence_excerpts": [
     {
       "id": "receipt-proposal-card-pass",
-      "text": "ok - rejection path preserves optional why-not words without requiring a reason",
-      "supports_claim": true,
-      "contradicts_claim": false,
-      "supports_criteria": [0, 1]
+      "text": "ok - rejection path preserves optional why-not words without requiring a reason"
     }
   ],
   "truth_label": "proven",

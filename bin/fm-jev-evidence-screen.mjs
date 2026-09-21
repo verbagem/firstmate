@@ -158,7 +158,9 @@ function sameOutputFile(left, right) {
   const leftIdentity = existingFileIdentity(left);
   const rightIdentity = existingFileIdentity(right);
   if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
-  return canonicalFuturePath(left) === canonicalFuturePath(right);
+  const leftFuture = canonicalFuturePath(left);
+  const rightFuture = canonicalFuturePath(right);
+  return leftFuture === rightFuture || leftFuture.toLowerCase() === rightFuture.toLowerCase();
 }
 
 function safeUsage(usage) {

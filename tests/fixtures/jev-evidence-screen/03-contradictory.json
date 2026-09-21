@@ -21,10 +21,7 @@
   "evidence_excerpts": [
     {
       "id": "failed-gate",
-      "text": "no-mistakes review reported one blocking finding and did not reach checks-passed.",
-      "supports_claim": false,
-      "contradicts_claim": true,
-      "supports_criteria": []
+      "text": "no-mistakes review reported one blocking finding and did not reach checks-passed."
     }
   ],
   "truth_label": "contradicted",

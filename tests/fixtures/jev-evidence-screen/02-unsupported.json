@@ -22,10 +22,7 @@
   "evidence_excerpts": [
     {
       "id": "doc-only",
-      "text": "The proposal-card verification record explains an older read-only stalled-work recommendation.",
-      "supports_claim": false,
-      "contradicts_claim": false,
-      "supports_criteria": []
+      "text": "The proposal-card verification record explains an older read-only stalled-work recommendation."
     }
   ],
   "truth_label": "unsupported",

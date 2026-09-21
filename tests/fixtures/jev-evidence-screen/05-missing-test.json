@@ -15,10 +15,7 @@
   "evidence_excerpts": [
     {
       "id": "source-claim-only",
-      "text": "The implementation summary says malformed responses route to needs_review.",
-      "supports_claim": true,
-      "contradicts_claim": false,
-      "supports_criteria": [0]
+      "text": "The implementation summary says malformed responses route to needs_review."
     }
   ],
   "truth_label": "unsupported",

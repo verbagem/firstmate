@@ -28,10 +28,7 @@
   "evidence_excerpts": [
     {
       "id": "asset-only",
-      "text": "The only changed path in this packet is assets/logo.png.",
-      "supports_claim": false,
-      "contradicts_claim": true,
-      "supports_criteria": []
+      "text": "The only changed path in this packet is assets/logo.png."
     }
   ],
   "truth_label": "out-of-scope",
