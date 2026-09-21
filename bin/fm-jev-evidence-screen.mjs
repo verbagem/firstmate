@@ -87,6 +87,8 @@ function parseArgs(argv) {
   if (!opts.ledger) dieUsage('--ledger is required');
   if (!opts.summary) dieUsage('--summary is required');
   if (sameOutputFile(opts.ledger, opts.summary)) dieUsage('--ledger and --summary must be different paths');
+  if (command === 'screen' && opts.fixtures) dieUsage('screen does not accept --fixtures');
+  if (command === 'evaluate' && opts.packets.length > 0) dieUsage('evaluate does not accept --packet');
   if (command === 'screen' && opts.packets.length === 0) dieUsage('screen requires at least one --packet');
   if (command === 'evaluate' && !opts.fixtures) dieUsage('evaluate requires --fixtures');
   return { command, opts };
@@ -173,6 +175,37 @@ function safeUsage(usage) {
   return result;
 }
 
+function safePacketString(packet, key) {
+  if (!isPlainObject(packet)) return null;
+  const value = packet[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function safeTruthLabel(packet) {
+  const label = safePacketString(packet, 'truth_label');
+  return TRUTH_LABELS.has(label) ? label : null;
+}
+
+function validEvidenceSpanChoices(packet) {
+  if (!isPlainObject(packet) || !Array.isArray(packet.evidence_excerpts)) return null;
+  const choices = new Set();
+  for (const excerpt of packet.evidence_excerpts) {
+    if (!isPlainObject(excerpt) || typeof excerpt.id !== 'string' || excerpt.id.length === 0 || excerpt.id === 'none' || choices.has(excerpt.id)) {
+      return null;
+    }
+    choices.add(excerpt.id);
+  }
+  return choices;
+}
+
+function safeExpectedEvidenceSpan(packet) {
+  const expected = safePacketString(packet, 'expected_evidence_span');
+  if (!expected) return null;
+  const choices = validEvidenceSpanChoices(packet);
+  if (!choices) return null;
+  return expected === 'none' || choices.has(expected) ? expected : null;
+}
+
 function requireString(obj, key, at, errors) {
   if (typeof obj[key] !== 'string' || obj[key].length === 0) {
     errors.push(`${at}.${key}: required non-empty string`);
@@ -231,22 +264,28 @@ function validatePacket(packet) {
   if (!Array.isArray(packet.evidence_excerpts) || packet.evidence_excerpts.length === 0) {
     errors.push('packet.evidence_excerpts: required non-empty array');
   } else {
+    const excerptIds = new Set();
     packet.evidence_excerpts.forEach((excerpt, index) => {
       const at = `packet.evidence_excerpts[${index}]`;
       if (!isPlainObject(excerpt)) {
         errors.push(`${at}: required object`);
         return;
       }
-      requireString(excerpt, 'id', at, errors);
-      requireString(excerpt, 'text', at, errors);
-      if (excerpt.supports_claim !== undefined && typeof excerpt.supports_claim !== 'boolean') errors.push(`${at}.supports_claim: required boolean when present`);
-      if (excerpt.contradicts_claim !== undefined && typeof excerpt.contradicts_claim !== 'boolean') errors.push(`${at}.contradicts_claim: required boolean when present`);
-      if (excerpt.supports_criteria !== undefined) {
-        if (!Array.isArray(excerpt.supports_criteria) || excerpt.supports_criteria.some((item) => !Number.isSafeInteger(item) || item < 0)) {
-          errors.push(`${at}.supports_criteria: required array of non-negative integer indexes when present`);
-        }
+      if (typeof excerpt.id !== 'string' || excerpt.id.length === 0) {
+        errors.push(`${at}.id: required non-empty string`);
+      } else if (excerpt.id === 'none') {
+        errors.push(`${at}.id: reserved evidence span choice`);
+      } else if (excerptIds.has(excerpt.id)) {
+        errors.push(`${at}.id: duplicate evidence span choice`);
+      } else {
+        excerptIds.add(excerpt.id);
       }
+      requireString(excerpt, 'text', at, errors);
     });
+    const expected = safePacketString(packet, 'expected_evidence_span');
+    if (expected && expected !== 'none' && !excerptIds.has(expected)) {
+      errors.push('packet.expected_evidence_span: expected none or an evidence excerpt id');
+    }
   }
   if (packet.executable_contract !== undefined && typeof packet.executable_contract !== 'boolean') {
     errors.push('packet.executable_contract: required boolean when present');
@@ -295,30 +334,10 @@ function deterministicChecks(packet) {
   if (packet.test_receipts.some((receipt) => receipt.status === 'failed')) {
     findings.push({ code: 'failed_test_receipt', severity: 'high', detail: 'a test/check receipt is failed' });
   }
-  const contradicted = packet.evidence_excerpts.filter((excerpt) => excerpt.contradicts_claim === true).map((excerpt) => excerpt.id);
-  if (contradicted.length > 0) {
-    findings.push({ code: 'contradicting_evidence', severity: 'high', detail: `contradiction excerpts: ${contradicted.join(',')}` });
-  }
-  const supportedCriteria = new Set();
-  for (const excerpt of packet.evidence_excerpts) {
-    if (excerpt.supports_claim === true && Array.isArray(excerpt.supports_criteria)) {
-      excerpt.supports_criteria.forEach((item) => supportedCriteria.add(item));
-    }
-  }
-  const missingCriteria = packet.acceptance_criteria
-    .map((_, index) => index)
-    .filter((index) => !supportedCriteria.has(index));
-  if (missingCriteria.length > 0) {
-    findings.push({ code: 'unsupported_acceptance_criteria', severity: 'medium', detail: `criteria without direct evidence: ${missingCriteria.join(',')}` });
-  }
-  const supportingEvidenceIds = packet.evidence_excerpts.filter((excerpt) => excerpt.supports_claim === true).map((excerpt) => excerpt.id);
-  if (supportingEvidenceIds.length === 0) {
-    findings.push({ code: 'unsupported_claim', severity: 'medium', detail: 'no evidence excerpt directly supports the claimed outcome' });
-  }
   return {
     status: findings.length > 0 ? 'needs_review' : 'passed',
     findings,
-    supporting_evidence_ids: supportingEvidenceIds,
+    supporting_evidence_ids: [],
   };
 }
 
@@ -534,9 +553,9 @@ function makeRecord(packetPath, packetText, packet, opts) {
     created_at: new Date().toISOString(),
     packet_path: packetPath,
     packet_sha256: crypto.createHash('sha256').update(packetText).digest('hex'),
-    packet_id: packet.id || null,
-    truth_label: packet.truth_label || null,
-    claimed_outcome: packet.claimed_outcome || null,
+    packet_id: safePacketString(packet, 'id'),
+    truth_label: safeTruthLabel(packet),
+    claimed_outcome: safePacketString(packet, 'claimed_outcome'),
     deterministic_checks: deterministic,
     jev_advisory: jev,
     recommendation: recommendation(deterministic, jev),
@@ -639,7 +658,7 @@ function summarize(records) {
 function attachExpectedSpan(records, packets) {
   return records.map((record, index) => ({
     ...record,
-    expected_evidence_span: packets[index].expected_evidence_span || null,
+    expected_evidence_span: safeExpectedEvidenceSpan(packets[index]),
   }));
 }
 

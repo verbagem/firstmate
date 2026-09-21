@@ -52,6 +52,7 @@ const supported = new Set([
   'no-expected-span',
   'input-output-only-usage',
   'empty-changed-files',
+  'semantic-labels-ignored',
   'model-echo',
   'bad-usage'
 ]).has(id);
@@ -78,6 +79,7 @@ const span = {
   'no-expected-span': 'receipt-proposal-card-pass',
   'input-output-only-usage': 'receipt-proposal-card-pass',
   'empty-changed-files': 'receipt-proposal-card-pass',
+  'semantic-labels-ignored': 'receipt-proposal-card-pass',
   'model-echo': 'receipt-proposal-card-pass',
   'bad-usage': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
@@ -332,6 +334,42 @@ test_empty_fixture_directory_is_rejected_without_receipts() {
   pass "empty fixture directory is rejected before receipts"
 }
 
+test_mode_specific_inputs_are_rejected_without_receipts() {
+  local screen_ledger screen_summary evaluate_ledger evaluate_summary
+  screen_ledger="$TMP_ROOT/screen-mode.jsonl"
+  screen_summary="$TMP_ROOT/screen-mode-summary.json"
+  evaluate_ledger="$TMP_ROOT/evaluate-mode.jsonl"
+  evaluate_summary="$TMP_ROOT/evaluate-mode-summary.json"
+  rm -f "$screen_ledger" "$screen_summary" "$evaluate_ledger" "$evaluate_summary"
+
+  if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --fixtures "$FIXTURE_DIR" \
+    --ledger "$screen_ledger" \
+    --summary "$screen_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/screen-mode.out" 2> "$TMP_ROOT/screen-mode.err"; then
+    fail "screen with fixtures should be rejected"
+  fi
+  assert_grep "screen does not accept --fixtures" "$TMP_ROOT/screen-mode.err" "screen accepted evaluate-only fixtures input"
+  [ ! -e "$screen_ledger" ] || fail "rejected screen mode input wrote a ledger"
+  [ ! -e "$screen_summary" ] || fail "rejected screen mode input wrote a summary"
+
+  if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" evaluate \
+    --fixtures "$FIXTURE_DIR" \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$evaluate_ledger" \
+    --summary "$evaluate_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/evaluate-mode.out" 2> "$TMP_ROOT/evaluate-mode.err"; then
+    fail "evaluate with packet should be rejected"
+  fi
+  assert_grep "evaluate does not accept --packet" "$TMP_ROOT/evaluate-mode.err" "evaluate accepted screen-only packet input"
+  [ ! -e "$evaluate_ledger" ] || fail "rejected evaluate mode input wrote a ledger"
+  [ ! -e "$evaluate_summary" ] || fail "rejected evaluate mode input wrote a summary"
+  pass "mode-specific inputs are rejected before receipts"
+}
+
 test_authority_boundaries_reject_control_flags() {
   if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
     --packet "$FIXTURE_DIR/01-truthful.json" \
@@ -365,6 +403,108 @@ test_json_stdout_surface_is_rejected() {
   [ ! -e "$json_ledger" ] || fail "rejected json option wrote a ledger"
   [ ! -e "$json_summary" ] || fail "rejected json option wrote a summary"
   pass "json stdout surface is not part of the public contract"
+}
+
+test_malformed_packet_metadata_is_sanitized() {
+  local null_packet bad_metadata_packet metadata_ledger metadata_summary
+  null_packet="$TMP_ROOT/null-packet.json"
+  bad_metadata_packet="$TMP_ROOT/bad-metadata-packet.json"
+  metadata_ledger="$TMP_ROOT/malformed-metadata.jsonl"
+  metadata_summary="$TMP_ROOT/malformed-metadata-summary.json"
+  printf 'null\n' > "$null_packet"
+  jq -n '{
+    schema: "fm-jev-evidence-packet.v1",
+    id: {bad: "id"},
+    claimed_outcome: ["not", "a", "string"],
+    acceptance_criteria: ["criterion"],
+    changed_files: [{path: "bin/fm-jev-evidence-screen.mjs", summary: "summary"}],
+    test_receipts: [{name: "focused check", status: "passed"}],
+    evidence_excerpts: [{id: "evidence-one", text: "packet text"}],
+    truth_label: ["proven"],
+    executable_contract: true,
+    expected_evidence_span: "evidence-one"
+  }' > "$bad_metadata_packet"
+  rm -f "$metadata_ledger" "$metadata_summary"
+
+  env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$null_packet" \
+    --packet "$bad_metadata_packet" \
+    --ledger "$metadata_ledger" \
+    --summary "$metadata_summary" \
+    > "$TMP_ROOT/malformed-metadata.out" \
+    || fail "malformed packets should produce report-only records"
+
+  jq -s -e '
+    length == 2 and
+    all(.[]; .packet_id == null and .truth_label == null and .claimed_outcome == null and .jev_advisory.reason == "malformed-packet")
+  ' "$metadata_ledger" >/dev/null || fail "malformed packet metadata was not sanitized"
+  jq -e '.packets == 2 and .metrics.abstention_rate == 1' "$metadata_summary" >/dev/null \
+    || fail "malformed packet summary did not record abstentions"
+  pass "malformed packet metadata is sanitized in receipts"
+}
+
+test_evidence_span_choice_set_is_validated() {
+  local duplicate_packet reserved_packet bad_expected_packet span_ledger span_summary
+  duplicate_packet="$TMP_ROOT/duplicate-span-id.json"
+  reserved_packet="$TMP_ROOT/reserved-span-id.json"
+  bad_expected_packet="$TMP_ROOT/bad-expected-span.json"
+  span_ledger="$TMP_ROOT/span-validation.jsonl"
+  span_summary="$TMP_ROOT/span-validation-summary.json"
+  jq '.id = "duplicate-span-id" | .evidence_excerpts += [.evidence_excerpts[0]]' \
+    "$FIXTURE_DIR/01-truthful.json" > "$duplicate_packet"
+  jq '.id = "reserved-span-id" | .evidence_excerpts[0].id = "none" | .expected_evidence_span = "none"' \
+    "$FIXTURE_DIR/01-truthful.json" > "$reserved_packet"
+  jq '.id = "bad-expected-span" | .expected_evidence_span = "missing-span"' \
+    "$FIXTURE_DIR/01-truthful.json" > "$bad_expected_packet"
+  rm -f "$span_ledger" "$span_summary"
+
+  env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$duplicate_packet" \
+    --packet "$reserved_packet" \
+    --packet "$bad_expected_packet" \
+    --ledger "$span_ledger" \
+    --summary "$span_summary" \
+    > "$TMP_ROOT/span-validation.out" \
+    || fail "span validation packets should produce report-only malformed records"
+
+  jq -e 'select(.packet_id == "duplicate-span-id") | .jev_advisory.reason == "malformed-packet" and any(.deterministic_checks.findings[]; .detail == "packet.evidence_excerpts[1].id: duplicate evidence span choice")' \
+    "$span_ledger" >/dev/null || fail "duplicate evidence span id was not rejected"
+  jq -e 'select(.packet_id == "reserved-span-id") | .jev_advisory.reason == "malformed-packet" and any(.deterministic_checks.findings[]; .detail == "packet.evidence_excerpts[0].id: reserved evidence span choice")' \
+    "$span_ledger" >/dev/null || fail "reserved evidence span id was not rejected"
+  jq -e 'select(.packet_id == "bad-expected-span") | .jev_advisory.reason == "malformed-packet" and any(.deterministic_checks.findings[]; .detail == "packet.expected_evidence_span: expected none or an evidence excerpt id")' \
+    "$span_ledger" >/dev/null || fail "invalid expected evidence span was not rejected"
+  jq -e '.metrics.evidence_span_quality == null and .metrics.abstention_rate == 1' "$span_summary" >/dev/null \
+    || fail "malformed span packets should not enter span quality scoring"
+  pass "evidence span choices are validated as a bounded set"
+}
+
+test_semantic_fixture_labels_do_not_drive_deterministic_screening() {
+  local semantic_packet semantic_ledger semantic_summary
+  semantic_packet="$TMP_ROOT/semantic-labels-ignored.json"
+  semantic_ledger="$TMP_ROOT/semantic-labels-ignored.jsonl"
+  semantic_summary="$TMP_ROOT/semantic-labels-ignored-summary.json"
+  jq '.id = "semantic-labels-ignored" |
+      .evidence_excerpts[0].supports_claim = false |
+      .evidence_excerpts[0].contradicts_claim = true |
+      .evidence_excerpts[0].supports_criteria = []' \
+    "$FIXTURE_DIR/01-truthful.json" > "$semantic_packet"
+  rm -f "$semantic_ledger" "$semantic_summary"
+
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$semantic_packet" \
+    --ledger "$semantic_ledger" \
+    --summary "$semantic_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/semantic-labels-ignored.out" \
+    || fail "semantic label variant should still screen"
+
+  jq -e '
+    .deterministic_checks.status == "passed" and
+    .deterministic_checks.findings == [] and
+    .jev_advisory.status == "advisory_supported" and
+    .recommendation.review_priority == "normal"
+  ' "$semantic_ledger" >/dev/null || fail "semantic fixture labels drove deterministic screening"
+  pass "semantic fixture labels do not drive deterministic screening"
 }
 
 test_low_confidence_and_malformed_response_route_to_review() {
@@ -467,8 +607,12 @@ test_summary_metric_edges_are_scored_from_public_outputs
 test_invalid_usage_values_are_filtered
 test_empty_changed_files_route_to_review
 test_empty_fixture_directory_is_rejected_without_receipts
+test_mode_specific_inputs_are_rejected_without_receipts
 test_authority_boundaries_reject_control_flags
 test_json_stdout_surface_is_rejected
+test_malformed_packet_metadata_is_sanitized
+test_evidence_span_choice_set_is_validated
+test_semantic_fixture_labels_do_not_drive_deterministic_screening
 test_low_confidence_and_malformed_response_route_to_review
 test_confidence_floor_option_is_not_public
 test_malformed_confidence_and_span_route_to_review
