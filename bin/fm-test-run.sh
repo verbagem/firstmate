@@ -303,6 +303,9 @@ family_for_basename() {
     fm-backend-orca.test.sh)
       printf '%s\n' orca
       ;;
+    fm-dispatch-resolve.test.sh)
+      printf '%s\n' standalone
+      ;;
     *)
       printf '%s\n' unclassified
       ;;
@@ -334,6 +337,7 @@ snapshot-bearings
 cmux
 zellij
 orca
+standalone
 unclassified
 EOF
 }
@@ -533,6 +537,7 @@ tests/fm-control.test.sh 36712
 tests/fm-cursor-harness.test.sh 30071
 tests/fm-cursor-primary-live-e2e.test.sh 20
 tests/fm-cursor-primary.test.sh 52324
+tests/fm-dispatch-resolve.test.sh 1800
 tests/fm-daemon.test.sh 25834
 tests/fm-documentation-audiences.test.sh 642
 tests/fm-fleet-snapshot-view.test.sh 6995
@@ -1139,6 +1144,16 @@ families_for_changed_path() {
     bin/fm-sessionstart-nudge.sh|bin/fm-startup-network.sh|bin/fm-tangle*|bin/fm-update.sh|\
     bin/fm-gate-refuse*|bin/fm-lock*|bin/fm-quota-axi-lib.sh)
       printf '%s\n' session-bootstrap
+      case "$path" in
+        bin/fm-quota-axi-lib.sh) printf '%s\n' "__script__:fm-dispatch-resolve.test.sh" ;;
+      esac
+      ;;
+    bin/fm-dispatch-resolve.sh)
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
+      ;;
+    bin/fm-env-lib.sh)
+      printf '%s\n' pr-forge
+      printf '%s\n' "__script__:fm-dispatch-resolve.test.sh"
       ;;
     bin/fm-sessionstart-run.sh|.claude/settings.json|.codex/hooks.json|\
     .pi/extensions/fm-primary-turnend-guard.ts)

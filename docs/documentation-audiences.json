@@ -405,6 +405,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/dispatch-resolve.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/local-inference.md",
       "audience": "maintainer-verification"
     },
