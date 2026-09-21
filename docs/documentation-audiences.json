@@ -417,6 +417,10 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/verification/jev-context-replay.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "docs/verification/jev-evidence-screening.md",
       "audience": "maintainer-verification"
     },
