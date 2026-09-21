@@ -1,0 +1,27 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "missing-test",
+  "claimed_outcome": "The completion classifier handles malformed packets safely.",
+  "acceptance_criteria": [
+    "Malformed packet responses route to needs_review."
+  ],
+  "changed_files": [
+    {
+      "path": "bin/fm-jev-evidence-screen.sh",
+      "summary": "The screening command handles malformed responses."
+    }
+  ],
+  "test_receipts": [],
+  "evidence_excerpts": [
+    {
+      "id": "source-claim-only",
+      "text": "The implementation summary says malformed responses route to needs_review.",
+      "supports_claim": true,
+      "contradicts_claim": false,
+      "supports_criteria": [0]
+    }
+  ],
+  "truth_label": "unsupported",
+  "executable_contract": true,
+  "expected_evidence_span": "source-claim-only"
+}

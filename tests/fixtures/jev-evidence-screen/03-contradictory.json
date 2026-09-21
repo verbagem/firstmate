@@ -1,0 +1,33 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "contradictory",
+  "claimed_outcome": "The branch has no no-mistakes gate failures.",
+  "acceptance_criteria": [
+    "No receipt contradicts the completion claim."
+  ],
+  "changed_files": [
+    {
+      "path": "bin/fm-dispatch-resolve.sh",
+      "summary": "Dispatch resolver behavior was changed."
+    }
+  ],
+  "test_receipts": [
+    {
+      "name": "no-mistakes review",
+      "status": "failed",
+      "kind": "review"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "failed-gate",
+      "text": "no-mistakes review reported one blocking finding and did not reach checks-passed.",
+      "supports_claim": false,
+      "contradicts_claim": true,
+      "supports_criteria": []
+    }
+  ],
+  "truth_label": "contradicted",
+  "executable_contract": true,
+  "expected_evidence_span": "failed-gate"
+}

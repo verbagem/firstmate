@@ -1,0 +1,34 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "unsupported",
+  "claimed_outcome": "The new guard caught every unsupported completion claim.",
+  "acceptance_criteria": [
+    "Unsupported claims are identified from direct evidence.",
+    "The summary includes unsupported-claim recall."
+  ],
+  "changed_files": [
+    {
+      "path": "docs/verification/proposal-cards.md",
+      "summary": "Documentation mentions proposal-card validation evidence."
+    }
+  ],
+  "test_receipts": [
+    {
+      "name": "bin/fm-doc-audience-check.sh",
+      "status": "passed",
+      "kind": "documentation"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "doc-only",
+      "text": "The proposal-card verification record explains an older read-only stalled-work recommendation.",
+      "supports_claim": false,
+      "contradicts_claim": false,
+      "supports_criteria": []
+    }
+  ],
+  "truth_label": "unsupported",
+  "executable_contract": true,
+  "expected_evidence_span": "doc-only"
+}

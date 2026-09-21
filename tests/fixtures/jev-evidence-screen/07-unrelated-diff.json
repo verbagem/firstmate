@@ -1,0 +1,40 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "unrelated-diff",
+  "claimed_outcome": "The evidence packet proves the dispatch resolver behavior.",
+  "acceptance_criteria": [
+    "Only dispatch resolver files changed."
+  ],
+  "changed_files": [
+    {
+      "path": "assets/logo.png",
+      "summary": "Unrelated image asset changed."
+    }
+  ],
+  "scope": {
+    "allowed_paths": [
+      "bin/fm-dispatch-resolve.sh",
+      "tests/fm-dispatch-resolve.test.sh",
+      "docs/verification/dispatch-resolve.md"
+    ]
+  },
+  "test_receipts": [
+    {
+      "name": "tests/fm-dispatch-resolve.test.sh",
+      "status": "passed",
+      "kind": "public-interface"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "asset-only",
+      "text": "The only changed path in this packet is assets/logo.png.",
+      "supports_claim": false,
+      "contradicts_claim": true,
+      "supports_criteria": []
+    }
+  ],
+  "truth_label": "out-of-scope",
+  "executable_contract": true,
+  "expected_evidence_span": "asset-only"
+}
