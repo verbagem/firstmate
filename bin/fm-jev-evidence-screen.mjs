@@ -513,6 +513,7 @@ function ensureParent(filePath) {
 }
 
 function appendLedger(ledgerPath, records) {
+  if (records.length === 0) throw new Error('no records to append');
   ensureParent(ledgerPath);
   const text = records.map((record) => JSON.stringify(record)).join('\n');
   fs.appendFileSync(ledgerPath, `${text}\n`, 'utf8');
@@ -528,12 +529,19 @@ function ratio(numerator, denominator) {
   return Number((numerator / denominator).toFixed(4));
 }
 
+function usageTokenTotal(usage) {
+  if (typeof usage?.total_tokens === 'number' && Number.isFinite(usage.total_tokens)) return usage.total_tokens;
+  const input = typeof usage?.input_tokens === 'number' && Number.isFinite(usage.input_tokens) ? usage.input_tokens : 0;
+  const output = typeof usage?.output_tokens === 'number' && Number.isFinite(usage.output_tokens) ? usage.output_tokens : 0;
+  return input + output;
+}
+
 function summarize(records) {
   const unsupportedTruth = records.filter((record) => ['unsupported', 'contradicted'].includes(record.truth_label));
   const unsupportedCaught = unsupportedTruth.filter((record) => record.recommendation.review_priority === 'needs_review');
   const provenTruth = records.filter((record) => record.truth_label === 'proven');
   const falseEscalations = provenTruth.filter((record) => record.recommendation.review_priority === 'needs_review');
-  const spanEligible = records.filter((record) => record.jev_advisory.abstained === false && record.packet_id);
+  const spanEligible = records.filter((record) => record.jev_advisory.abstained === false && record.expected_evidence_span);
   const spanExact = spanEligible.filter((record) => {
     const expected = record.expected_evidence_span;
     return expected && record.jev_advisory.evidence_span?.choice === expected;
@@ -545,7 +553,7 @@ function summarize(records) {
     return deterministicNeedsReview !== jevNeedsReview;
   });
   const totalLatency = records.reduce((sum, record) => sum + (Number(record.jev_advisory.latency_ms) || 0), 0);
-  const totalTokens = records.reduce((sum, record) => sum + (Number(record.jev_advisory.usage?.total_tokens ?? record.jev_advisory.usage?.input_tokens ?? 0) || 0), 0);
+  const totalTokens = records.reduce((sum, record) => sum + usageTokenTotal(record.jev_advisory.usage), 0);
   const totalCost = records.reduce((sum, record) => sum + (Number(record.jev_advisory.usage?.cost_usd) || 0), 0);
   const abstentions = records.filter((record) => record.jev_advisory.abstained).length;
   return {
@@ -588,6 +596,7 @@ function attachExpectedSpan(records, packets) {
 function run() {
   const { command, opts } = parseArgs(process.argv.slice(2));
   const packetPaths = command === 'evaluate' ? listFixturePackets(opts.fixtures) : opts.packets;
+  if (command === 'evaluate' && packetPaths.length === 0) dieUsage('evaluate requires at least one fixture packet');
   const packets = [];
   const records = [];
   for (const packetPath of packetPaths) {

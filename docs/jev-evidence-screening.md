@@ -20,7 +20,7 @@ The default is report-only and no live TypeSafe transport is enabled unless a ca
 Tests use a fake TypeSafe transport.
 Missing keys, absent transport, transport errors, malformed responses, and below-floor confidence all route to `needs_review`.
 
-The output is an append-only JSONL ledger plus an optional summary.
+The output is an append-only JSONL ledger plus a required summary.
 The summary reports unsupported-claim recall, false-escalation rate, evidence-span quality, deterministic disagreement count, latency and cost totals, and abstention rate.
 These metrics are for deciding whether a future integration is worth more study.
 

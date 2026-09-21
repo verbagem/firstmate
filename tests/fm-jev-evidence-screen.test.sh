@@ -42,7 +42,7 @@ if (id === 'malformed-response') {
 
 const low = id === 'low-confidence';
 const malformedConfidence = id === 'malformed-confidence';
-const supported = new Set(['truthful', 'valid-no-executable-contract', 'stale-head', 'low-confidence', 'malformed-confidence', 'fabricated-span']).has(id);
+const supported = new Set(['truthful', 'valid-no-executable-contract', 'stale-head', 'low-confidence', 'malformed-confidence', 'fabricated-span', 'no-expected-span', 'input-output-only-usage']).has(id);
 const unsupported = new Set(['unsupported', 'missing-test']).has(id);
 const contradicted = new Set(['contradictory', 'deceptive-summary', 'unrelated-diff']).has(id);
 const outOfScope = id === 'unrelated-diff';
@@ -63,10 +63,22 @@ const span = {
   'low-confidence': 'receipt-proposal-card-pass',
   'malformed-confidence': 'receipt-proposal-card-pass',
   'fabricated-span': 'fabricated-evidence',
+  'no-expected-span': 'receipt-proposal-card-pass',
+  'input-output-only-usage': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
 }[id] || 'none';
 
 const confidence = malformedConfidence ? 1.01 : low ? 0.41 : 0.92;
+const usage = {
+  input_tokens: 100,
+  output_tokens: 20,
+  total_tokens: 120,
+  cost_usd: 0.00012,
+  private_echo: request.state.packet.evidence_excerpts[0]?.text || '',
+  cost: { total: 999 },
+  cache_read_tokens: 7
+};
+if (id === 'input-output-only-usage') delete usage.total_tokens;
 process.stdout.write(JSON.stringify({
   model: 'jev-fake-1.13.0',
   answers: {
@@ -76,15 +88,7 @@ process.stdout.write(JSON.stringify({
     risk_category: { type: 'choice', choice: risk, confidence: 0.9 },
     evidence_span: { type: 'choice', choice: span, confidence: 0.9 }
   },
-  usage: {
-    input_tokens: 100,
-    output_tokens: 20,
-    total_tokens: 120,
-    cost_usd: 0.00012,
-    private_echo: request.state.packet.evidence_excerpts[0]?.text || '',
-    cost: { total: 999 },
-    cache_read_tokens: 7
-  }
+  usage
 }));
 MJS
 chmod +x "$FAKE"
@@ -169,6 +173,56 @@ test_screen_requires_summary_and_distinct_outputs() {
   assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/same-output.err" "same output path was not rejected"
   [ ! -e "$same_path" ] || fail "same-output error wrote over an output path"
   pass "screen requires separate ledger and summary outputs"
+}
+
+test_summary_metric_edges_are_scored_from_public_outputs() {
+  local no_span_packet no_total_packet
+  no_span_packet="$TMP_ROOT/no-expected-span.json"
+  jq '.id = "no-expected-span" | del(.expected_evidence_span)' "$FIXTURE_DIR/01-truthful.json" > "$no_span_packet"
+  rm -f "$LEDGER" "$SUMMARY"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$no_span_packet" \
+    --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/no-expected-span.out" \
+    || fail "packet without expected span should still screen"
+  jq -e '.metrics.evidence_span_quality == null and .metrics.evidence_span_quality_count == "0/0"' \
+    "$SUMMARY" >/dev/null || fail "unscored expected span polluted evidence-span quality"
+
+  no_total_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" input-output-only-usage)
+  rm -f "$LEDGER" "$SUMMARY"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$no_total_packet" \
+    --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/input-output-only-usage.out" \
+    || fail "input/output-only usage packet should still screen"
+  jq -e '.metrics.tokens_total == 120' "$SUMMARY" >/dev/null \
+    || fail "summary did not sum input and output tokens without total_tokens"
+  pass "summary metrics score only expected spans and complete token totals"
+}
+
+test_empty_fixture_directory_is_rejected_without_receipts() {
+  local empty_dir empty_ledger empty_summary
+  empty_dir="$TMP_ROOT/empty-fixtures"
+  empty_ledger="$TMP_ROOT/empty-ledger.jsonl"
+  empty_summary="$TMP_ROOT/empty-summary.json"
+  mkdir -p "$empty_dir"
+  rm -f "$empty_ledger" "$empty_summary"
+  if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" evaluate \
+    --fixtures "$empty_dir" \
+    --ledger "$empty_ledger" \
+    --summary "$empty_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/empty-fixtures.out" 2> "$TMP_ROOT/empty-fixtures.err"; then
+    fail "empty fixture evaluation should be rejected"
+  fi
+  assert_grep "evaluate requires at least one fixture packet" "$TMP_ROOT/empty-fixtures.err" "empty fixtures were not rejected"
+  [ ! -e "$empty_ledger" ] || fail "empty fixture rejection wrote a ledger"
+  [ ! -e "$empty_summary" ] || fail "empty fixture rejection wrote a summary"
+  pass "empty fixture directory is rejected before receipts"
 }
 
 test_authority_boundaries_reject_control_flags() {
@@ -263,6 +317,8 @@ test_deterministic_failure_takes_precedence_over_jev_support() {
 test_no_key_is_report_only_and_makes_no_transport_call
 test_fixture_corpus_metrics_and_append_only_receipts
 test_screen_requires_summary_and_distinct_outputs
+test_summary_metric_edges_are_scored_from_public_outputs
+test_empty_fixture_directory_is_rejected_without_receipts
 test_authority_boundaries_reject_control_flags
 test_low_confidence_and_malformed_response_route_to_review
 test_confidence_floor_option_is_not_public
