@@ -13,14 +13,15 @@ const SUPPORT_CHOICES = new Set(['supported', 'unsupported', 'ambiguous', 'out_o
 const CONTRADICTION_CHOICES = new Set(['yes', 'no', 'ambiguous']);
 const MISSING_CHOICES = new Set(['none', 'direct_support', 'acceptance_criteria', 'test_receipts', 'changed_files', 'unknown']);
 const RISK_CHOICES = new Set(['low', 'medium', 'high', 'out_of_scope']);
-const DEFAULT_CONFIDENCE_FLOOR = 0.6;
+const CONFIDENCE_FLOOR = 0.6;
+const USAGE_FIELDS = ['input_tokens', 'output_tokens', 'total_tokens', 'cost_usd'];
 
 function usage() {
   process.stdout.write(`fm-jev-evidence-screen.sh - advisory-only Jev evidence/completion screening pilot
 
 Usage:
-  fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> [--summary <summary.json>] [--typesafe-command <path>] [--confidence-floor <0..1>] [--json]
-  fm-jev-evidence-screen.sh evaluate --fixtures <dir> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--confidence-floor <0..1>] [--json]
+  fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--json]
+  fm-jev-evidence-screen.sh evaluate --fixtures <dir> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--json]
 
 The result is report-only.
 Missing keys, low confidence, malformed responses, and transport errors route to needs_review.
@@ -30,14 +31,6 @@ Missing keys, low confidence, malformed responses, and transport errors route to
 function dieUsage(message) {
   process.stderr.write(`fm-jev-evidence-screen: ${message}\n`);
   process.exit(2);
-}
-
-function parseConfidence(raw) {
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value < 0 || value > 1) {
-    dieUsage('--confidence-floor must be a number from 0 to 1');
-  }
-  return value;
 }
 
 function parseArgs(argv) {
@@ -59,7 +52,6 @@ function parseArgs(argv) {
     ledger: undefined,
     summary: undefined,
     typesafeCommand: undefined,
-    confidenceFloor: DEFAULT_CONFIDENCE_FLOOR,
     json: false,
   };
   while (args.length > 0) {
@@ -80,9 +72,6 @@ function parseArgs(argv) {
       case '--typesafe-command':
         opts.typesafeCommand = requireValue(args.shift(), '--typesafe-command');
         break;
-      case '--confidence-floor':
-        opts.confidenceFloor = parseConfidence(requireValue(args.shift(), '--confidence-floor'));
-        break;
       case '--json':
         opts.json = true;
         break;
@@ -97,9 +86,10 @@ function parseArgs(argv) {
     }
   }
   if (!opts.ledger) dieUsage('--ledger is required');
+  if (!opts.summary) dieUsage('--summary is required');
+  if (path.resolve(opts.ledger) === path.resolve(opts.summary)) dieUsage('--ledger and --summary must be different paths');
   if (command === 'screen' && opts.packets.length === 0) dieUsage('screen requires at least one --packet');
   if (command === 'evaluate' && !opts.fixtures) dieUsage('evaluate requires --fixtures');
-  if (command === 'evaluate' && !opts.summary) dieUsage('evaluate requires --summary');
   return { command, opts };
 }
 
@@ -124,6 +114,16 @@ function readJsonFile(filePath, label) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function safeUsage(usage) {
+  if (!isPlainObject(usage)) return {};
+  const result = {};
+  for (const field of USAGE_FIELDS) {
+    const value = usage[field];
+    if (typeof value === 'number' && Number.isFinite(value)) result[field] = value;
+  }
+  return result;
 }
 
 function requireString(obj, key, at, errors) {
@@ -371,14 +371,16 @@ function callJev(packet, opts) {
   } catch (error) {
     return { status: 'needs_review', abstained: true, reason: 'malformed-response-json', latency_ms: latency, model: 'unknown', usage: {} };
   }
-  const parsed = parseJevResponse(response, opts.confidenceFloor);
+  const parsed = parseJevResponse(response, packet);
   return { ...parsed, latency_ms: latency };
 }
 
-function parseJevResponse(response, confidenceFloor) {
+function parseJevResponse(response, packet) {
   if (!isPlainObject(response) || !isPlainObject(response.answers)) {
-    return { status: 'needs_review', abstained: true, reason: 'malformed-response-shape', model: response?.model || 'unknown', usage: response?.usage || {} };
+    return { status: 'needs_review', abstained: true, reason: 'malformed-response-shape', model: response?.model || 'unknown', usage: safeUsage(response?.usage) };
   }
+  const usage = safeUsage(response.usage);
+  const evidenceSpanChoices = new Set(['none', ...packet.evidence_excerpts.map((excerpt) => excerpt.id)]);
   const answer = (name, allowed) => {
     const item = response.answers[name];
     if (!isPlainObject(item) || typeof item.choice !== 'string' || !allowed.has(item.choice)) {
@@ -387,7 +389,10 @@ function parseJevResponse(response, confidenceFloor) {
     if (typeof item.confidence !== 'number' || !Number.isFinite(item.confidence)) {
       return { ok: false, reason: `malformed-${name}-confidence` };
     }
-    if (item.confidence < confidenceFloor) {
+    if (item.confidence < 0 || item.confidence > 1) {
+      return { ok: false, reason: `malformed-${name}-confidence` };
+    }
+    if (item.confidence < CONFIDENCE_FLOOR) {
       return { ok: false, lowConfidence: true, reason: `low-confidence-${name}`, choice: item.choice, confidence: item.confidence };
     }
     return { ok: true, choice: item.choice, confidence: item.confidence };
@@ -404,14 +409,17 @@ function parseJevResponse(response, confidenceFloor) {
       abstained: true,
       reason: failed.reason,
       model: response.model || 'unknown',
-      usage: response.usage || {},
+      usage,
     };
   }
-  if (!isPlainObject(span) || typeof span.choice !== 'string' || typeof span.confidence !== 'number' || !Number.isFinite(span.confidence)) {
-    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: response.model || 'unknown', usage: response.usage || {} };
+  if (!isPlainObject(span) || typeof span.choice !== 'string' || !evidenceSpanChoices.has(span.choice) || typeof span.confidence !== 'number' || !Number.isFinite(span.confidence)) {
+    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: response.model || 'unknown', usage };
   }
-  if (span.confidence < confidenceFloor) {
-    return { status: 'needs_review', abstained: true, reason: 'low-confidence-evidence_span', model: response.model || 'unknown', usage: response.usage || {} };
+  if (span.confidence < 0 || span.confidence > 1) {
+    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: response.model || 'unknown', usage };
+  }
+  if (span.confidence < CONFIDENCE_FLOOR) {
+    return { status: 'needs_review', abstained: true, reason: 'low-confidence-evidence_span', model: response.model || 'unknown', usage };
   }
   const needsReview = directSupport.choice !== 'supported' || contradiction.choice !== 'no' || missingEvidence.choice !== 'none' || ['high', 'out_of_scope'].includes(riskCategory.choice);
   return {
@@ -424,7 +432,7 @@ function parseJevResponse(response, confidenceFloor) {
     missing_evidence: missingEvidence,
     risk_category: riskCategory,
     evidence_span: { choice: span.choice, confidence: span.confidence },
-    usage: response.usage || {},
+    usage,
   };
 }
 
@@ -590,12 +598,12 @@ function run() {
   const enriched = attachExpectedSpan(records, packets);
   appendLedger(opts.ledger, enriched);
   const summary = summarize(enriched);
-  if (opts.summary) writeSummary(opts.summary, summary);
+  writeSummary(opts.summary, summary);
   if (opts.json) {
     process.stdout.write(`${JSON.stringify({ records: enriched, summary }, null, 2)}\n`);
   } else {
     process.stdout.write(`jev-evidence-screen: packets=${enriched.length} needs_review=${enriched.filter((record) => record.recommendation.review_priority === 'needs_review').length} ledger=${opts.ledger}\n`);
-    if (opts.summary) process.stdout.write(`summary=${opts.summary}\n`);
+    process.stdout.write(`summary=${opts.summary}\n`);
   }
 }
 

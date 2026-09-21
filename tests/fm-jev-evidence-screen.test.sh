@@ -41,7 +41,8 @@ if (id === 'malformed-response') {
 }
 
 const low = id === 'low-confidence';
-const supported = new Set(['truthful', 'valid-no-executable-contract', 'stale-head']).has(id);
+const malformedConfidence = id === 'malformed-confidence';
+const supported = new Set(['truthful', 'valid-no-executable-contract', 'stale-head', 'low-confidence', 'malformed-confidence', 'fabricated-span']).has(id);
 const unsupported = new Set(['unsupported', 'missing-test']).has(id);
 const contradicted = new Set(['contradictory', 'deceptive-summary', 'unrelated-diff']).has(id);
 const outOfScope = id === 'unrelated-diff';
@@ -59,11 +60,13 @@ const span = {
   'deceptive-summary': 'bin-file-changed',
   'unrelated-diff': 'asset-only',
   'valid-no-executable-contract': 'doc-evidence',
-  'low-confidence': 'low-confidence-span',
+  'low-confidence': 'receipt-proposal-card-pass',
+  'malformed-confidence': 'receipt-proposal-card-pass',
+  'fabricated-span': 'fabricated-evidence',
   'malformed-response': 'malformed-span'
 }[id] || 'none';
 
-const confidence = low ? 0.41 : 0.92;
+const confidence = malformedConfidence ? 1.01 : low ? 0.41 : 0.92;
 process.stdout.write(JSON.stringify({
   model: 'jev-fake-1.13.0',
   answers: {
@@ -73,7 +76,15 @@ process.stdout.write(JSON.stringify({
     risk_category: { type: 'choice', choice: risk, confidence: 0.9 },
     evidence_span: { type: 'choice', choice: span, confidence: 0.9 }
   },
-  usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120, cost_usd: 0.00012 }
+  usage: {
+    input_tokens: 100,
+    output_tokens: 20,
+    total_tokens: 120,
+    cost_usd: 0.00012,
+    private_echo: request.state.packet.evidence_excerpts[0]?.text || '',
+    cost: { total: 999 },
+    cache_read_tokens: 7
+  }
 }));
 MJS
 chmod +x "$FAKE"
@@ -129,13 +140,42 @@ test_fixture_corpus_metrics_and_append_only_receipts() {
   ' "$SUMMARY" >/dev/null || fail "summary metrics missing required advisory evaluation measures"
   jq -e 'select(.packet_id == "valid-no-executable-contract") | .deterministic_checks.status == "passed" and .recommendation.review_priority == "normal"' \
     "$LEDGER" >/dev/null || fail "valid no-executable-contract packet should not require a missing-test failure"
+  jq -e 'select(.packet_id == "truthful") | .jev_advisory.usage == {"input_tokens":100,"output_tokens":20,"total_tokens":120,"cost_usd":0.00012}' \
+    "$LEDGER" >/dev/null || fail "ledger persisted usage fields outside the numeric allowlist"
   pass "fixture corpus produces append-only ledger and required metrics"
+}
+
+test_screen_requires_summary_and_distinct_outputs() {
+  local missing_ledger same_path
+  missing_ledger="$TMP_ROOT/missing-summary.jsonl"
+  same_path="$TMP_ROOT/same-output.json"
+  rm -f "$missing_ledger" "$same_path"
+  if env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$missing_ledger" \
+    > "$TMP_ROOT/missing-summary.out" 2> "$TMP_ROOT/missing-summary.err"; then
+    fail "screen without summary should be a usage error"
+  fi
+  assert_grep "--summary is required" "$TMP_ROOT/missing-summary.err" "screen did not require summary output"
+  [ ! -e "$missing_ledger" ] || fail "missing-summary error wrote a ledger"
+
+  if env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$same_path" \
+    --summary "$same_path" \
+    > "$TMP_ROOT/same-output.out" 2> "$TMP_ROOT/same-output.err"; then
+    fail "same ledger and summary path should be rejected"
+  fi
+  assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/same-output.err" "same output path was not rejected"
+  [ ! -e "$same_path" ] || fail "same-output error wrote over an output path"
+  pass "screen requires separate ledger and summary outputs"
 }
 
 test_authority_boundaries_reject_control_flags() {
   if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
     --packet "$FIXTURE_DIR/01-truthful.json" \
     --ledger "$TMP_ROOT/control.jsonl" \
+    --summary "$TMP_ROOT/control-summary.json" \
     --approve-merge \
     > "$TMP_ROOT/control.out" 2> "$TMP_ROOT/control.err"; then
     fail "control authority flag should be rejected"
@@ -153,6 +193,7 @@ test_low_confidence_and_malformed_response_route_to_review() {
     --packet "$low_packet" \
     --packet "$malformed_packet" \
     --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
     --typesafe-command "$FAKE" \
     > "$TMP_ROOT/bad-response.out" \
     || fail "low confidence and malformed responses should still produce report-only records"
@@ -163,11 +204,48 @@ test_low_confidence_and_malformed_response_route_to_review() {
   pass "low-confidence and malformed responses route to needs_review"
 }
 
+test_confidence_floor_option_is_not_public() {
+  rm -f "$TMP_ROOT/confidence-floor.jsonl" "$TMP_ROOT/confidence-floor-summary.json"
+  if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$TMP_ROOT/confidence-floor.jsonl" \
+    --summary "$TMP_ROOT/confidence-floor-summary.json" \
+    --confidence-floor 0 \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/confidence-floor.out" 2> "$TMP_ROOT/confidence-floor.err"; then
+    fail "confidence floor should not be a public option"
+  fi
+  assert_grep "unknown option: --confidence-floor" "$TMP_ROOT/confidence-floor.err" "confidence-floor option was still accepted"
+  [ ! -e "$TMP_ROOT/confidence-floor.jsonl" ] || fail "rejected confidence-floor call wrote a ledger"
+  pass "confidence floor is fixed inside the advisory pilot"
+}
+
+test_malformed_confidence_and_span_route_to_review() {
+  local confidence_packet span_packet
+  confidence_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" malformed-confidence)
+  span_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" fabricated-span)
+  rm -f "$LEDGER" "$SUMMARY"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$confidence_packet" \
+    --packet "$span_packet" \
+    --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/malformed-advisory.out" \
+    || fail "malformed advisory fields should still produce report-only records"
+  jq -e 'select(.packet_id == "malformed-confidence") | .jev_advisory.status == "needs_review" and .jev_advisory.reason == "malformed-direct_support-confidence"' \
+    "$LEDGER" >/dev/null || fail "confidence above 1 did not route to malformed needs_review"
+  jq -e 'select(.packet_id == "fabricated-span") | .jev_advisory.status == "needs_review" and .jev_advisory.reason == "malformed-evidence_span"' \
+    "$LEDGER" >/dev/null || fail "fabricated evidence span did not route to malformed needs_review"
+  pass "malformed confidence and fabricated span route to needs_review"
+}
+
 test_deterministic_failure_takes_precedence_over_jev_support() {
   rm -f "$LEDGER"
   TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
     --packet "$FIXTURE_DIR/04-stale-head.json" \
     --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
     --typesafe-command "$FAKE" \
     > "$TMP_ROOT/stale-head.out" \
     || fail "stale-head packet screen failed"
@@ -184,6 +262,9 @@ test_deterministic_failure_takes_precedence_over_jev_support() {
 
 test_no_key_is_report_only_and_makes_no_transport_call
 test_fixture_corpus_metrics_and_append_only_receipts
+test_screen_requires_summary_and_distinct_outputs
 test_authority_boundaries_reject_control_flags
 test_low_confidence_and_malformed_response_route_to_review
+test_confidence_floor_option_is_not_public
+test_malformed_confidence_and_span_route_to_review
 test_deterministic_failure_takes_precedence_over_jev_support

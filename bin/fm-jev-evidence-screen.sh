@@ -8,8 +8,8 @@
 # Firstmate runtime state.
 #
 # Usage:
-#   fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> [--summary <summary.json>] [--typesafe-command <path>] [--confidence-floor <0..1>] [--json]
-#   fm-jev-evidence-screen.sh evaluate --fixtures <dir> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--confidence-floor <0..1>] [--json]
+#   fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--json]
+#   fm-jev-evidence-screen.sh evaluate --fixtures <dir> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--json]
 #
 # Packet schema owner: bin/fm-jev-evidence-screen.mjs.
 # Documentation: docs/jev-evidence-screening.md.
