@@ -13,6 +13,8 @@ const SUPPORT_CHOICES = new Set(['supported', 'unsupported', 'ambiguous', 'out_o
 const CONTRADICTION_CHOICES = new Set(['yes', 'no', 'ambiguous']);
 const MISSING_CHOICES = new Set(['none', 'direct_support', 'acceptance_criteria', 'test_receipts', 'changed_files', 'unknown']);
 const RISK_CHOICES = new Set(['low', 'medium', 'high', 'out_of_scope']);
+const REQUESTED_JEV_MODEL = 'jev-latest';
+const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
 const CONFIDENCE_FLOOR = 0.6;
 const USAGE_FIELDS = ['input_tokens', 'output_tokens', 'total_tokens', 'cost_usd'];
 
@@ -83,7 +85,7 @@ function parseArgs(argv) {
   }
   if (!opts.ledger) dieUsage('--ledger is required');
   if (!opts.summary) dieUsage('--summary is required');
-  if (path.resolve(opts.ledger) === path.resolve(opts.summary)) dieUsage('--ledger and --summary must be different paths');
+  if (sameOutputFile(opts.ledger, opts.summary)) dieUsage('--ledger and --summary must be different paths');
   if (command === 'screen' && opts.packets.length === 0) dieUsage('screen requires at least one --packet');
   if (command === 'evaluate' && !opts.fixtures) dieUsage('evaluate requires --fixtures');
   return { command, opts };
@@ -110,6 +112,40 @@ function readJsonFile(filePath, label) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function localJevModelId() {
+  if (!MODEL_ID_PATTERN.test(REQUESTED_JEV_MODEL)) throw new Error('configured Jev model id is invalid');
+  return REQUESTED_JEV_MODEL;
+}
+
+function existingFileIdentity(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.dev}:${stat.ino}`;
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes(error.code)) return null;
+    throw error;
+  }
+}
+
+function canonicalFuturePath(filePath) {
+  const resolved = path.resolve(filePath);
+  const parent = path.dirname(resolved);
+  try {
+    return path.join(fs.realpathSync.native(parent), path.basename(resolved));
+  } catch (error) {
+    if (['ENOENT', 'ENOTDIR'].includes(error.code)) return resolved;
+    throw error;
+  }
+}
+
+function sameOutputFile(left, right) {
+  if (path.resolve(left) === path.resolve(right)) return true;
+  const leftIdentity = existingFileIdentity(left);
+  const rightIdentity = existingFileIdentity(right);
+  if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
+  return canonicalFuturePath(left) === canonicalFuturePath(right);
 }
 
 function safeUsage(usage) {
@@ -221,6 +257,9 @@ function validatePacket(packet) {
 
 function deterministicChecks(packet) {
   const findings = [];
+  if (packet.changed_files.length === 0) {
+    findings.push({ code: 'missing_changed_file_summary', severity: 'high', detail: 'no changed-file summary is present' });
+  }
   const allowed = packet.scope?.allowed_paths;
   if (Array.isArray(allowed) && allowed.length > 0) {
     for (const file of packet.changed_files) {
@@ -271,7 +310,7 @@ function deterministicChecks(packet) {
 function makeJevRequest(packet) {
   const criteria = Object.fromEntries(packet.evidence_excerpts.map((excerpt) => [excerpt.id, excerpt.text]));
   return {
-    model: 'jev-latest',
+    model: localJevModelId(),
     state: {
       packet: {
         id: packet.id,
@@ -356,7 +395,7 @@ function callJev(packet, opts) {
       abstained: true,
       reason: `transport-error:${error.status ?? error.signal ?? error.code ?? 'unknown'}`,
       latency_ms: Date.now() - started,
-      model: 'unknown',
+      model: localJevModelId(),
       usage: {},
     };
   }
@@ -365,7 +404,7 @@ function callJev(packet, opts) {
   try {
     response = JSON.parse(stdout);
   } catch (error) {
-    return { status: 'needs_review', abstained: true, reason: 'malformed-response-json', latency_ms: latency, model: 'unknown', usage: {} };
+    return { status: 'needs_review', abstained: true, reason: 'malformed-response-json', latency_ms: latency, model: localJevModelId(), usage: {} };
   }
   const parsed = parseJevResponse(response, packet);
   return { ...parsed, latency_ms: latency };
@@ -373,7 +412,7 @@ function callJev(packet, opts) {
 
 function parseJevResponse(response, packet) {
   if (!isPlainObject(response) || !isPlainObject(response.answers)) {
-    return { status: 'needs_review', abstained: true, reason: 'malformed-response-shape', model: response?.model || 'unknown', usage: safeUsage(response?.usage) };
+    return { status: 'needs_review', abstained: true, reason: 'malformed-response-shape', model: localJevModelId(), usage: safeUsage(response?.usage) };
   }
   const usage = safeUsage(response.usage);
   const evidenceSpanChoices = new Set(['none', ...packet.evidence_excerpts.map((excerpt) => excerpt.id)]);
@@ -404,25 +443,25 @@ function parseJevResponse(response, packet) {
       status: 'needs_review',
       abstained: true,
       reason: failed.reason,
-      model: response.model || 'unknown',
+      model: localJevModelId(),
       usage,
     };
   }
   if (!isPlainObject(span) || typeof span.choice !== 'string' || !evidenceSpanChoices.has(span.choice) || typeof span.confidence !== 'number' || !Number.isFinite(span.confidence)) {
-    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: response.model || 'unknown', usage };
+    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: localJevModelId(), usage };
   }
   if (span.confidence < 0 || span.confidence > 1) {
-    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: response.model || 'unknown', usage };
+    return { status: 'needs_review', abstained: true, reason: 'malformed-evidence_span', model: localJevModelId(), usage };
   }
   if (span.confidence < CONFIDENCE_FLOOR) {
-    return { status: 'needs_review', abstained: true, reason: 'low-confidence-evidence_span', model: response.model || 'unknown', usage };
+    return { status: 'needs_review', abstained: true, reason: 'low-confidence-evidence_span', model: localJevModelId(), usage };
   }
   const needsReview = directSupport.choice !== 'supported' || contradiction.choice !== 'no' || missingEvidence.choice !== 'none' || ['high', 'out_of_scope'].includes(riskCategory.choice);
   return {
     status: needsReview ? 'needs_review' : 'advisory_supported',
     abstained: false,
     reason: needsReview ? 'jev-advisory-risk' : 'jev-advisory-supports',
-    model: response.model || 'unknown',
+    model: localJevModelId(),
     direct_support: directSupport,
     contradiction,
     missing_evidence: missingEvidence,

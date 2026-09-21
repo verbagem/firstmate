@@ -42,7 +42,18 @@ if (id === 'malformed-response') {
 
 const low = id === 'low-confidence';
 const malformedConfidence = id === 'malformed-confidence';
-const supported = new Set(['truthful', 'valid-no-executable-contract', 'stale-head', 'low-confidence', 'malformed-confidence', 'fabricated-span', 'no-expected-span', 'input-output-only-usage']).has(id);
+const supported = new Set([
+  'truthful',
+  'valid-no-executable-contract',
+  'stale-head',
+  'low-confidence',
+  'malformed-confidence',
+  'fabricated-span',
+  'no-expected-span',
+  'input-output-only-usage',
+  'empty-changed-files',
+  'model-echo'
+]).has(id);
 const unsupported = new Set(['unsupported', 'missing-test']).has(id);
 const contradicted = new Set(['contradictory', 'deceptive-summary', 'unrelated-diff']).has(id);
 const outOfScope = id === 'unrelated-diff';
@@ -65,6 +76,8 @@ const span = {
   'fabricated-span': 'fabricated-evidence',
   'no-expected-span': 'receipt-proposal-card-pass',
   'input-output-only-usage': 'receipt-proposal-card-pass',
+  'empty-changed-files': 'receipt-proposal-card-pass',
+  'model-echo': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
 }[id] || 'none';
 
@@ -79,8 +92,9 @@ const usage = {
   cache_read_tokens: 7
 };
 if (id === 'input-output-only-usage') delete usage.total_tokens;
+const model = id === 'model-echo' ? request.state.packet.evidence_excerpts[0]?.text || 'echoed-private-evidence' : 'jev-fake-1.13.0';
 process.stdout.write(JSON.stringify({
-  model: 'jev-fake-1.13.0',
+  model,
   answers: {
     direct_support: { type: 'choice', choice: direct, confidence },
     contradiction: { type: 'choice', choice: contradiction, confidence: 0.91 },
@@ -175,6 +189,38 @@ test_screen_requires_summary_and_distinct_outputs() {
   pass "screen requires separate ledger and summary outputs"
 }
 
+test_output_aliases_are_rejected_without_receipts() {
+  local symlink_target symlink_ledger hardlink_target hardlink_summary
+  symlink_target="$TMP_ROOT/alias-summary.json"
+  symlink_ledger="$TMP_ROOT/alias-ledger.jsonl"
+  hardlink_target="$TMP_ROOT/hardlink-ledger.jsonl"
+  hardlink_summary="$TMP_ROOT/hardlink-summary.json"
+  printf 'sentinel symlink\n' > "$symlink_target"
+  ln -s "$symlink_target" "$symlink_ledger"
+  if env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$symlink_ledger" \
+    --summary "$symlink_target" \
+    > "$TMP_ROOT/symlink-output.out" 2> "$TMP_ROOT/symlink-output.err"; then
+    fail "symlinked ledger and summary should be rejected"
+  fi
+  assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/symlink-output.err" "symlinked output alias was not rejected"
+  assert_grep "sentinel symlink" "$symlink_target" "symlinked output rejection changed the target"
+
+  printf 'sentinel hardlink\n' > "$hardlink_target"
+  ln "$hardlink_target" "$hardlink_summary"
+  if env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$hardlink_target" \
+    --summary "$hardlink_summary" \
+    > "$TMP_ROOT/hardlink-output.out" 2> "$TMP_ROOT/hardlink-output.err"; then
+    fail "hardlinked ledger and summary should be rejected"
+  fi
+  assert_grep "--ledger and --summary must be different paths" "$TMP_ROOT/hardlink-output.err" "hardlinked output alias was not rejected"
+  assert_grep "sentinel hardlink" "$hardlink_target" "hardlinked output rejection changed the target"
+  pass "output aliases are rejected before receipts"
+}
+
 test_summary_metric_edges_are_scored_from_public_outputs() {
   local no_span_packet no_total_packet
   no_span_packet="$TMP_ROOT/no-expected-span.json"
@@ -202,6 +248,27 @@ test_summary_metric_edges_are_scored_from_public_outputs() {
   jq -e '.metrics.tokens_total == 120' "$SUMMARY" >/dev/null \
     || fail "summary did not sum input and output tokens without total_tokens"
   pass "summary metrics score only expected spans and complete token totals"
+}
+
+test_empty_changed_files_route_to_review() {
+  local empty_changed_packet
+  empty_changed_packet="$TMP_ROOT/empty-changed-files.json"
+  jq '.id = "empty-changed-files" | .changed_files = []' "$FIXTURE_DIR/01-truthful.json" > "$empty_changed_packet"
+  rm -f "$LEDGER" "$SUMMARY"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$empty_changed_packet" \
+    --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/empty-changed-files.out" \
+    || fail "empty changed-files packet should still produce advisory receipts"
+  jq -e '
+    .deterministic_checks.status == "needs_review" and
+    any(.deterministic_checks.findings[]; .code == "missing_changed_file_summary") and
+    .recommendation.review_priority == "needs_review" and
+    .recommendation.reason == "deterministic-failure-precedence"
+  ' "$LEDGER" >/dev/null || fail "empty changed-files packet did not route to deterministic needs_review"
+  pass "empty changed-file summaries route to needs_review"
 }
 
 test_empty_fixture_directory_is_rejected_without_receipts() {
@@ -316,6 +383,22 @@ test_malformed_confidence_and_span_route_to_review() {
   pass "malformed confidence and fabricated span route to needs_review"
 }
 
+test_model_echo_is_not_persisted() {
+  local model_packet
+  model_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" model-echo)
+  rm -f "$LEDGER" "$SUMMARY"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$model_packet" \
+    --ledger "$LEDGER" \
+    --summary "$SUMMARY" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/model-echo.out" \
+    || fail "model echo packet should still produce report-only records"
+  jq -e '.jev_advisory.model == "jev-latest"' "$LEDGER" >/dev/null \
+    || fail "ledger persisted model text from the transport response"
+  pass "model id is the local requested model, not transport echo"
+}
+
 test_deterministic_failure_takes_precedence_over_jev_support() {
   rm -f "$LEDGER"
   TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
@@ -339,11 +422,14 @@ test_deterministic_failure_takes_precedence_over_jev_support() {
 test_no_key_is_report_only_and_makes_no_transport_call
 test_fixture_corpus_metrics_and_append_only_receipts
 test_screen_requires_summary_and_distinct_outputs
+test_output_aliases_are_rejected_without_receipts
 test_summary_metric_edges_are_scored_from_public_outputs
+test_empty_changed_files_route_to_review
 test_empty_fixture_directory_is_rejected_without_receipts
 test_authority_boundaries_reject_control_flags
 test_json_stdout_surface_is_rejected
 test_low_confidence_and_malformed_response_route_to_review
 test_confidence_floor_option_is_not_public
 test_malformed_confidence_and_span_route_to_review
+test_model_echo_is_not_persisted
 test_deterministic_failure_takes_precedence_over_jev_support
