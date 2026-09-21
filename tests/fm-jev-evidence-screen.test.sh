@@ -28,6 +28,9 @@ import fs from 'node:fs';
 
 const input = fs.readFileSync(0, 'utf8');
 const request = JSON.parse(input);
+if (process.env.FAKE_TYPESAFE_REQUEST_LOG) {
+  fs.appendFileSync(process.env.FAKE_TYPESAFE_REQUEST_LOG, `${JSON.stringify(request)}\n`);
+}
 fs.appendFileSync(process.env.FAKE_TYPESAFE_LOG, `${request.state.packet.id}\n`);
 if (process.env.TYPESAFE_API_KEY || process.env.TYPESAFE_API_KEY_PRIVATE) {
   process.stderr.write('secret leaked to fake transport\n');
@@ -52,6 +55,7 @@ const supported = new Set([
   'no-expected-span',
   'input-output-only-usage',
   'empty-changed-files',
+  'extra-field-sanitization',
   'model-echo',
   'bad-usage'
 ]).has(id);
@@ -78,6 +82,7 @@ const span = {
   'no-expected-span': 'receipt-proposal-card-pass',
   'input-output-only-usage': 'receipt-proposal-card-pass',
   'empty-changed-files': 'receipt-proposal-card-pass',
+  'extra-field-sanitization': 'receipt-proposal-card-pass',
   'model-echo': 'receipt-proposal-card-pass',
   'bad-usage': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
@@ -256,6 +261,79 @@ test_output_aliases_are_rejected_without_receipts() {
   [ ! -e "$case_ledger" ] || fail "case-only output rejection wrote a ledger"
   [ ! -e "$case_summary" ] || fail "case-only output rejection wrote a summary"
   pass "output aliases are rejected before receipts"
+}
+
+test_output_preflight_rejects_unwritable_targets_before_transport() {
+  local ledger_dir preflight_summary readonly_ledger readonly_summary
+  ledger_dir="$TMP_ROOT/ledger-directory"
+  preflight_summary="$TMP_ROOT/preflight-summary.json"
+  readonly_ledger="$TMP_ROOT/readonly-ledger.jsonl"
+  readonly_summary="$TMP_ROOT/readonly-summary.json"
+  mkdir -p "$ledger_dir"
+  rm -f "$CALL_LOG" "$preflight_summary"
+
+  if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$ledger_dir" \
+    --summary "$preflight_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/preflight-directory.out" 2> "$TMP_ROOT/preflight-directory.err"; then
+    fail "directory ledger output should be rejected before transport"
+  fi
+  assert_grep "ledger output path is a directory" "$TMP_ROOT/preflight-directory.err" "directory ledger output was not rejected"
+  [ ! -e "$CALL_LOG" ] || fail "directory output rejection invoked TypeSafe transport"
+  [ ! -e "$preflight_summary" ] || fail "directory output rejection wrote a summary"
+
+  printf 'sentinel readonly\n' > "$readonly_ledger"
+  chmod 400 "$readonly_ledger"
+  rm -f "$CALL_LOG" "$readonly_summary"
+  if [ ! -w "$readonly_ledger" ]; then
+    if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+      --packet "$FIXTURE_DIR/01-truthful.json" \
+      --ledger "$readonly_ledger" \
+      --summary "$readonly_summary" \
+      --typesafe-command "$FAKE" \
+      > "$TMP_ROOT/preflight-readonly.out" 2> "$TMP_ROOT/preflight-readonly.err"; then
+      chmod 600 "$readonly_ledger"
+      fail "read-only ledger output should be rejected before transport"
+    fi
+    assert_grep "ledger output path is not writable" "$TMP_ROOT/preflight-readonly.err" "read-only ledger output was not rejected"
+    [ ! -e "$CALL_LOG" ] || fail "read-only output rejection invoked TypeSafe transport"
+    [ ! -e "$readonly_summary" ] || fail "read-only output rejection wrote a summary"
+  fi
+  chmod 600 "$readonly_ledger"
+  pass "output preflight rejects bad targets before transport"
+}
+
+test_transport_request_omits_packet_extra_fields() {
+  local extra_packet extra_ledger extra_summary request_log
+  extra_packet="$TMP_ROOT/extra-field-sanitization.json"
+  extra_ledger="$TMP_ROOT/extra-field-sanitization.jsonl"
+  extra_summary="$TMP_ROOT/extra-field-sanitization-summary.json"
+  request_log="$TMP_ROOT/extra-field-sanitization.requests"
+  jq '.id = "extra-field-sanitization" |
+      .changed_files[0].private_evidence = "changed-file private text" |
+      .changed_files[0].debug = {payload: "debug changed-file"} |
+      .test_receipts[0].private_evidence = "receipt private text" |
+      .test_receipts[0].debug = ["debug receipt"]' \
+    "$FIXTURE_DIR/01-truthful.json" > "$extra_packet"
+  rm -f "$CALL_LOG" "$request_log" "$extra_ledger" "$extra_summary"
+
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" FAKE_TYPESAFE_REQUEST_LOG="$request_log" "$TOOL" screen \
+    --packet "$extra_packet" \
+    --ledger "$extra_ledger" \
+    --summary "$extra_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/extra-field-sanitization.out" \
+    || fail "extra-field packet should screen through fake transport"
+
+  jq -e '
+    (.state.packet.changed_files | all(.[]; (keys == ["path", "summary"]))) and
+    (.state.packet.test_receipts | all(.[]; (keys == ["kind", "name", "status"])))
+  ' "$request_log" >/dev/null || fail "transport request included unvalidated changed-file or receipt fields"
+  jq -e '.recommendation.review_priority == "normal"' "$extra_ledger" >/dev/null \
+    || fail "sanitized transport request did not preserve advisory result"
+  pass "transport request omits packet extras"
 }
 
 test_summary_metric_edges_are_scored_from_public_outputs() {
@@ -587,6 +665,8 @@ test_no_key_is_report_only_and_makes_no_transport_call
 test_fixture_corpus_metrics_and_append_only_receipts
 test_screen_requires_summary_and_distinct_outputs
 test_output_aliases_are_rejected_without_receipts
+test_output_preflight_rejects_unwritable_targets_before_transport
+test_transport_request_omits_packet_extra_fields
 test_summary_metric_edges_are_scored_from_public_outputs
 test_invalid_usage_values_are_filtered
 test_empty_changed_files_route_to_review

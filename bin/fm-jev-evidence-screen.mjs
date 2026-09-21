@@ -208,6 +208,18 @@ function safeExpectedEvidenceSpan(packet) {
   return expected === 'none' || choices.has(expected) ? expected : null;
 }
 
+function sanitizedChangedFiles(packet) {
+  return packet.changed_files.map((file) => ({ path: file.path, summary: file.summary }));
+}
+
+function sanitizedTestReceipts(packet) {
+  return packet.test_receipts.map((receipt) => ({
+    name: receipt.name,
+    status: receipt.status,
+    ...(receipt.kind === undefined ? {} : { kind: receipt.kind }),
+  }));
+}
+
 function requireString(obj, key, at, errors) {
   if (typeof obj[key] !== 'string' || obj[key].length === 0) {
     errors.push(`${at}.${key}: required non-empty string`);
@@ -352,8 +364,8 @@ function makeJevRequest(packet) {
         id: packet.id,
         claimed_outcome: packet.claimed_outcome,
         acceptance_criteria: packet.acceptance_criteria,
-        changed_files: packet.changed_files,
-        test_receipts: packet.test_receipts,
+        changed_files: sanitizedChangedFiles(packet),
+        test_receipts: sanitizedTestReceipts(packet),
         evidence_excerpts: packet.evidence_excerpts.map(({ id, text }) => ({ id, text })),
       },
       authority_boundary: 'advisory only; cannot pass/fail CI, approve merge, certify completion, suppress deterministic failure, or answer ask-user findings',
@@ -583,6 +595,37 @@ function ensureParent(filePath) {
   fs.mkdirSync(parent, { recursive: true });
 }
 
+function preflightOutputPath(filePath, label) {
+  const resolved = path.resolve(filePath);
+  ensureParent(resolved);
+  let stat;
+  try {
+    stat = fs.lstatSync(resolved);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      try {
+        fs.accessSync(path.dirname(resolved), fs.constants.W_OK);
+      } catch {
+        throw new Error(`${label} output parent is not writable`);
+      }
+      return;
+    }
+    throw error;
+  }
+  if (stat.isDirectory()) throw new Error(`${label} output path is a directory`);
+  if (stat.isSymbolicLink()) throw new Error(`${label} output path is a symlink`);
+  try {
+    fs.accessSync(resolved, fs.constants.W_OK);
+  } catch {
+    throw new Error(`${label} output path is not writable`);
+  }
+}
+
+function preflightOutputs(opts) {
+  preflightOutputPath(opts.ledger, 'ledger');
+  preflightOutputPath(opts.summary, 'summary');
+}
+
 function appendLedger(ledgerPath, records) {
   if (records.length === 0) throw new Error('no records to append');
   ensureParent(ledgerPath);
@@ -668,6 +711,7 @@ function run() {
   const { command, opts } = parseArgs(process.argv.slice(2));
   const packetPaths = command === 'evaluate' ? listFixturePackets(opts.fixtures) : opts.packets;
   if (command === 'evaluate' && packetPaths.length === 0) dieUsage('evaluate requires at least one fixture packet');
+  preflightOutputs(opts);
   const packets = [];
   const records = [];
   for (const packetPath of packetPaths) {
