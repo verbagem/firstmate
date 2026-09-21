@@ -1,0 +1,20 @@
+fixture_count: PASS
+30
+report_status_pass: PASS
+true
+no_key_status_pass: PASS
+true
+protected_false_drops_zero: PASS
+[]
+captain_drop_overridden: PASS
+{"action": "keep", "proposal": {"action": "drop", "confidence": 0.97, "probabilities": {"drop": 0.97, "keep": 0.01, "truncate": 0.02}}, "status": "deterministic-override"}
+low_confidence_unknown_kept: PASS
+{"action": "keep", "proposal": {"action": "drop", "confidence": 0.41, "probabilities": {"drop": 0.41, "keep": 0.34, "truncate": 0.25}}, "status": "low-confidence"}
+kept_text_verbatim: PASS
+"Captain: kept text remains verbatim."
+truncate_has_provenance: PASS
+{"original_chars": 198, "original_segment_id": "c025-s2", "original_sha256": "fe8418d20ffc01e16553243d20eb0b15b4f3f21578a0d495d778c82613366df5", "preview": "Progress segment with enough text to be truncated by the baseline and still refer back to c025-s2 for retrieval. Extra words make the preview shorter than the o\n[truncated]"}
+absent_key_network_log_absent: PASS
+"/Users/temp/.no-mistakes/evidence/01M32PD50VKCS1HF8AYZPNKTTW/jev-context-replay/no-key/network-called-21731.log"
+ledger_reproducible_byte_for_byte: PASS
+{"first": "/Users/temp/.no-mistakes/evidence/01M32PD50VKCS1HF8AYZPNKTTW/jev-context-replay/jev-assisted/ledger.jsonl", "repeat": "/Users/temp/.no-mistakes/evidence/01M32PD50VKCS1HF8AYZPNKTTW/jev-context-replay/jev-assisted-repeat/ledger.jsonl"}
