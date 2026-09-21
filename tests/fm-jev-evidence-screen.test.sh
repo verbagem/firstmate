@@ -238,6 +238,28 @@ test_authority_boundaries_reject_control_flags() {
   pass "authority boundary exposes no approval or merge control"
 }
 
+test_json_stdout_surface_is_rejected() {
+  local json_ledger json_summary
+  json_ledger="$TMP_ROOT/json-output.jsonl"
+  json_summary="$TMP_ROOT/json-output-summary.json"
+  rm -f "$json_ledger" "$json_summary"
+  "$TOOL" --help > "$TMP_ROOT/help.out" || fail "help output failed"
+  assert_no_grep "--json" "$TMP_ROOT/help.out" "help still advertises json stdout output"
+  if TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$json_ledger" \
+    --summary "$json_summary" \
+    --json \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/json-output.out" 2> "$TMP_ROOT/json-output.err"; then
+    fail "json stdout option should be rejected"
+  fi
+  assert_grep "unknown option: --json" "$TMP_ROOT/json-output.err" "json stdout option was still accepted"
+  [ ! -e "$json_ledger" ] || fail "rejected json option wrote a ledger"
+  [ ! -e "$json_summary" ] || fail "rejected json option wrote a summary"
+  pass "json stdout surface is not part of the public contract"
+}
+
 test_low_confidence_and_malformed_response_route_to_review() {
   local low_packet malformed_packet
   low_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" low-confidence)
@@ -320,6 +342,7 @@ test_screen_requires_summary_and_distinct_outputs
 test_summary_metric_edges_are_scored_from_public_outputs
 test_empty_fixture_directory_is_rejected_without_receipts
 test_authority_boundaries_reject_control_flags
+test_json_stdout_surface_is_rejected
 test_low_confidence_and_malformed_response_route_to_review
 test_confidence_floor_option_is_not_public
 test_malformed_confidence_and_span_route_to_review

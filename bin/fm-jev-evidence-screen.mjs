@@ -20,8 +20,8 @@ function usage() {
   process.stdout.write(`fm-jev-evidence-screen.sh - advisory-only Jev evidence/completion screening pilot
 
 Usage:
-  fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--json]
-  fm-jev-evidence-screen.sh evaluate --fixtures <dir> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>] [--json]
+  fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>]
+  fm-jev-evidence-screen.sh evaluate --fixtures <dir> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>]
 
 The result is report-only.
 Missing keys, low confidence, malformed responses, and transport errors route to needs_review.
@@ -52,7 +52,6 @@ function parseArgs(argv) {
     ledger: undefined,
     summary: undefined,
     typesafeCommand: undefined,
-    json: false,
   };
   while (args.length > 0) {
     const arg = args.shift();
@@ -71,9 +70,6 @@ function parseArgs(argv) {
         break;
       case '--typesafe-command':
         opts.typesafeCommand = requireValue(args.shift(), '--typesafe-command');
-        break;
-      case '--json':
-        opts.json = true;
         break;
       case '-h':
       case '--help':
@@ -608,12 +604,8 @@ function run() {
   appendLedger(opts.ledger, enriched);
   const summary = summarize(enriched);
   writeSummary(opts.summary, summary);
-  if (opts.json) {
-    process.stdout.write(`${JSON.stringify({ records: enriched, summary }, null, 2)}\n`);
-  } else {
-    process.stdout.write(`jev-evidence-screen: packets=${enriched.length} needs_review=${enriched.filter((record) => record.recommendation.review_priority === 'needs_review').length} ledger=${opts.ledger}\n`);
-    process.stdout.write(`summary=${opts.summary}\n`);
-  }
+  process.stdout.write(`jev-evidence-screen: packets=${enriched.length} needs_review=${enriched.filter((record) => record.recommendation.review_priority === 'needs_review').length} ledger=${opts.ledger}\n`);
+  process.stdout.write(`summary=${opts.summary}\n`);
 }
 
 try {
