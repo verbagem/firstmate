@@ -1,0 +1,117 @@
+run_eval.sh public-interface scenario transcript
+repo: /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33F5WE6JVGNFCGFFH51GQJH
+script: /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33F5WE6JVGNFCGFFH51GQJH/evals/run_eval.sh
+
+SCENARIO: auto prefers Claude success and does not invoke Codex
+  observed: exit=0 stdout=[CLAUDE VERDICT: DONE] stderr=[] codex_called=no
+  PASS: Claude success exits zero
+  PASS: Claude stdout is returned
+  PASS: no fallback note on Claude success
+  PASS: Codex is not invoked after Claude succeeds
+
+SCENARIO: auto falls back only for eligible Claude transport/auth/session blocks and sanitizes fallback stderr
+  mode=session-limit observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[run_eval.sh: auto fallback reason=session-limit selected_grader=codex.]
+  PASS: session-limit fallback exits zero through Codex
+  PASS: session-limit returns Codex final response only
+  PASS: session-limit fallback note selects Codex
+  PASS: session-limit fallback stderr omits raw auth/session payload
+  PASS: session-limit keeps Codex transcript out of stdout
+  PASS: session-limit keeps Codex raw stderr out of success stderr
+  mode=subscription-limit observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[run_eval.sh: auto fallback reason=session-limit selected_grader=codex.]
+  PASS: subscription-limit fallback exits zero through Codex
+  PASS: subscription-limit returns Codex final response only
+  PASS: subscription-limit fallback note selects Codex
+  PASS: subscription-limit fallback stderr omits raw auth/session payload
+  PASS: subscription-limit keeps Codex transcript out of stdout
+  PASS: subscription-limit keeps Codex raw stderr out of success stderr
+  mode=auth-refresh observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[run_eval.sh: auto fallback reason=auth-refresh selected_grader=codex.]
+  PASS: auth-refresh fallback exits zero through Codex
+  PASS: auth-refresh returns Codex final response only
+  PASS: auth-refresh fallback note selects Codex
+  PASS: auth-refresh fallback stderr omits raw auth/session payload
+  PASS: auth-refresh keeps Codex transcript out of stdout
+  PASS: auth-refresh keeps Codex raw stderr out of success stderr
+  mode=eligible-session observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[run_eval.sh: auto fallback reason=auth-refresh selected_grader=codex.]
+  PASS: eligible-session fallback exits zero through Codex
+  PASS: eligible-session returns Codex final response only
+  PASS: eligible-session fallback note selects Codex
+  PASS: eligible-session fallback stderr omits raw auth/session payload
+  PASS: eligible-session keeps Codex transcript out of stdout
+  PASS: eligible-session keeps Codex raw stderr out of success stderr
+  mode=missing-claude observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[run_eval.sh: auto fallback reason=claude-unavailable selected_grader=codex.]
+  PASS: missing Claude CLI falls back through Codex
+  PASS: missing Claude fallback reason is concise
+
+SCENARIO: auto refuses fallback for legitimate FAIL verdicts, generic grader errors, and interrupts
+  fail verdict observed: exit=0 stdout=[VERDICT: FAIL] codex_called=no
+  PASS: FAIL verdict is treated as completed grader output
+  PASS: FAIL verdict text is preserved
+  PASS: FAIL verdict does not call Codex
+  generic failure observed: exit=2 stderr=[grader crashed for an ordinary reason] codex_called=no
+  PASS: generic Claude error preserves nonzero exit
+  PASS: generic Claude error is returned
+  PASS: generic Claude error does not call Codex
+  interrupt observed: exit=130 stderr=[Interrupted] codex_called=no
+  PASS: interrupt exit is preserved
+  PASS: interrupt does not call Codex
+
+SCENARIO: explicit providers stay explicit
+  explicit claude observed: exit=1 stderr=[Claude AI usage limit reached|1758492000] codex_called=no
+  PASS: explicit Claude returns Claude failure
+  PASS: explicit Claude surfaces Claude stderr
+  PASS: explicit Claude never switches to Codex
+  explicit codex observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[]
+  codex argv: exec --disable hooks -c approval_policy="never" --sandbox read-only --skip-git-repo-check --ephemeral --ignore-rules -C /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33F5WE6JVGNFCGFFH51GQJH --output-last-message /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T//fm-eval.7cdHDm/codex-last-message.txt -
+  codex cwd: /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33F5WE6JVGNFCGFFH51GQJH
+  PASS: explicit Codex exits zero
+  PASS: explicit Codex returns final response only
+  PASS: explicit Codex suppresses transport noise on success
+  PASS: explicit Codex does not call Claude
+  PASS: Codex argv includes exec
+  PASS: Codex argv includes --disable
+  PASS: Codex argv includes hooks
+  PASS: Codex argv includes approval_policy="never"
+  PASS: Codex argv includes --sandbox
+  PASS: Codex argv includes read-only
+  PASS: Codex argv includes --skip-git-repo-check
+  PASS: Codex argv includes --ephemeral
+  PASS: Codex argv includes --ignore-rules
+  PASS: Codex argv includes --output-last-message
+  PASS: Codex argv includes -C
+  PASS: Codex argv excludes workspace-write
+  PASS: Codex argv excludes danger-full-access
+  PASS: Codex argv excludes dangerously-bypass
+  PASS: Codex argv excludes --worktree
+  PASS: Codex argv excludes --add-dir
+  PASS: Codex executes from caller cwd
+  removed timeout knob observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE]
+  PASS: FM_EVAL_CODEX_TIMEOUT_SECONDS no longer controls/rejects Codex grading
+
+SCENARIO: prompt construction stays shared across providers
+  PASS: Claude and Codex receive the same prompt content after transport newline normalization
+  PASS: generated prompt includes eval spec section
+  PASS: generated prompt includes deliverable section
+  PASS: generated prompt permits read-only evidence inspection
+  normalized prompt sha256: 090bb1fea77c80eb622348bd5f938d07a19a0664c97e08b637a002152d66af00
+
+SCENARIO: Codex fallback resolves relative deliverable/evidence paths from the caller cwd
+  observed: exit=0 stdout=[CODEX FINAL VERDICT: DONE] stderr=[run_eval.sh: auto fallback reason=session-limit selected_grader=codex.]
+  codex argv: exec --disable hooks -c approval_policy="never" --sandbox read-only --skip-git-repo-check --ephemeral --ignore-rules -C /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/fm-run-eval-evidence.7O4aiV/caller-project --output-last-message /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T//fm-eval.M2J7wf/codex-last-message.txt -
+  codex cwd: /var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/fm-run-eval-evidence.7O4aiV/caller-project
+  PASS: caller-cwd fallback exits zero
+  PASS: Codex process cwd is the isolated caller project
+  PASS: Codex -C points at the caller project
+  PASS: relative evidence path remains in delivered prompt
+
+SCENARIO: validation rejects bad inputs before launching a provider
+  missing eval observed: exit=1 stdout=[no such eval: no-such-eval (looked for /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33F5WE6JVGNFCGFFH51GQJH/evals/no-such-eval.md)] stderr=[]
+  PASS: missing eval exits before provider launch
+  PASS: missing eval does not call Claude
+  PASS: missing eval does not call Codex
+  invalid grader observed: exit=2 stdout=[] stderr=[run_eval.sh: invalid FM_EVAL_GRADER=bogus; expected auto, claude, or codex.]
+  PASS: invalid FM_EVAL_GRADER exits with usage error
+  PASS: invalid grader error is explicit
+  PASS: invalid grader does not call Claude
+  PASS: invalid grader does not call Codex
+
+overall manual evidence checks: PASS
