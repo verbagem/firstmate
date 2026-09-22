@@ -1,0 +1,28 @@
+[
+  {
+    "validation_result": "incompatible-action",
+    "count": 4,
+    "examples": [
+      "type-search",
+      "type-name",
+      "click-preview"
+    ]
+  },
+  {
+    "validation_result": "stale-action",
+    "count": 18,
+    "examples": [
+      "nav-docs",
+      "nav-pricing",
+      "click-help"
+    ]
+  },
+  {
+    "validation_result": "stale-state",
+    "count": 2,
+    "examples": [
+      "stale-page",
+      "stale-action"
+    ]
+  }
+]

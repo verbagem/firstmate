@@ -1,0 +1,26 @@
+{
+  "task_count": 24,
+  "clear_recommendations": 11,
+  "success_rate": 0.7857142857142857,
+  "top_choice_accuracy": 0.7857142857142857,
+  "wrong_action_rate": 0,
+  "stale_action_rejection_count": 2,
+  "no_compatible_action_count": 1,
+  "forbidden_action_rejection_count": 9,
+  "low_confidence_count": 0,
+  "malformed_response_count": 0,
+  "provider_failure_count": 0,
+  "no_key_count": 0,
+  "confidence_calibration": {
+    "mean_confidence_correct": 0.9600000000000002,
+    "mean_confidence_wrong": null,
+    "mean_confidence_rejected": 0.9600000000000003
+  },
+  "latency_ms": {
+    "min": 0,
+    "median": 0,
+    "max": 1000
+  },
+  "cost_usd": 0.00024,
+  "human_override_count": 0
+}

@@ -1,0 +1,18 @@
+fresh shadow summary contract
+true
+fresh shadow receipt contract
+true
+failure-mode summary contracts
+true
+true
+true
+true
+optional execute-local-fixture guard contract
+true
+incompatible choice guard contract
+true
+checked-in docs summary contract
+true
+checked-in docs receipt contract
+true
+all receipt/summary contracts passed

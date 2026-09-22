@@ -1,0 +1,8 @@
+ok - fake TypeSafe transport over twenty-four fixture tasks records metrics and receipts
+ok - no-key/no-network path produces safe non-clear receipts
+ok - provider failure records no action
+ok - malformed response records no action
+ok - low confidence records no action
+ok - action compatibility is enforced after model choice
+ok - safety allowlist gates the optional local-fixture execution mode
+# all fm-jev-browser-shadow tests passed
