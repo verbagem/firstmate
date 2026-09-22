@@ -57,6 +57,8 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
 # self-governance section when a touched project AGENTS.md lacks it.
+# Ship tasks also include a compact code-writing inner-loop checklist between
+# project memory and Definition of done; scout and secondmate scaffolds omit it.
 # Refuses to overwrite an existing brief.
 set -eu
 
