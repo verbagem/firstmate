@@ -25,6 +25,8 @@ project — evals live here, not in one project, because firstmate briefs many p
 ./run_eval.sh principles research_report.md
 ```
 
+See `./run_eval.sh --help` for grader selection and fallback behavior.
+
 ## The loop
 
 TASK -> [task-definition] -> crewmate works -> [principles + tov/visual + completeness] ->
