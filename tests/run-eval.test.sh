@@ -86,6 +86,7 @@ SH
   cat > "$fakebin/codex" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "${FM_FAKE_CODEX_ARGV:?}"
+pwd > "${FM_FAKE_CODEX_CWD:?}"
 last_message=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -133,12 +134,14 @@ run_eval_case() {  # <case-name> [without-claude|with-claude] [env...]
   : > "$RUN_DIR/claude.prompt"
   : > "$RUN_DIR/codex.argv"
   : > "$RUN_DIR/codex.prompt"
+  : > "$RUN_DIR/codex.cwd"
   env \
     PATH="$fakebin:$BASE_PATH" \
     FM_FAKE_CLAUDE_ARGV="$RUN_DIR/claude.argv" \
     FM_FAKE_CLAUDE_PROMPT="$RUN_DIR/claude.prompt" \
     FM_FAKE_CODEX_ARGV="$RUN_DIR/codex.argv" \
     FM_FAKE_CODEX_PROMPT="$RUN_DIR/codex.prompt" \
+    FM_FAKE_CODEX_CWD="$RUN_DIR/codex.cwd" \
     FM_FAKE_SECRET="$SECRET" \
     "$@" \
     "$SCRIPT" completeness "$TARGET" > "$RUN_DIR/stdout" 2> "$RUN_DIR/stderr" || rc=$?
@@ -211,11 +214,47 @@ assert_contains "--skip-git-repo-check" "$codex_argv" "Codex does not require a 
 assert_contains "--ephemeral" "$codex_argv" "Codex does not persist agent work"
 assert_contains "--ignore-rules" "$codex_argv" "Codex ignores ambient project exec policy"
 assert_contains "--output-last-message" "$codex_argv" "Codex final output is extracted"
+assert_contains "-C" "$codex_argv" "Codex receives an explicit caller root"
+assert_contains "$ROOT" "$codex_argv" "Codex caller root is the invoking directory"
 assert_not_contains "workspace-write" "$codex_argv" "Codex never requests a write-capable sandbox"
 assert_not_contains "danger-full-access" "$codex_argv" "Codex never requests an unrestricted sandbox"
 assert_not_contains "dangerously-bypass" "$codex_argv" "Codex never bypasses approvals or sandboxing"
 assert_not_contains "--worktree" "$codex_argv" "Codex does not create a managed worktree"
 assert_not_contains "--add-dir" "$codex_argv" "Codex does not add writable directories"
+assert_equals "$ROOT" "$(cat "$RUN_DIR/codex.cwd")" "Codex runs from the caller's cwd"
+
+run_eval_case removed-timeout-knob with-claude FM_EVAL_GRADER=codex FM_EVAL_CODEX_TIMEOUT_SECONDS=0
+assert_equals 0 "$RUN_RC" "removed timeout knob does not reject Codex grading"
+
+caller_project="$TMP_ROOT/caller-project"
+mkdir -p "$caller_project/reports"
+printf 'evidence exists\n' > "$caller_project/reports/out.md"
+printf 'Completed work; evidence: reports/out.md\n' > "$caller_project/deliverable.md"
+caller_project_cwd=$(cd "$caller_project" && pwd)
+case_dir="$TMP_ROOT/caller-cwd-fallback"
+fakebin=$(make_fakebin "$case_dir" 0)
+: > "$case_dir/claude.argv"
+: > "$case_dir/claude.prompt"
+: > "$case_dir/codex.argv"
+: > "$case_dir/codex.prompt"
+: > "$case_dir/codex.cwd"
+(
+  cd "$caller_project" || exit 1
+  env \
+    PATH="$fakebin:$BASE_PATH" \
+    FM_FAKE_CLAUDE_ARGV="$case_dir/claude.argv" \
+    FM_FAKE_CLAUDE_PROMPT="$case_dir/claude.prompt" \
+    FM_FAKE_CODEX_ARGV="$case_dir/codex.argv" \
+    FM_FAKE_CODEX_PROMPT="$case_dir/codex.prompt" \
+    FM_FAKE_CODEX_CWD="$case_dir/codex.cwd" \
+    FM_FAKE_SECRET="$SECRET" \
+    FM_FAKE_CLAUDE_MODE=session-limit \
+    "$SCRIPT" completeness deliverable.md > "$case_dir/stdout" 2> "$case_dir/stderr"
+) && rc=0 || rc=$?
+assert_equals 0 "$rc" "auto fallback from caller cwd succeeds"
+assert_contains "$caller_project_cwd" "$(cat "$case_dir/codex.argv")" "auto fallback passes caller cwd to Codex"
+assert_equals "$caller_project_cwd" "$(cat "$case_dir/codex.cwd")" "auto fallback also runs Codex from the caller cwd"
+assert_contains "reports/out.md" "$(cat "$case_dir/codex.prompt")" "auto fallback preserves relative evidence path in prompt"
 
 run_eval_case prompt-claude with-claude FM_EVAL_GRADER=claude FM_FAKE_CLAUDE_MODE=success
 claude_prompt=$(cat "$RUN_DIR/claude.prompt")
@@ -236,6 +275,7 @@ env \
   FM_FAKE_CLAUDE_PROMPT="$case_dir/claude.prompt" \
   FM_FAKE_CODEX_ARGV="$case_dir/codex.argv" \
   FM_FAKE_CODEX_PROMPT="$case_dir/codex.prompt" \
+  FM_FAKE_CODEX_CWD="$case_dir/codex.cwd" \
   FM_FAKE_SECRET="$SECRET" \
   "$SCRIPT" no-such-eval "$TARGET" > "$case_dir/stdout" 2> "$case_dir/stderr" && rc=0 || rc=$?
 assert_equals 1 "$rc" "missing eval fails before provider launch"
@@ -250,6 +290,7 @@ env \
   FM_FAKE_CLAUDE_PROMPT="$case_dir/claude.prompt" \
   FM_FAKE_CODEX_ARGV="$case_dir/codex.argv" \
   FM_FAKE_CODEX_PROMPT="$case_dir/codex.prompt" \
+  FM_FAKE_CODEX_CWD="$case_dir/codex.cwd" \
   FM_FAKE_SECRET="$SECRET" \
   "$SCRIPT" completeness "$TMP_ROOT/no-such-target.md" > "$case_dir/stdout" 2> "$case_dir/stderr" && rc=0 || rc=$?
 assert_equals 1 "$rc" "missing target fails before provider launch"
@@ -264,6 +305,7 @@ env \
   FM_FAKE_CLAUDE_PROMPT="$case_dir/claude.prompt" \
   FM_FAKE_CODEX_ARGV="$case_dir/codex.argv" \
   FM_FAKE_CODEX_PROMPT="$case_dir/codex.prompt" \
+  FM_FAKE_CODEX_CWD="$case_dir/codex.cwd" \
   FM_FAKE_SECRET="$SECRET" \
   FM_EVAL_GRADER=bogus \
   "$SCRIPT" completeness "$TARGET" > "$case_dir/stdout" 2> "$case_dir/stderr" && rc=0 || rc=$?
