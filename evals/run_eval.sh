@@ -4,10 +4,13 @@
 #   e.g. ./run_eval.sh tov draft_post.md
 # The eval file IS the grading spec.
 # Select the grader with FM_EVAL_GRADER=auto|claude|codex.
-#   auto   default; try Claude first, then Codex only for known auth/session/CLI transport blocks.
+#   auto   default; try Claude first, then Codex only for known auth, session/subscription-limit,
+#          credential-refresh, or unavailable-CLI transport blocks.
+#          Ordinary grader errors, interrupts, target/spec errors, and FAIL verdicts do not switch.
 #   claude use `claude -p` directly and never switch providers.
 #   codex  use `codex exec` directly with a read-only sandbox, ephemeral session, no repo requirement,
 #          disabled hooks, and final-message extraction.
+#          It runs from the caller's current directory so read-only inspection can resolve relative evidence paths.
 # Codex runs are hard-bounded by an internal 600-second deadline.
 
 set -euo pipefail
