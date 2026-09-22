@@ -25,6 +25,9 @@ project — evals live here, not in one project, because firstmate briefs many p
 ./run_eval.sh principles research_report.md
 ```
 
+`run_eval.sh` defaults to `FM_EVAL_GRADER=auto`, which tries Claude first and falls back to Codex only for recognized Claude auth, session-limit, or unavailable-CLI transport blocks.
+Set `FM_EVAL_GRADER=claude` or `FM_EVAL_GRADER=codex` to force one grader explicitly.
+
 ## The loop
 
 TASK -> [task-definition] -> crewmate works -> [principles + tov/visual + completeness] ->
