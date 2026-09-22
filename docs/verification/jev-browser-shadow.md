@@ -13,12 +13,12 @@ The evidence below is offline fixture evidence using an injectable fake TypeSafe
 
 Absolute verification paths for this worktree are listed as literals because the documentation checker forbids absolute local Markdown links:
 
-- Script: `/Users/temp/.treehouse/firstmate-29202e/2/firstmate/bin/fm-jev-browser-shadow.sh` ([relative link](../../bin/fm-jev-browser-shadow.sh))
-- Focused test: `/Users/temp/.treehouse/firstmate-29202e/2/firstmate/tests/fm-jev-browser-shadow.test.sh` ([relative link](../../tests/fm-jev-browser-shadow.test.sh))
-- Fixture tasks: `/Users/temp/.treehouse/firstmate-29202e/2/firstmate/tests/fixtures/jev-browser-shadow/tasks.json` ([relative link](../../tests/fixtures/jev-browser-shadow/tasks.json))
-- Fake TypeSafe transport: `/Users/temp/.treehouse/firstmate-29202e/2/firstmate/tests/fixtures/jev-browser-shadow/fake-typesafe.sh` ([relative link](../../tests/fixtures/jev-browser-shadow/fake-typesafe.sh))
-- Offline summary: `/Users/temp/.treehouse/firstmate-29202e/2/firstmate/docs/verification/jev-browser-shadow-offline-summary.json` ([relative link](jev-browser-shadow-offline-summary.json))
-- Offline receipts: `/Users/temp/.treehouse/firstmate-29202e/2/firstmate/docs/verification/jev-browser-shadow-offline-receipts.jsonl` ([relative link](jev-browser-shadow-offline-receipts.jsonl))
+- Script: `/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33MFDF8F2BMRSSAP1B9FHF2/bin/fm-jev-browser-shadow.sh` ([relative link](../../bin/fm-jev-browser-shadow.sh))
+- Focused test: `/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33MFDF8F2BMRSSAP1B9FHF2/tests/fm-jev-browser-shadow.test.sh` ([relative link](../../tests/fm-jev-browser-shadow.test.sh))
+- Fixture tasks: `/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33MFDF8F2BMRSSAP1B9FHF2/tests/fixtures/jev-browser-shadow/tasks.json` ([relative link](../../tests/fixtures/jev-browser-shadow/tasks.json))
+- Fake TypeSafe transport: `/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33MFDF8F2BMRSSAP1B9FHF2/tests/fixtures/jev-browser-shadow/fake-typesafe.sh` ([relative link](../../tests/fixtures/jev-browser-shadow/fake-typesafe.sh))
+- Offline summary: `/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33MFDF8F2BMRSSAP1B9FHF2/docs/verification/jev-browser-shadow-offline-summary.json` ([relative link](jev-browser-shadow-offline-summary.json))
+- Offline receipts: `/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M33MFDF8F2BMRSSAP1B9FHF2/docs/verification/jev-browser-shadow-offline-receipts.jsonl` ([relative link](jev-browser-shadow-offline-receipts.jsonl))
 
 ## Acceptance map
 
