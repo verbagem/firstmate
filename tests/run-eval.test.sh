@@ -113,6 +113,17 @@ case "${FM_FAKE_CODEX_MODE:-success}" in
 esac
 SH
   chmod +x "$fakebin/codex"
+
+  cat > "$fakebin/timeout" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-k" ]; then
+  shift 3
+else
+  shift
+fi
+"$@"
+SH
+  chmod +x "$fakebin/timeout"
   printf '%s\n' "$fakebin"
 }
 

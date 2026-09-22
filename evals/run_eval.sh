@@ -93,7 +93,7 @@ run_claude_grader() {  # <stdout-file> <stderr-file>
 }
 
 run_codex_grader() {  # <stdout-file> <stderr-file>
-  local stdout_file=$1 stderr_file=$2 last_message transcript raw_stderr rc
+  local stdout_file=$1 stderr_file=$2 last_message transcript raw_stderr prompt_file rc
   : > "$stdout_file"
   : > "$stderr_file"
   if ! command -v codex >/dev/null 2>&1; then
@@ -103,9 +103,12 @@ run_codex_grader() {  # <stdout-file> <stderr-file>
   last_message="$TMP_ROOT/codex-last-message.txt"
   transcript="$TMP_ROOT/codex-transcript.txt"
   raw_stderr="$TMP_ROOT/codex-stderr.txt"
+  prompt_file="$TMP_ROOT/codex-prompt.txt"
+  printf '%s' "$PROMPT" > "$prompt_file"
   set +e
   fm_run_timed "$CODEX_TIMEOUT_SECONDS" \
-    codex exec \
+    bash -c "prompt_file=\$1; shift; exec \"\$@\" < \"\$prompt_file\"" _ "$prompt_file" \
+      codex exec \
       --disable hooks \
       -c 'approval_policy="never"' \
       --sandbox read-only \
@@ -115,7 +118,7 @@ run_codex_grader() {  # <stdout-file> <stderr-file>
       -C "$CALLER_CWD" \
       --output-last-message "$last_message" \
       - \
-      > "$transcript" 2> "$raw_stderr" <<< "$PROMPT"
+      > "$transcript" 2> "$raw_stderr"
   rc=$?
   set -e
   if [ "$rc" -ne 0 ]; then
