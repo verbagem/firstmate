@@ -213,6 +213,10 @@
       "audience": "maintainer-architecture"
     },
     {
+      "path": "docs/verification/jev-browser-shadow.md",
+      "audience": "maintainer-verification"
+    },
+    {
       "path": "GROK_BOT.md",
       "audience": "public-product"
     },
