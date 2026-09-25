@@ -263,7 +263,7 @@ HTTP=$(printf '%s' "$REQUEST" | curl -sS --max-time "$TS_TIMEOUT" -o "$RESP_FILE
   --data-binary @- 2>/dev/null) || HTTP=000
 T1=$(fm_timing_now_ms)
 LAT_MS=$(( T1 - T0 ))
-[ "$HTTP" = 200 ] || emit_error "http $HTTP after ${LAT_MS} ms: $(head -c 200 "$RESP_FILE" 2>/dev/null | tr '\n' ' ')"
+[ "$HTTP" = 200 ] || emit_error "http $HTTP after ${LAT_MS} ms"
 jq -e --slurpfile rules "$RULES" '
     (($rules[0].rules | to_entries | map("rule_" + ((.key + 1) | tostring))) + ["default"] | sort) as $choices |
     (.answers.rule.choice | type) == "string" and

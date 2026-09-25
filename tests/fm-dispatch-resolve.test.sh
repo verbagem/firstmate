@@ -529,11 +529,21 @@ assert_contains "$out" '  status: error' "missing curl is a structured error out
 assert_contains "$out" '  reason: curl not installed' "missing curl is named in the TOON block"
 assert_contains "$err" 'dispatch-resolve: error (curl not installed)' "missing curl is also reported on stderr"
 reset_log
+printf '%s\n' 'provider echoed private brief: off-by-one in the pager; bearer test-key-9f1c2d3e-never-on-argv' > "$RESPONSE"
 TYPESAFE_API_KEY=$KEY FAKE_CURL_HTTP=429 run code out err "$BRIEF"
 expect_code 0 "$code" "http 429 exits 0"
 assert_contains "$out" '  status: error' "http 429 is an error outcome"
 assert_contains "$out" '  reason: http 429 after' "http status is reported"
 assert_contains "$err" 'dispatch-resolve: error (http 429' "error also goes to stderr"
+assert_not_contains "$out" 'off-by-one in the pager' "http error stdout must not include the provider response body"
+assert_not_contains "$err" 'off-by-one in the pager' "http error stderr must not include the provider response body"
+assert_not_contains "$out" "$KEY" "http error stdout must not include provider-echoed secrets"
+assert_not_contains "$err" "$KEY" "http error stderr must not include provider-echoed secrets"
+TYPESAFE_API_KEY=$KEY FAKE_CURL_HTTP=429 run code out err "$BRIEF" --json
+assert_equals 'error' "$(jq -r .status <<<"$out")" "JSON http error preserves the error status"
+assert_contains "$(jq -r .reason <<<"$out")" 'http 429 after' "JSON http error preserves compact diagnostics"
+assert_not_contains "$out" 'off-by-one in the pager' "JSON http error must not include the provider response body"
+assert_not_contains "$out" "$KEY" "JSON http error must not include provider-echoed secrets"
 reset_log
 TYPESAFE_API_KEY=$KEY FAKE_CURL_FAIL=1 run code out err "$BRIEF"
 expect_code 0 "$code" "curl failure exits 0"

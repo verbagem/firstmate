@@ -161,9 +161,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 cat >/dev/null
-cat > "$out" <<JSON
+if [ -n "${FM_FAKE_DISPATCH_BODY:-}" ]; then
+  printf '%s\n' "$FM_FAKE_DISPATCH_BODY" > "$out"
+else
+  cat > "$out" <<JSON
 {"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"${FM_FAKE_DISPATCH_CHOICE:-default}","confidence":${FM_FAKE_DISPATCH_CONFIDENCE:-0.97},"probabilities":{"rule_1":${FM_FAKE_DISPATCH_RULE_PROBABILITY:-0.97},"default":${FM_FAKE_DISPATCH_DEFAULT_PROBABILITY:-0.03}}}},"usage":{"input_tokens":321,"output_tokens":42}}
 JSON
+fi
 printf '%s' "${FM_FAKE_DISPATCH_HTTP:-200}"
 SH
   cat > "$fakebin/quota-axi" <<'SH'
@@ -174,7 +178,8 @@ cat <<'JSON'
 {"generatedAt":"2030-01-01T00:00:00Z","schemaVersion":5,"providers":[
 {"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.5}}]}},
 {"provider":"cursor","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.8}}]}},
-{"provider":"grok","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"},"selection":{"spendPriority":-2}}]}}
+{"provider":"grok","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"},"selection":{"spendPriority":-2}}]}},
+{"provider":"kimi","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":88,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.7}}]}}
 ]}
 JSON
 SH
@@ -228,6 +233,13 @@ enable_cursor_dispatch_profile() {
   printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
 }
 
+enable_kimi_dispatch_profile() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"when":"Other work","use":{"harness":"codex","model":"gpt-5","effort":"medium"}}],"default":{"harness":"kimi","model":"kimi-code/k3"}}' \
+    > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
 last_dispatch_receipt() {
   tail -n 1 "$1/state/dispatch-receipts.jsonl"
 }
@@ -260,7 +272,7 @@ run_spawn() {
     FM_FAKE_CURSOR_HELP_MODE="${FM_TEST_CURSOR_HELP_MODE:-headless}" \
     FM_FAKE_CURSOR_TRUST_STATUS="${FM_TEST_CURSOR_TRUST_STATUS:-0}" \
     FM_FAKE_CURSOR_TRUST_LOG="${FM_TEST_CURSOR_TRUST_LOG:-}" \
-    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
+    HOME="${FM_TEST_HOME:-${HOME:-}}" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -584,13 +596,17 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   read_case_record "$rec"
   enable_cursor_dispatch_profile "$HOME_DIR"
   out=$(FM_FAKE_DISPATCH_HTTP=500 \
+    FM_FAKE_DISPATCH_BODY="provider echoed private brief for $id and test-key" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
       "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
   status=$?
   expect_code 0 "$status" "typed resolver error should allow explicit existing intake"
+  assert_contains "$out" "dispatch-resolve: error (http 500 after" "typed resolver error kept compact status diagnostics"
+  assert_not_contains "$out" "provider echoed private brief" "spawn output must not forward provider response bodies"
   receipt=$(last_dispatch_receipt "$HOME_DIR")
   [ "$(jq -r .resolver.status <<<"$receipt")" = error ] || fail "error receipt lost resolver status"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "error fallback was unexplained"
+  assert_not_contains "$receipt" "provider echoed private brief" "resolver-error receipt must not persist provider response bodies"
 
   id=profile-typed-escalate-z11f
   rec=$(make_spawn_case profile-typed-escalate claude "$id")
@@ -636,6 +652,45 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = catalog_rejection ] \
     || fail "catalog-refusal receipt lost deterministic reason"
   pass "ambiguous, error, escalation, and launch-refusal paths each record one explained receipt"
+}
+
+test_kimi_adapter_refusals_record_adapter_unavailable() {
+  local rec id out status receipt
+  id=profile-typed-kimi-missing-z11h
+  rec=$(make_spawn_case profile-typed-kimi-missing claude "$id")
+  read_case_record "$rec"
+  enable_kimi_dispatch_profile "$HOME_DIR"
+
+  out=$(FM_TEST_HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "clear Kimi selection with no executable should refuse before launch"
+  assert_contains "$out" "kimi executable not found" "missing Kimi binary refusal did not name the adapter"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = kimi ] || fail "missing-binary receipt lost selected Kimi profile"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "missing-binary receipt did not record adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "missing-binary receipt claims a launch"
+
+  id=profile-typed-kimi-hook-z11i
+  rec=$(make_spawn_case profile-typed-kimi-hook claude "$id")
+  read_case_record "$rec"
+  enable_kimi_dispatch_profile "$HOME_DIR"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKEBIN_DIR/kimi"
+  chmod +x "$FAKEBIN_DIR/kimi"
+  out=$(FM_TEST_HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "clear Kimi selection with an unsafe hook install should refuse before launch"
+  assert_contains "$out" "global turn-end hook could not be installed safely" \
+    "Kimi hook-install refusal did not name the prelaunch dependency"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = kimi ] || fail "hook-refusal receipt lost selected Kimi profile"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "hook-refusal receipt did not record adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "hook-refusal receipt claims a launch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "Kimi prelaunch refusal reached the worker launch command"
+  pass "Kimi binary and hook-install refusals record adapter_unavailable"
 }
 
 test_active_dispatch_profile_requires_explicit_harness_for_scout() {
@@ -1204,6 +1259,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship
 test_clear_typed_cursor_selection_reaches_launch_and_receipt
 test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused
 test_nonclear_and_launch_refusal_receipts_are_complete
+test_kimi_adapter_refusals_record_adapter_unavailable
 test_active_dispatch_profile_requires_explicit_harness_for_scout
 test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness

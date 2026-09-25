@@ -1759,6 +1759,7 @@ esac
 
 case "$LAUNCH" in
   *__KIMIBIN__*)
+    DISPATCH_FAILURE_REASON=adapter_unavailable
     KIMI_BIN=$(resolve_kimi_binary) || exit 1
     LAUNCH=${LAUNCH//__KIMIBIN__/$(shell_quote "$KIMI_BIN")}
     if [ "$KIND" != secondmate ]; then
@@ -1767,6 +1768,7 @@ case "$LAUNCH" in
         exit 1
       }
     fi
+    DISPATCH_FAILURE_REASON=launch_refusal
     ;;
 esac
 
