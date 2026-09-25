@@ -619,12 +619,9 @@ const untouched = cacheHandler({ type: "before_provider_request", payload: { mod
 if (untouched !== undefined) throw new Error("cache-key hook rewrote a provider payload with no prompt_cache_key");
 console.log(`CACHE_KEY=${rewriteA.prompt_cache_key}`);
 
-// 4. Two-stage filter, stage 2: routine appends with no turn while main is
-// idle and defers to Pi's own pending-custom-message queue while main is
-// streaming (both via triggerTurn: false, never an extension-mirrored busy
-// flag - see deliverOutcomeMessage's comment and the captain-lane guard
-// below); captain-relevant appends and triggers exactly one turn. Store rows
-// are written BEFORE the merge note and marked read after it.
+// 4. Two-stage filter, stage 2: routine uses deliverOutcomeMessage's
+// no-turn path, captain-relevant appends and triggers exactly one turn, and
+// store rows are written BEFORE the merge note and marked read after it.
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
 const r1 = await report.execute("call-1", { task: "task-9", verdict: "routine", summary: "worker healthy, no action needed", wake: "signal: working" }, undefined, undefined, {});
 if (r1.isError) throw new Error(`routine report failed: ${JSON.stringify(r1)}`);
@@ -633,23 +630,12 @@ if (sentToMain[0].message.customType !== "fm-branch-merge") throw new Error("mer
 if (sentToMain[0].options.triggerTurn !== false) throw new Error(`routine idle merge must not trigger a turn: ${JSON.stringify(sentToMain[0].options)}`);
 if (sentToMain[0].options.deliverAs) throw new Error("routine idle merge must not force a delivery mode");
 
-// Captain-lane guard regression (firstmate-user-lane-guard-5248): a prior
-// version of this extension mirrored main's busy state itself
-// (agent_start/agent_end/agent_settled) and branched the routine delivery on
-// that mirror. The mirror was wrong for part of a multi-step turn: Pi's real
-// AgentSession emits agent_end on an intermediate step (a retry, a
-// compaction pass, a queued-message continuation), not only at the turn's
-// true end, while its own isStreaming stays true until agent_settled. A
-// routine merge landing in that gap used to call pi.sendMessage(message, {})
-// - no triggerTurn, no deliverAs - which Pi's real dispatch (proven against
-// the installed SDK in tests/fm-pi-branch-live-e2e.test.sh) resolves to
-// agent.steer() while still streaming: a live steer into the captain's
-// active turn. The fix removed the mirror entirely, so the routine path must
-// now request triggerTurn: false unconditionally, regardless of how
-// agent_start/agent_end/agent_settled fire - proven here by exercising the
-// exact agent_end-without-agent_settled sequence the old mirror got wrong.
+// Captain-lane guard regression (firstmate-user-lane-guard-5248): the
+// deliverOutcomeMessage comment owns the invariant and SDK rationale. This
+// portable case exercises the event sequence that once made the old
+// extension-side busy mirror unsafe.
 fire("agent_start", {});
-fire("agent_end", {}); // intermediate step closes; Pi's real isStreaming would still be true here (no agent_settled yet)
+fire("agent_end", {}); // no agent_settled yet
 await report.execute("call-2", { task: "task-9", verdict: "routine", summary: "still healthy" }, undefined, undefined, {});
 if (sentToMain[1].options.triggerTurn !== false || sentToMain[1].options.deliverAs) {
   throw new Error(`routine merge in the agent_end-without-settle gap must request triggerTurn:false, never steer-eligible options: ${JSON.stringify(sentToMain[1].options)}`);

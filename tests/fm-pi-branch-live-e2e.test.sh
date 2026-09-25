@@ -527,20 +527,12 @@ fi
 pass "real Pi SDK $PI_VERSION delivers a custom message to the provider as user text carrying only content, so the captain outcome's typed envelope is what reaches the model"
 
 # Fifth probe: the captain-lane guard itself (firstmate-user-lane-guard-5248).
-# fm-branch-supervision.ts used to mirror main's busy state itself
-# (agent_start/agent_end/agent_settled) and, when that mirror read idle,
-# delivered a routine merge note with pi.sendMessage(message, {}) - no
-# triggerTurn, no deliverAs. The mirror could read idle while the real
-# AgentSession was still mid-turn (agent_end fires on an intermediate step,
-# not only at the true end), so that call shape was reachable while genuinely
-# streaming. This probe proves what the real SDK does with it: build a real
-# AgentSession against the same never-contacted local fake provider used
-# above, start a real prompt without awaiting it so the session is streaming
-# for real, then exercise the exact call shapes fm-branch-supervision.ts uses
-# today. No provider response is needed or awaited for the assertions below;
-# the doomed request against the unreachable provider only needs to leave the
-# session streaming long enough to observe, which is proven by polling rather
-# than assumed.
+# The deliverOutcomeMessage comment owns the invariant; this live guard proves
+# the current SDK dispatch for the old unsafe call shape and for the fixed
+# routine and captain call shapes. No provider response is needed or awaited
+# for the assertions below; the doomed request against the unreachable provider
+# only needs to leave the session streaming long enough to observe, which is
+# proven by polling rather than assumed.
 lanedir="$TMP_ROOT/lane-agent-dir"
 mkdir -p "$lanedir" "$TMP_ROOT/lane-sessions"
 cat > "$lanedir/models.json" <<'JSON'
@@ -594,22 +586,19 @@ if (!session.isStreaming) {
   throw new Error("never observed AgentSession.isStreaming true - the probe's timing assumption no longer holds against this Pi version");
 }
 
-// The bug this task fixes: no triggerTurn, no deliverAs, while streaming.
-// Pi's real dispatch resolves this to a live agent.steer() call.
+// Historical unsafe call shape: no triggerTurn, no deliverAs, while streaming.
 await session.sendCustomMessage({ customType: "probe-bug", content: "unsafe" }, {});
 if (steerCalls.length !== 1 || followUpCalls.length !== 0) {
   throw new Error(`the unsafe call shape must steer into the live turn exactly once: steer=${steerCalls.length} followUp=${followUpCalls.length}`);
 }
 
-// The fix fm-branch-supervision.ts sends today for a routine note: never
-// steers, regardless of streaming state.
+// Fixed routine shape.
 await session.sendCustomMessage({ customType: "probe-fix", content: "safe" }, { triggerTurn: false });
 if (steerCalls.length !== 1 || followUpCalls.length !== 0) {
   throw new Error(`triggerTurn:false must never steer or follow-up while streaming: steer=${steerCalls.length} followUp=${followUpCalls.length}`);
 }
 
-// The captain-relevant path is unaffected: triggerTurn:true plus
-// deliverAs:"followUp" while streaming must use followUp, never steer.
+// Captain-relevant shape.
 await session.sendCustomMessage({ customType: "probe-captain", content: "urgent" }, { triggerTurn: true, deliverAs: "followUp" });
 if (followUpCalls.length !== 1 || steerCalls.length !== 1) {
   throw new Error(`captain delivery must call agent.followUp exactly once and add no new steer: steer=${steerCalls.length} followUp=${followUpCalls.length}`);

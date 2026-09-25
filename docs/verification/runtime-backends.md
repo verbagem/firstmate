@@ -992,11 +992,8 @@ The extension executes inside the signed CLI's own runtime, so a CLI upgrade can
 
 ### 2026-09-25 captain-lane guard (firstmate-user-lane-guard-5248)
 
-`deliverOutcomeMessage`'s routine branch used to mirror main's busy state itself (`agent_start`/`agent_end`/`agent_settled` handlers setting a local `mainStreaming` flag) and sent `pi.sendMessage(message, {})` whenever that mirror read idle.
-The mirror was wrong for part of a multi-step turn: Pi's real `AgentSession.isStreaming` stays true until `agent_settled`, but `agent_end` fires on an intermediate step too (a retry, a compaction pass, a queued-message continuation) - so the mirror could read idle while the real session was still mid-turn.
-`sendCustomMessage`'s dispatch on that call shape while streaming is `this.agent.steer(appMessage)` - a live steer into the captain's active turn, i.e. exactly the preemption this guard exists to rule out.
-The fix removed the mirror entirely: the routine branch now always sends `pi.sendMessage(message, { triggerTurn: false })`, so Pi's own live `isStreaming` state (read fresh inside `sendCustomMessage` at the exact moment of the call, never mirrored) decides queue-versus-append.
-The captain-relevant branch (`triggerTurn: true, deliverAs: "followUp"`) was already correct against the real SDK and is unchanged.
+The guard's operative invariant and SDK-dispatch rationale are owned by `.pi/extensions/fm-branch-supervision.ts` in `deliverOutcomeMessage`.
+This verification record pins the installed-SDK behavior and the affected-integration review for that invariant.
 
 Evidence produced 2026-09-25 on macOS 25.4.0 arm64, Node v24.14.0, against the installed `@earendil-works/pi-coding-agent` 0.85.1:
 
@@ -1015,8 +1012,9 @@ ok - real Pi SDK 0.85.1 delivers a custom message to the provider as user text c
 ok - real Pi SDK 0.85.1 steers a no-options custom message into a live turn but never does with triggerTurn:false, proving the captain-lane guard (firstmate-user-lane-guard-5248) against the installed SDK
 ```
 
-The fifth live-guard case is the load-bearing proof: it builds a real `AgentSession` against a never-contacted local fake provider, starts a real prompt without awaiting it so `isStreaming` is genuinely true, spies on the real `session.agent.steer`/`session.agent.followUp`, and shows the pre-fix call shape (`{}`) steers exactly once while the fix's call shape (`{ triggerTurn: false }`) never steers or opens a follow-up, and that the deferred note still flushes once the turn settles.
-`tests/fm-pi-branch-extension.test.sh` pins the same contract portably (an `agent_end`-without-`agent_settled` sequence, the exact gap the old mirror got wrong, must still produce `{ triggerTurn: false }`) without needing the installed SDK.
+The fifth live-guard case is the load-bearing proof for the installed SDK: it starts a real `AgentSession` against a never-contacted local fake provider, waits until `isStreaming` is genuinely true, spies on `session.agent.steer` and `session.agent.followUp`, then compares the pre-fix call shape (`{}`), the fixed routine call shape (`{ triggerTurn: false }`), and the unchanged captain call shape (`{ triggerTurn: true, deliverAs: "followUp" }`).
+It also confirms the deferred routine note reaches session state after the turn settles.
+`tests/fm-pi-branch-extension.test.sh` pins the extension-side regression portably by exercising an `agent_end`-without-`agent_settled` event sequence and requiring the routine merge to use `{ triggerTurn: false }`.
 
 Scope of this fix: `.pi/extensions/fm-branch-supervision.ts` is Pi-only by construction ([docs/pi-supervision-branch.md](../pi-supervision-branch.md)) - no other verified harness (`claude`, `codex`, `opencode`, `cursor`, `grok`, `kimi`, `muse`) loads a background actor that can deliver a message into the primary session's live turn, so this class of bug cannot occur there.
 Every harness's *other* path into an active primary session - the away-mode sub-supervisor's pane injection (`bin/fm-supervise-daemon.sh`'s `inject_msg`, backend-abstracted over tmux/herdr) and the ordinary watcher wake delivery (`pi.sendUserMessage`/each harness's equivalent, always `deliverAs: "followUp"` with Pi's own streaming-behavior validation) - was reviewed for the same preemption class and already gates on a live, non-mirrored signal (a fresh pane busy/composer-empty read, or Pi's own `isStreaming` check inside `prompt()`), so neither needed a change.
