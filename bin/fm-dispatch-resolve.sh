@@ -156,6 +156,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false
     else true end;
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  def model_id($m): ($m | type) == "string" and ($m | length) > 0 and ($m | length) <= 128 and ($m | test("^[A-Za-z0-9][A-Za-z0-9._:/+-]*$"));
   def floor_bad($f; $need_provider):
     ($f | type) != "object"
     or (($f.scope | type) != "string") or (($f.scope | length) == 0)
@@ -167,7 +168,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   def profile_bad($p):
     ($p | type) != "object"
     or (($p.harness | type) != "string") or (($p.harness | length) == 0)
-    or ($p | has("model") and ((.model | type) != "string" or (.model | length) == 0))
+    or ($p | has("model") and (model_id(.model) | not))
     or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
     or ($p | has("provider") and (provider_id(.provider) | not))
     or ($p | has("floor") and floor_bad(.floor; false));

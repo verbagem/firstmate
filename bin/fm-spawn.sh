@@ -823,6 +823,13 @@ dispatch_receipt_emit() {
   return "$append_status"
 }
 
+dispatch_model_id_ok() {
+  local model=$1
+  [ "$model" = default ] && return 0
+  [ ${#model} -le 128 ] || return 1
+  [[ $model =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]
+}
+
 spawn_abort_cleanup() {
   local status=$?
   if ! dispatch_receipt_emit; then
@@ -1091,6 +1098,11 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
         echo "error: typed dispatch returned clear without a selected harness" >&2
         exit 1
       }
+      if ! dispatch_model_id_ok "$DISPATCH_SELECTED_MODEL"; then
+        DISPATCH_DIVERGENCE_REASON=resolver_configuration_error
+        echo "error: typed dispatch returned an invalid selected model identifier" >&2
+        exit 1
+      fi
       if [ -z "$DISPATCH_REQUESTED_HARNESS" ]; then
         HARNESS_ARG=$DISPATCH_SELECTED_HARNESS
         HARNESS_SET=1
@@ -1133,14 +1145,16 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
       DISPATCH_DIVERGENCE_REASON=absent_key
       ;;
     ambiguous|escalate|error)
-      DISPATCH_DIVERGENCE_REASON=${DISPATCH_OVERRIDE_REASON:-non_clear_result}
+      DISPATCH_DIVERGENCE_REASON=non_clear_result
       if [ "$DISPATCH_STATUS" = escalate ] \
          && jq -e '.reason == "rule requires the captain'\''s explicit approval before dispatch"' \
-           <<<"$DISPATCH_RESULT" >/dev/null \
-         && [ "$DISPATCH_OVERRIDE_REASON" != captain_override ]; then
-        DISPATCH_DIVERGENCE_REASON=captain_approval_required
-        echo "error: typed dispatch matched a captain-approval rule; pass --dispatch-override-reason captain_override only after approval" >&2
-        exit 1
+           <<<"$DISPATCH_RESULT" >/dev/null; then
+        if [ "$DISPATCH_OVERRIDE_REASON" != captain_override ]; then
+          DISPATCH_DIVERGENCE_REASON=captain_approval_required
+          echo "error: typed dispatch matched a captain-approval rule; pass --dispatch-override-reason captain_override only after approval" >&2
+          exit 1
+        fi
+        DISPATCH_DIVERGENCE_REASON=captain_override
       fi
       ;;
     *)

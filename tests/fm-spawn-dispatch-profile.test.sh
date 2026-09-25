@@ -255,6 +255,18 @@ enable_kimi_dispatch_profile() {
   printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
 }
 
+enable_control_char_model_dispatch_profile() {
+  local home=$1
+  jq -n '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:{harness:"cursor",model:"good\nbackend=orca"}
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }' > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
 last_dispatch_receipt() {
   tail -n 1 "$1/state/dispatch-receipts.jsonl"
 }
@@ -615,12 +627,29 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   out=$(FM_FAKE_DISPATCH_CONFIDENCE=0.4 \
     FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium)
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium \
+      --dispatch-override-reason supported_manual_override)
   status=$?
   expect_code 0 "$status" "ambiguous typed result should allow the existing manual intake"
   receipt=$(last_dispatch_receipt "$HOME_DIR")
   [ "$(jq -r .resolver.status <<<"$receipt")" = ambiguous ] || fail "ambiguous receipt lost resolver status"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "ambiguous fallback was unexplained"
+
+  id=profile-typed-invalid-model-z11d2
+  rec=$(make_spawn_case profile-typed-invalid-model claude "$id")
+  read_case_record "$rec"
+  enable_control_char_model_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 2 "$status" "dispatch profile model control characters should fail before launch"
+  assert_contains "$out" "typed dispatch resolution failed configuration validation" \
+    "invalid selected model did not fail at typed-dispatch validation"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = resolver_configuration_error ] \
+    || fail "invalid model receipt lost configuration-error reason"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "invalid model receipt claims a worker launched"
+  assert_absent "$HOME_DIR/state/$id.meta" "invalid model must not reach line-oriented metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "invalid model reached the worker launch command"
 
   id=profile-typed-error-z11e
   rec=$(make_spawn_case profile-typed-error claude "$id")
