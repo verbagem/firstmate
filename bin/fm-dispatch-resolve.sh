@@ -276,7 +276,9 @@ jq -e --slurpfile rules "$RULES" '
     ((has("usage") | not) or
       ((.usage | type) == "object" and
        (.usage.input_tokens | type) == "number" and
-       (.usage.output_tokens | type) == "number"))' \
+       .usage.input_tokens >= 0 and .usage.input_tokens == (.usage.input_tokens | floor) and
+       (.usage.output_tokens | type) == "number" and
+       .usage.output_tokens >= 0 and .usage.output_tokens == (.usage.output_tokens | floor)))' \
   "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
 
 # ---- quota evidence: one quota-axi --json snapshot -----------------------------
@@ -289,6 +291,10 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
   --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" '
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  def safe_model($v):
+    if ($v | type) == "string" and ($v | length) <= 128 and ($v | test("^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")) then $v else null end;
+  def safe_usage($v):
+    if ($v | type) == "object" then {input_tokens: $v.input_tokens, output_tokens: $v.output_tokens} else null end;
   def prov($p): ([$q.providers[] | select(.provider == $p)] | first) // null;
   def rows($p): (prov($p) | .quotaSemantics.effectiveAvailability // []);
   def bare($m): ($m | split("/") | last);
@@ -372,7 +378,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
      then {source: "default", use: profiles($cfg.default // null), note: "rule \($choice) floor \($rule.floor.scope) below \($rule.floor.min_percent)%: fall through to default"}
    else {source: $choice, use: profiles($rule.use), note: "rule matched"} end) as $sel |
   {
-    model: $r.model, latency_ms: $lat, tokens: ($r.usage // null),
+    model: safe_model($r.model), latency_ms: $lat, tokens: safe_usage($r.usage),
     rule: $choice,
     rule_when: (if $rule == null then $none_criterion else $rule.when end | .[0:60]),
     confidence: $a.confidence, probabilities: $a.probabilities

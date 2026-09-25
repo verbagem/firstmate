@@ -256,6 +256,19 @@ assert_equals 'cursor' "$(jq -r .chosen.profile.harness <<<"$out")" "JSON output
 assert_equals '91' "$(jq -r '.chosen.pct' <<<"$out")" "JSON output carries the selected quota fact"
 assert_not_contains "$out" 'off-by-one in the pager' "JSON output never persists the private brief"
 assert_not_contains "$out" "$KEY" "JSON output never persists the API key"
+cat > "$RESPONSE" <<JSON
+{ "model": "jev private off-by-one in the pager",
+  "answers": { "rule": { "type": "choice", "choice": "rule_4", "confidence": 0.9,
+    "probabilities": { "rule_1": 0.01, "rule_2": 0.01, "rule_3": 0.01, "rule_4": 0.96, "default": 0.01 } } },
+  "usage": { "input_tokens": 812, "output_tokens": 60, "debug": "provider echoed $KEY" } }
+JSON
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager --json
+assert_equals 'clear' "$(jq -r .status <<<"$out")" "JSON output still resolves otherwise valid responses with unsafe metadata"
+assert_equals 'null' "$(jq -r '.model | type' <<<"$out")" "unsafe provider model metadata is nulled"
+assert_equals '["input_tokens","output_tokens"]' "$(jq -c '.tokens | keys' <<<"$out")" "JSON output drops provider usage extras"
+assert_not_contains "$out" 'off-by-one in the pager' "JSON output drops unsafe provider model content"
+assert_not_contains "$out" "$KEY" "JSON output drops provider usage debug content"
+write_response "$RESPONSE" rule_4 0.9
 pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
 
 # --- rules are snapshotted and line output is injection-safe -------------------
@@ -559,6 +572,12 @@ mv "$TMP_ROOT/malformed-usage.json" "$RESPONSE"
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" '  status: error' "malformed usage is an error outcome"
 assert_contains "$out" '  reason: response is not a rule Choice answer' "malformed usage cannot break text rendering silently"
+write_response "$RESPONSE" rule_4 0.9
+jq '.usage.input_tokens = -1' "$RESPONSE" > "$TMP_ROOT/malformed-usage.json"
+mv "$TMP_ROOT/malformed-usage.json" "$RESPONSE"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" '  status: error' "negative token usage is an error outcome"
+assert_contains "$out" '  reason: response is not a rule Choice answer' "token usage must be non-negative integers"
 reset_log
 write_response "$RESPONSE" rule_4 0.9
 jq 'del(.answers.rule.probabilities.default)' "$RESPONSE" > "$TMP_ROOT/malformed-probabilities.json"

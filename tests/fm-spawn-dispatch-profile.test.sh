@@ -233,6 +233,21 @@ enable_cursor_dispatch_profile() {
   printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
 }
 
+enable_harness_only_grok_dispatch_profile() {
+  local home=$1
+  jq -n '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:[
+        {harness:"grok"},
+        {harness:"cursor",model:"cursor-grok-4.6-medium"}
+      ]
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }' > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
 enable_kimi_dispatch_profile() {
   local home=$1
   printf '%s\n' '{"rules":[{"when":"Other work","use":{"harness":"codex","model":"gpt-5","effort":"medium"}}],"default":{"harness":"kimi","model":"kimi-code/k3"}}' \
@@ -557,6 +572,22 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
     || fail "ineligible-candidate receipt lost the quota veto"
   [ ! -s "$LAUNCH_LOG" ] || fail "ineligible candidate reached the worker launch command"
 
+  id=profile-typed-harness-only-veto-z11c1
+  rec=$(make_spawn_case profile-typed-harness-only-veto claude "$id")
+  read_case_record "$rec"
+  enable_harness_only_grok_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness grok \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a harness-only override to an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "harness-only ineligible refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "harness-only ineligible receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "harness-only ineligible candidate reached the worker launch command"
+
   id=profile-typed-override-z11c2
   rec=$(make_spawn_case profile-typed-override claude "$id")
   read_case_record "$rec"
@@ -607,6 +638,22 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   [ "$(jq -r .resolver.status <<<"$receipt")" = error ] || fail "error receipt lost resolver status"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "error fallback was unexplained"
   assert_not_contains "$receipt" "provider echoed private brief" "resolver-error receipt must not persist provider response bodies"
+
+  id=profile-typed-success-metadata-z11e2
+  rec=$(make_spawn_case profile-typed-success-metadata claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_BODY="{\"model\":\"jev private brief for $id\",\"answers\":{\"rule\":{\"type\":\"choice\",\"choice\":\"default\",\"confidence\":0.97,\"probabilities\":{\"rule_1\":0.97,\"default\":0.03}}},\"usage\":{\"input_tokens\":321,\"output_tokens\":42,\"debug\":\"provider echoed test-key and brief for $id\"}}" \
+    FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "malicious provider success metadata should not block an otherwise valid typed launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r '.resolver.model | type' <<<"$receipt")" = null ] || fail "receipt persisted unsafe resolver model metadata"
+  [ "$(jq -c '.resolver.tokens | keys' <<<"$receipt")" = '["input_tokens","output_tokens"]' ] \
+    || fail "receipt persisted provider usage extras"
+  assert_not_contains "$receipt" "private brief for $id" "receipt persisted unsafe provider model content"
+  assert_not_contains "$receipt" "provider echoed test-key" "receipt persisted provider usage debug content"
 
   id=profile-typed-escalate-z11f
   rec=$(make_spawn_case profile-typed-escalate claude "$id")
