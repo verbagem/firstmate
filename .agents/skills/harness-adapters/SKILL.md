@@ -359,7 +359,7 @@ The tracked Claude hook entries whose event Grok already covers through its own 
 Project-local Grok hooks require folder trust, verified with launch-time `--trust`; if the primary firstmate checkout is not trusted for Grok hooks, this primary guard fails open and `fm-guard.sh` remains the next-command alarm.
 Grok's primary watcher protocol remains background-notify around `bin/fm-watch-arm.sh`; native Stop continuation does not provide Pi-like extension ownership.
 
-## cursor (VERIFIED CREWMATE/SCOUT 2026-09-25 on tmux, 2026-08-12 on Herdr, and SECONDMATE/PRIMARY 2026-08-13, Cursor Agent CLI 2026.07.09-a3815c0 launcher with 2026.09.23 interactive engine)
+## cursor (VERIFIED CREWMATE/SCOUT 2026-09-25 on tmux, 2026-08-12 on Herdr, and SECONDMATE/PRIMARY 2026-08-13; trust contract help-probed, Cursor Agent CLI 2026.09.23-86fc751)
 
 Cursor Agent CLI runs crewmate, scout, secondmate, and primary work.
 Its primary supervision is the stop-hook park in [`docs/supervision-protocols/cursor.md`](../../../docs/supervision-protocols/cursor.md), registered in tracked `.cursor/hooks.json`; a Cursor primary or secondmate must start from a trusted project workspace or no project hook loads at all.

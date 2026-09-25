@@ -785,7 +785,8 @@ App-server partial methods and raw socket experiments do not satisfy that bridge
 ## Cursor Agent CLI
 
 Cursor runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
-The evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, extended on 2026-08-13 with the tmux composer verdict below, and refreshed on 2026-09-25 for the workspace trust contract.
+The original identity, transcript, and launch evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
+The workspace trust contract was refreshed on 2026-09-25.
 
 - Binary: `~/.local/bin/cursor-agent`, canonicalizing into `~/.local/share/cursor-agent/versions/2026.08.11-e8db854/cursor-agent`.
 - Version: `cursor-agent --version` reported `2026.08.11-e8db854`, and `cursor-agent status` reported a logged-in account.
@@ -805,7 +806,7 @@ Firstmate therefore gates Cursor workspace trust from `cursor-agent --help` and 
 | --- | --- |
 | `#{pane_current_command}` | `node` |
 | `ps -o comm=` | `/Users/<user>/.local/bin/cursor-agent` |
-| child argv | `.../bin/cursor-agent --use-system-ca .../versions/2026.08.11-e8db854/index.js --trust --yolo` |
+| child argv, 2026-08-11 | `.../bin/cursor-agent --use-system-ca .../versions/2026.08.11-e8db854/index.js --trust --yolo` |
 
 `node` matches no harness name pattern, so a cursor pane is identified from Cursor's own name or install tree in the path or argv[0].
 An unrelated `node` or `agent` matches neither and classifies `other`, which the liveness callers fold into `ambiguous` rather than `dead`.
