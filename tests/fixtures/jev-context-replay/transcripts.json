@@ -1,0 +1,316 @@
+{
+  "schema": "fm-jev-context-replay-fixtures.v1",
+  "notes": "Synthetic sanitized fixtures for offline replay only. They contain no live agent context.",
+  "transcripts": [
+    {
+      "id": "case-001-contradictory-update",
+      "segments": [
+        {"id": "c001-s1", "type": "captain_instruction", "flags": [], "text": "Captain: Build the replay evaluator offline only; do not mutate live context."},
+        {"id": "c001-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: compare deterministic baseline with Jev-assisted proposal."},
+        {"id": "c001-s3", "type": "ordinary_progress", "flags": [], "text": "Working note: initial sketch considered a live TypeSafe call before the offline-only boundary was restated."},
+        {"id": "c001-s4", "type": "superseded_data", "flags": [], "text": "Superseded: earlier idea allowed live API evaluation during replay."},
+        {"id": "c001-s5", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "$ rg TypeSafe docs/configuration.md\n383: typed resolution is off without TYPESAFE_API_KEY."},
+        {"id": "c001-s6", "type": "noise", "flags": [], "text": "Terminal spinner frame: / - \\ | / - \\ |"}
+      ],
+      "questions": [{"id": "q-offline", "text": "What boundary prevents live context mutation?", "required_segment_ids": ["c001-s1", "c001-s5"]}]
+    },
+    {
+      "id": "case-002-scope-supersession",
+      "segments": [
+        {"id": "c002-s1", "type": "captain_instruction", "flags": [], "text": "Captain: Do not patch Pi, Claude, Codex compaction, sessions, prompts, or live context."},
+        {"id": "c002-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: found compaction hook names but left them untouched."},
+        {"id": "c002-s3", "type": "superseded_data", "flags": [], "text": "Superseded: a draft named a future automatic compactor daemon."},
+        {"id": "c002-s4", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: output only diffable ledger and report."},
+        {"id": "c002-s5", "type": "evidence_tool_output", "flags": [], "text": "$ git diff --name-only\nbin/fm-jev-context-replay.py\ntests/fm-jev-context-replay.test.sh"},
+        {"id": "c002-s6", "type": "noise", "flags": [], "text": "Repeated shell prompt with no new information."}
+      ],
+      "questions": [{"id": "q-scope", "text": "Which live systems are out of scope?", "required_segment_ids": ["c002-s1", "c002-s4"]}]
+    },
+    {
+      "id": "case-003-ask-user",
+      "segments": [
+        {"id": "c003-s1", "type": "accepted_requirement", "flags": ["unresolved_decision"], "text": "Ask-user decision remains unresolved: whether future pilots may use private transcripts."},
+        {"id": "c003-s2", "type": "captain_instruction", "flags": [], "text": "Captain: if higher authority is needed, report needs-decision and stop."},
+        {"id": "c003-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: the offline fixture path avoided the private-transcript question."},
+        {"id": "c003-s4", "type": "evidence_tool_output", "flags": [], "text": "$ test -f private-transcript.json; echo $?\n1"},
+        {"id": "c003-s5", "type": "noise", "flags": [], "text": "Color escape sequence removed from terminal output."}
+      ],
+      "questions": [{"id": "q-decision", "text": "What unresolved decision must not be hidden?", "required_segment_ids": ["c003-s1", "c003-s2"]}]
+    },
+    {
+      "id": "case-004-command-noise",
+      "segments": [
+        {"id": "c004-s1", "type": "captain_instruction", "flags": [], "text": "Captain: run tests through the public interface."},
+        {"id": "c004-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: fixture command produced thousands of repeated warning lines."},
+        {"id": "c004-s3", "type": "noise", "flags": [], "text": "warning: polling...\nwarning: polling...\nwarning: polling...\nwarning: polling..."},
+        {"id": "c004-s4", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "$ bin/fm-test-run.sh tests/fm-jev-context-replay.test.sh\nFM_TEST_SUMMARY total=1 failed=0"},
+        {"id": "c004-s5", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: command-output noise may be dropped if receipts remain."}
+      ],
+      "questions": [{"id": "q-noise", "text": "Which receipt proves tests passed?", "required_segment_ids": ["c004-s1", "c004-s4"]}]
+    },
+    {
+      "id": "case-005-long-evidence",
+      "segments": [
+        {"id": "c005-s1", "type": "captain_instruction", "flags": [], "text": "Captain: long evidence payloads may be truncated only with provenance."},
+        {"id": "c005-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: the ledger stores original_segment_id and original_sha256 for truncated rows."},
+        {"id": "c005-s3", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "Long receipt line 01: retained evidence marker.\nLong receipt line 02: retained evidence marker.\nLong receipt line 03: retained evidence marker.\nLong receipt line 04: retained evidence marker.\nLong receipt line 05: retained evidence marker.\nLong receipt line 06: retained evidence marker.\nLong receipt line 07: retained evidence marker.\nLong receipt line 08: retained evidence marker.\nLong receipt line 09: retained evidence marker.\nLong receipt line 10: retained evidence marker."},
+        {"id": "c005-s4", "type": "noise", "flags": [], "text": "Download progress: 1% 2% 3% 4% 5%"},
+        {"id": "c005-s5", "type": "superseded_data", "flags": [], "text": "Superseded: store a generated summary instead of exact provenance."}
+      ],
+      "questions": [{"id": "q-provenance", "text": "What proves long evidence was retained or traceable?", "required_segment_ids": ["c005-s1", "c005-s3"]}]
+    },
+    {
+      "id": "case-006-security-boundary",
+      "segments": [
+        {"id": "c006-s1", "type": "captain_instruction", "flags": ["security_boundary"], "text": "Captain: never read real credential files for this evaluator."},
+        {"id": "c006-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: fake TypeSafe transport is enough for tests."},
+        {"id": "c006-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: unset TYPESAFE_API_KEY during absent-key test."},
+        {"id": "c006-s4", "type": "evidence_tool_output", "flags": [], "text": "$ env -u TYPESAFE_API_KEY bin/fm-jev-context-replay.py --fixtures ...\nstatus=pass"},
+        {"id": "c006-s5", "type": "noise", "flags": [], "text": "Shell history number: 1042"}
+      ],
+      "questions": [{"id": "q-security", "text": "What credential boundary applies?", "required_segment_ids": ["c006-s1", "c006-s2"]}]
+    },
+    {
+      "id": "case-007-approval",
+      "segments": [
+        {"id": "c007-s1", "type": "captain_instruction", "flags": ["approval"], "text": "Captain approval: this concrete offline evaluator may be built in the task worktree."},
+        {"id": "c007-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: never merge the resulting PR."},
+        {"id": "c007-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: branch fm/jev-context-retention-replay-pilot-7592 created."},
+        {"id": "c007-s4", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "$ git status --short --branch\n## fm/jev-context-retention-replay-pilot-7592"},
+        {"id": "c007-s5", "type": "noise", "flags": [], "text": "Prompt redraw after branch creation."}
+      ],
+      "questions": [{"id": "q-approval", "text": "What approval and branch context matter?", "required_segment_ids": ["c007-s1", "c007-s4"]}]
+    },
+    {
+      "id": "case-008-blocker",
+      "segments": [
+        {"id": "c008-s1", "type": "accepted_requirement", "flags": ["blocker"], "text": "Blocker: if the evaluator attempts network access without a fake transport, stop."},
+        {"id": "c008-s2", "type": "captain_instruction", "flags": [], "text": "Captain: absent key means no network."},
+        {"id": "c008-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: no curl invocation exists in the evaluator."},
+        {"id": "c008-s4", "type": "evidence_tool_output", "flags": [], "text": "$ rg 'curl|https://api.typesafe.ai' bin/fm-jev-context-replay.py\n(no matches)"},
+        {"id": "c008-s5", "type": "noise", "flags": [], "text": "Empty stderr file."}
+      ],
+      "questions": [{"id": "q-network", "text": "When must network access be blocked?", "required_segment_ids": ["c008-s1", "c008-s2", "c008-s4"]}]
+    },
+    {
+      "id": "case-009-unknown",
+      "segments": [
+        {"id": "c009-s1", "type": "unknown", "flags": [], "text": "Unclassified note: maybe this contains a future requirement; keep until a person classifies it."},
+        {"id": "c009-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: low-confidence proposals are treated as keep."},
+        {"id": "c009-s3", "type": "noise", "flags": [], "text": "Timestamp-only line: 12:01:04"},
+        {"id": "c009-s4", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: unknown and low-confidence behavior is covered by public tests."}
+      ],
+      "questions": [{"id": "q-unknown", "text": "How are unknown segments handled?", "required_segment_ids": ["c009-s1", "c009-s4"]}]
+    },
+    {
+      "id": "case-010-source-receipt",
+      "segments": [
+        {"id": "c010-s1", "type": "captain_instruction", "flags": [], "text": "Captain: receipts needed by future questions can never be dropped by model judgment."},
+        {"id": "c010-s2", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "$ curl -fsSL https://docs.typesafe.ai/models.md | sed -n '1,80p'\njev-latest points to jev-1.13.0."},
+        {"id": "c010-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: model aliases can move, so reports log response model."},
+        {"id": "c010-s4", "type": "superseded_data", "flags": [], "text": "Superseded: assume jev-latest never changes."}
+      ],
+      "questions": [{"id": "q-receipt", "text": "Which source receipt supports the model note?", "required_segment_ids": ["c010-s1", "c010-s2"]}]
+    },
+    {
+      "id": "case-011-verbatim",
+      "segments": [
+        {"id": "c011-s1", "type": "captain_instruction", "flags": [], "text": "Captain: kept text remains verbatim."},
+        {"id": "c011-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: no generative rewriting is allowed."},
+        {"id": "c011-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: row payload for keep stores the original text field."},
+        {"id": "c011-s4", "type": "noise", "flags": [], "text": "Editor autosave notice."}
+      ],
+      "questions": [{"id": "q-verbatim", "text": "What must be preserved exactly?", "required_segment_ids": ["c011-s1", "c011-s2"]}]
+    },
+    {
+      "id": "case-012-cost",
+      "segments": [
+        {"id": "c012-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: report latency and cost."},
+        {"id": "c012-s2", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "TypeSafe docs: Jev price is charged per input token; output tokens are free."},
+        {"id": "c012-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: fake transport returns usage for deterministic cost math."},
+        {"id": "c012-s4", "type": "noise", "flags": [], "text": "Benchmark warmup line."}
+      ],
+      "questions": [{"id": "q-cost", "text": "How does the evaluator score cost?", "required_segment_ids": ["c012-s1", "c012-s2"]}]
+    },
+    {
+      "id": "case-013-heldout",
+      "segments": [
+        {"id": "c013-s1", "type": "captain_instruction", "flags": [], "text": "Captain: replay known downstream questions against proposed retained context."},
+        {"id": "c013-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: held-out questions name required segment ids."},
+        {"id": "c013-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: answerability is deterministic over required_segment_ids."},
+        {"id": "c013-s4", "type": "superseded_data", "flags": [], "text": "Superseded: ask a generative model to decide answerability."}
+      ],
+      "questions": [{"id": "q-heldout", "text": "What are downstream questions checked against?", "required_segment_ids": ["c013-s1", "c013-s2"]}]
+    },
+    {
+      "id": "case-014-report-only",
+      "segments": [
+        {"id": "c014-s1", "type": "captain_instruction", "flags": [], "text": "Captain: add no daemon, watcher, memory store, or automatic compactor."},
+        {"id": "c014-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: implementation is a one-shot CLI."},
+        {"id": "c014-s3", "type": "evidence_tool_output", "flags": [], "text": "$ ls state\n(no evaluator state files)"},
+        {"id": "c014-s4", "type": "noise", "flags": [], "text": "Directory listing color code."}
+      ],
+      "questions": [{"id": "q-one-shot", "text": "Why is this not a daemon?", "required_segment_ids": ["c014-s1", "c014-s2"]}]
+    },
+    {
+      "id": "case-015-baseline",
+      "segments": [
+        {"id": "c015-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: deterministic baseline and Jev-assisted proposal are compared."},
+        {"id": "c015-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: baseline keeps protected, truncates ordinary progress, drops noise and superseded data."},
+        {"id": "c015-s3", "type": "noise", "flags": [], "text": "Progress bar: ########"},
+        {"id": "c015-s4", "type": "superseded_data", "flags": [], "text": "Superseded baseline variant kept every segment."}
+      ],
+      "questions": [{"id": "q-baseline", "text": "What comparison is required?", "required_segment_ids": ["c015-s1", "c015-s2"]}]
+    },
+    {
+      "id": "case-016-required-evidence",
+      "segments": [
+        {"id": "c016-s1", "type": "captain_instruction", "flags": [], "text": "Captain: evidence needed by future questions can never be dropped."},
+        {"id": "c016-s2", "type": "ordinary_progress", "flags": [], "text": "Progress evidence: the final answer should mention report.md and ledger.jsonl."},
+        {"id": "c016-s3", "type": "noise", "flags": [], "text": "Unrelated shell prompt."},
+        {"id": "c016-s4", "type": "superseded_data", "flags": [], "text": "Superseded: only report.md is necessary."}
+      ],
+      "questions": [{"id": "q-required-progress", "text": "Which ordinary progress detail is future evidence?", "required_segment_ids": ["c016-s1", "c016-s2"]}]
+    },
+    {
+      "id": "case-017-no-key",
+      "segments": [
+        {"id": "c017-s1", "type": "captain_instruction", "flags": [], "text": "Captain: absent key means no network."},
+        {"id": "c017-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: absent-key path still produces deterministic baseline and safe Jev fallback."},
+        {"id": "c017-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: missing proposals become keep decisions for Jev-assisted rows."},
+        {"id": "c017-s4", "type": "noise", "flags": [], "text": "curl would have failed if called."}
+      ],
+      "questions": [{"id": "q-no-key", "text": "What happens when there is no key?", "required_segment_ids": ["c017-s1", "c017-s2"]}]
+    },
+    {
+      "id": "case-018-probabilities",
+      "segments": [
+        {"id": "c018-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: Jev may propose keep, truncate, or drop plus probabilities."},
+        {"id": "c018-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: proposal probabilities are recorded in ledger rows."},
+        {"id": "c018-s3", "type": "noise", "flags": [], "text": "Trace id repeated three times: abc abc abc."},
+        {"id": "c018-s4", "type": "superseded_data", "flags": [], "text": "Superseded probability field name: scores."}
+      ],
+      "questions": [{"id": "q-probs", "text": "What model proposal data is retained?", "required_segment_ids": ["c018-s1", "c018-s2"]}]
+    },
+    {
+      "id": "case-019-low-confidence",
+      "segments": [
+        {"id": "c019-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: low confidence must not silently drop content."},
+        {"id": "c019-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: confidence below 0.60 forces keep."},
+        {"id": "c019-s3", "type": "unknown", "flags": [], "text": "Ambiguous captured line with possible instruction."},
+        {"id": "c019-s4", "type": "noise", "flags": [], "text": "Blank-line-only capture normalized."}
+      ],
+      "questions": [{"id": "q-low", "text": "How does low confidence behave?", "required_segment_ids": ["c019-s1", "c019-s3"]}]
+    },
+    {
+      "id": "case-020-reproducible",
+      "segments": [
+        {"id": "c020-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: ledgers are reproducible and diffable."},
+        {"id": "c020-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: JSON rows use sorted keys and stable separators."},
+        {"id": "c020-s3", "type": "evidence_tool_output", "flags": [], "text": "$ cmp run1/ledger.jsonl run2/ledger.jsonl\n(no output)"},
+        {"id": "c020-s4", "type": "noise", "flags": [], "text": "Temporary path names omitted from fixture."}
+      ],
+      "questions": [{"id": "q-repro", "text": "What proves reproducibility?", "required_segment_ids": ["c020-s1", "c020-s3"]}]
+    },
+    {
+      "id": "case-021-false-drop",
+      "segments": [
+        {"id": "c021-s1", "type": "captain_instruction", "flags": [], "text": "Captain: false-drop rate must be scored."},
+        {"id": "c021-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: false_drop_count includes protected drops after final decision."},
+        {"id": "c021-s3", "type": "noise", "flags": [], "text": "Unneeded line."},
+        {"id": "c021-s4", "type": "superseded_data", "flags": [], "text": "Superseded false drop denominator definition."}
+      ],
+      "questions": [{"id": "q-false-drop", "text": "Which metric catches protected loss?", "required_segment_ids": ["c021-s1", "c021-s2"]}]
+    },
+    {
+      "id": "case-022-tool-output",
+      "segments": [
+        {"id": "c022-s1", "type": "captain_instruction", "flags": [], "text": "Captain: direct tool evidence beats summary claims."},
+        {"id": "c022-s2", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "$ pwd -P\n/isolated/task/worktree\n$ git rev-parse --show-toplevel\n/isolated/task/worktree"},
+        {"id": "c022-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: isolation evidence was checked before edits."},
+        {"id": "c022-s4", "type": "noise", "flags": [], "text": "PTY echoed command twice."}
+      ],
+      "questions": [{"id": "q-tool", "text": "What evidence proves isolation?", "required_segment_ids": ["c022-s1", "c022-s2"]}]
+    },
+    {
+      "id": "case-023-accepted-current",
+      "segments": [
+        {"id": "c023-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted current requirement: use fixture transcripts only."},
+        {"id": "c023-s2", "type": "superseded_data", "flags": [], "text": "Superseded requirement: mine live session logs directly."},
+        {"id": "c023-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: sanitized fixture schema is explicit."},
+        {"id": "c023-s4", "type": "noise", "flags": [], "text": "Old terminal title."}
+      ],
+      "questions": [{"id": "q-current", "text": "Which requirement is current?", "required_segment_ids": ["c023-s1", "c023-s3"]}]
+    },
+    {
+      "id": "case-024-retention-ratio",
+      "segments": [
+        {"id": "c024-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: score retention ratio."},
+        {"id": "c024-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: retained chars divided by source chars gives the ratio."},
+        {"id": "c024-s3", "type": "noise", "flags": [], "text": "A very long but useless generated trace: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+        {"id": "c024-s4", "type": "superseded_data", "flags": [], "text": "Superseded metric: count segments instead of chars."}
+      ],
+      "questions": [{"id": "q-ratio", "text": "How is retention ratio measured?", "required_segment_ids": ["c024-s1", "c024-s2"]}]
+    },
+    {
+      "id": "case-025-source-id",
+      "segments": [
+        {"id": "c025-s1", "type": "captain_instruction", "flags": [], "text": "Captain: truncation must retain a retrievable original segment id."},
+        {"id": "c025-s2", "type": "ordinary_progress", "flags": [], "text": "Progress segment with enough text to be truncated by the baseline and still refer back to c025-s2 for retrieval. Extra words make the preview shorter than the original payload so provenance matters."},
+        {"id": "c025-s3", "type": "noise", "flags": [], "text": "Progress spinner."},
+        {"id": "c025-s4", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: no generated replacement summaries."}
+      ],
+      "questions": [{"id": "q-source-id", "text": "What must truncation preserve?", "required_segment_ids": ["c025-s1", "c025-s4"]}]
+    },
+    {
+      "id": "case-026-no-store",
+      "segments": [
+        {"id": "c026-s1", "type": "captain_instruction", "flags": [], "text": "Captain: add no memory store."},
+        {"id": "c026-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: outputs are explicit files chosen by --out-dir."},
+        {"id": "c026-s3", "type": "evidence_tool_output", "flags": [], "text": "$ rg 'sqlite|database|daemon' bin/fm-jev-context-replay.py\n(no matches)"},
+        {"id": "c026-s4", "type": "noise", "flags": [], "text": "Filesystem watcher wake from unrelated lane."}
+      ],
+      "questions": [{"id": "q-store", "text": "Why is there no memory store?", "required_segment_ids": ["c026-s1", "c026-s2"]}]
+    },
+    {
+      "id": "case-027-pattern-mining",
+      "segments": [
+        {"id": "c027-s1", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: mine safe patterns from fast-jev-compaction, winnow, and blink."},
+        {"id": "c027-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: retained shape uses keep/truncate/drop, replay evaluation, and candidate segment ids."},
+        {"id": "c027-s3", "type": "superseded_data", "flags": [], "text": "Superseded: install upstream sidecar."},
+        {"id": "c027-s4", "type": "noise", "flags": [], "text": "Repository star counts are irrelevant to fixture replay."}
+      ],
+      "questions": [{"id": "q-patterns", "text": "Which safe patterns were adapted?", "required_segment_ids": ["c027-s1", "c027-s2"]}]
+    },
+    {
+      "id": "case-028-confidence-doc",
+      "segments": [
+        {"id": "c028-s1", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "TypeSafe confidence docs: confidence summarizes probability distribution concentration; it is not workflow correctness."},
+        {"id": "c028-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: deterministic code owns non-negotiable retention."},
+        {"id": "c028-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: code treats confidence as advisory only."},
+        {"id": "c028-s4", "type": "noise", "flags": [], "text": "Doc fetch timing line."}
+      ],
+      "questions": [{"id": "q-confidence", "text": "Why can confidence not authorize dropping protected content?", "required_segment_ids": ["c028-s1", "c028-s2"]}]
+    },
+    {
+      "id": "case-029-choice-doc",
+      "segments": [
+        {"id": "c029-s1", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "TypeSafe Choice docs: Choice returns selected option, probabilities, and confidence."},
+        {"id": "c029-s2", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: proposal actions are keep, truncate, or drop."},
+        {"id": "c029-s3", "type": "ordinary_progress", "flags": [], "text": "Progress: fake transport returns Choice-shaped answers."},
+        {"id": "c029-s4", "type": "superseded_data", "flags": [], "text": "Superseded: use free-form rationale."}
+      ],
+      "questions": [{"id": "q-choice", "text": "What shape should Jev proposals have?", "required_segment_ids": ["c029-s1", "c029-s2"]}]
+    },
+    {
+      "id": "case-030-noul-doc",
+      "segments": [
+        {"id": "c030-s1", "type": "evidence_tool_output", "flags": ["source_receipt"], "text": "TypeSafe Noul docs: Noul returns the probability that a yes/no question is yes and carries no separate confidence."},
+        {"id": "c030-s2", "type": "ordinary_progress", "flags": [], "text": "Progress: this evaluator uses Choice for mutually exclusive keep/truncate/drop proposals."},
+        {"id": "c030-s3", "type": "accepted_requirement", "flags": [], "text": "Accepted requirement: current TypeSafe Noul, Choice, and confidence docs were read before implementation."},
+        {"id": "c030-s4", "type": "noise", "flags": [], "text": "HTTP cache header omitted."}
+      ],
+      "questions": [{"id": "q-noul", "text": "Why is Choice used instead of Noul for the action?", "required_segment_ids": ["c030-s1", "c030-s2", "c030-s3"]}]
+    }
+  ]
+}
