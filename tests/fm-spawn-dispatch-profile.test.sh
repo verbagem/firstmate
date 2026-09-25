@@ -265,6 +265,21 @@ enable_harness_only_grok_dispatch_profile() {
   printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
 }
 
+enable_codex_floor_dispatch_profile() {
+  local home=$1
+  jq -n '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:[
+        {harness:"codex",model:"gpt-5",effort:"high",floor:{scope:"all_models",min_percent:90}},
+        {harness:"cursor",model:"cursor-grok-4.6-medium"}
+      ]
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }' > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
 enable_kimi_dispatch_profile() {
   local home=$1
   printf '%s\n' '{"rules":[{"when":"Other work","use":{"harness":"codex","model":"gpt-5","effort":"medium"}}],"default":{"harness":"kimi","model":"kimi-code/k3"}}' \
@@ -780,6 +795,22 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
     || fail "raw-command ineligible receipt lost the quota veto"
   [ ! -s "$LAUNCH_LOG" ] || fail "raw-command ineligible candidate reached the worker launch command"
 
+  id=profile-typed-raw-codex-short-veto-z11c9
+  rec=$(make_spawn_case profile-typed-raw-codex-short-veto claude "$id")
+  read_case_record "$rec"
+  enable_codex_floor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "codex -m gpt-5 -c model_reasoning_effort=high" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a raw Codex short-axis command for an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "raw Codex short-axis refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "raw Codex short-axis receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw Codex short-axis candidate reached the worker launch command"
+
   id=profile-typed-raw-wrapper-veto-z11c4
   rec=$(make_spawn_case profile-typed-raw-wrapper-veto claude "$id")
   read_case_record "$rec"
@@ -819,6 +850,26 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
     || fail "newline raw-command receipt lost adapter_unavailable"
   [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "newline raw-command receipt claims a launch"
   [ ! -s "$LAUNCH_LOG" ] || fail "newline raw command reached the worker launch command"
+
+  id=profile-typed-raw-unparsed-config-z11c10
+  rec=$(make_spawn_case profile-typed-raw-unparsed-config claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "codex -c model_reasoning_effort high" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "an unparsed raw Codex effort config must refuse before launch"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "unparsed raw Codex effort config did not name the launch profile problem"
+  assert_absent "$curl_log" "unparsed raw Codex effort config called the resolver before local rejection"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "unparsed raw Codex effort config receipt lost adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "unparsed raw Codex effort config receipt claims a launch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "unparsed raw Codex effort config reached the worker launch command"
 
   id=profile-typed-raw-no-worker-z11c5
   rec=$(make_spawn_case profile-typed-raw-no-worker claude "$id")
@@ -873,7 +924,7 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
   read_case_record "$rec"
   enable_cursor_dispatch_profile "$HOME_DIR"
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" "codex --model gpt-5 --effort high" \
+    "$id" "$PROJ_DIR" "codex -m=gpt-5 -c=model_reasoning_effort=high" \
     --dispatch-override-reason supported_manual_override)
   status=$?
   expect_code 0 "$status" "a supported raw override should launch with parsed axes"

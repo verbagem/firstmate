@@ -878,6 +878,50 @@ if [ "$MODEL_SET" -eq 1 ] && ! dispatch_model_id_ok "$MODEL"; then
   exit 1
 fi
 
+spawn_raw_axis_model() {
+  local value=$1
+  [ -n "$value" ] && dispatch_model_id_ok "$value" || return 1
+  SPAWN_RAW_MODEL=$value
+}
+
+spawn_raw_axis_effort() {
+  local value=$1
+  [ -n "$value" ] || return 1
+  SPAWN_RAW_EFFORT=$value
+}
+
+spawn_raw_axis_config() {
+  local value=$1 key val
+  case "$value" in
+    *=*)
+      key=${value%%=*}
+      val=${value#*=}
+      ;;
+    model|model_reasoning_effort|*model*|*effort*|*thinking*)
+      return 1
+      ;;
+    *) return 0 ;;
+  esac
+  case "$key" in
+    model) spawn_raw_axis_model "$val" ;;
+    model_reasoning_effort) spawn_raw_axis_effort "$val" ;;
+    *model*|*effort*|*thinking*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+spawn_raw_axis_unknown() {
+  case "$1" in
+    --model*|--effort*|--reasoning-effort*|--thinking*|--config*|-m*|-c*)
+      return 0
+      ;;
+    *model*=*|*effort*=*|*thinking*=*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 spawn_raw_command_profile() {
   local raw=$1 word want= value
   SPAWN_RAW_HARNESS=
@@ -907,11 +951,9 @@ spawn_raw_command_profile() {
         --*) return 1 ;;
         *)
           case "$want" in
-            model)
-              dispatch_model_id_ok "$word" || return 1
-              SPAWN_RAW_MODEL=$word
-              ;;
-            effort) SPAWN_RAW_EFFORT=$word ;;
+            model) spawn_raw_axis_model "$word" || return 1 ;;
+            effort) spawn_raw_axis_effort "$word" || return 1 ;;
+            config) spawn_raw_axis_config "$word" || return 1 ;;
           esac
           ;;
       esac
@@ -921,28 +963,44 @@ spawn_raw_command_profile() {
     case "$word" in
       --model=*)
         value=${word#--model=}
-        [ -n "$value" ] && dispatch_model_id_ok "$value" || return 1
-        SPAWN_RAW_MODEL=$value
+        spawn_raw_axis_model "$value" || return 1
         ;;
       --model) want=model ;;
+      -m=*)
+        value=${word#-m=}
+        spawn_raw_axis_model "$value" || return 1
+        ;;
+      -m) want=model ;;
+      -m*) return 1 ;;
       --effort=*)
         value=${word#--effort=}
-        [ -n "$value" ] || return 1
-        SPAWN_RAW_EFFORT=$value
+        spawn_raw_axis_effort "$value" || return 1
         ;;
       --effort) want=effort ;;
       --reasoning-effort=*)
         value=${word#--reasoning-effort=}
-        [ -n "$value" ] || return 1
-        SPAWN_RAW_EFFORT=$value
+        spawn_raw_axis_effort "$value" || return 1
         ;;
       --reasoning-effort) want=effort ;;
       --thinking=*)
         value=${word#--thinking=}
-        [ -n "$value" ] || return 1
-        SPAWN_RAW_EFFORT=$value
+        spawn_raw_axis_effort "$value" || return 1
         ;;
       --thinking) want=effort ;;
+      --config=*)
+        value=${word#--config=}
+        spawn_raw_axis_config "$value" || return 1
+        ;;
+      --config) want=config ;;
+      -c=*)
+        value=${word#-c=}
+        spawn_raw_axis_config "$value" || return 1
+        ;;
+      -c) want=config ;;
+      -c*) return 1 ;;
+      *)
+        ! spawn_raw_axis_unknown "$word" || return 1
+        ;;
     esac
   done
   [ -n "$SPAWN_RAW_HARNESS" ] || return 1
