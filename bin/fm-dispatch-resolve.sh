@@ -30,7 +30,7 @@
 #
 # Output (stdout, compact TOON-style block by default; one JSON object with --json):
 #   dispatch-resolve:
-#     status: clear | ambiguous | escalate | error
+#     status: clear | ambiguous | escalate | error (or off with --json and no key)
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
 #     reason: <why the status is not clear>
 #     candidate: <harness>:<model> provider=.. scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason>
@@ -44,9 +44,9 @@
 #   existing unreadable rules file, malformed rules, or missing jq), which is
 #   actionable, never selected around.
 #
-#   --json is for the private fm-spawn receipt path. It contains the parsed
-#   resolver result and local quota facts, never the brief, API key, request, or
-#   raw provider response.
+#   --json is for fm-spawn's private composition and receipt path. It contains
+#   the parsed resolver result and local quota facts, never the brief, API key,
+#   request, or raw provider response.
 #
 # Environment:
 #   TYPESAFE_API_KEY is the only resolver-specific environment setting.

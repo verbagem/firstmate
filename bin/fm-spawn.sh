@@ -40,14 +40,17 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
-#   When typed dispatch is active, fm-spawn invokes fm-dispatch-resolve.sh once
-#   for every fresh crewmate/scout intake and privately records selected versus
-#   launched profile evidence in state/dispatch-receipts.jsonl. A clear result
+#   When a dispatch profile file is present, fm-spawn invokes
+#   fm-dispatch-resolve.sh once for every fresh crewmate/scout intake and
+#   privately records selected versus launched profile evidence in
+#   state/dispatch-receipts.jsonl, including absent-key outcomes. A clear result
 #   supplies an omitted profile directly. An explicit divergent profile requires
 #   --dispatch-override-reason with one of adapter_unavailable,
 #   catalog_rejection, credential_failure, privacy_veto, quota_runway_veto,
-#   captain_override, or supported_manual_override. A resolver candidate already
-#   proven ineligible may not be manually launched.
+#   captain_override, or supported_manual_override. That flag is rejected outside
+#   a fresh crewmate/scout dispatch-profile intake, so relaunches, secondmates,
+#   and inactive-profile spawns cannot silently drop the audit reason. A resolver
+#   candidate already proven ineligible may not be manually launched.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then

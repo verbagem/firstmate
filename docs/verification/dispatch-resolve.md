@@ -92,4 +92,4 @@ $ bash tests/fm-spawn-dispatch-profile.test.sh | tail -1
 # all fm-spawn-dispatch-profile tests passed
 ```
 
-A live run needs a key and is not part of the suite; rerun the table above by pointing the tool at a brief with the key injected for that one command.
+The live API table and live launch proof both need a key and are not part of the suite; refresh the table with an injected-key resolver run, and refresh launch realization with an isolated `fm-spawn.sh --scout` probe.
