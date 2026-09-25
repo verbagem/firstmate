@@ -756,6 +756,63 @@ test_ship_modes_include_eval_step() {
   pass "fm-brief.sh: every ship mode's Definition of done wires in the eval step"
 }
 
+test_ship_modes_include_code_inner_loop_once() {
+  local home id brief id_proj_mode rest proj mode count project_line inner_line dod_line
+  home="$TMP_ROOT/code-inner-loop-home"
+  write_registry "$home"
+
+  for id_proj_mode in \
+    "brief-inner-nomistakes-f1:no-registry-proj:no-mistakes" \
+    "brief-inner-directpr-f2:direct-proj:direct-PR" \
+    "brief-inner-localonly-f3:local-proj:local-only"; do
+    id=${id_proj_mode%%:*}
+    rest=${id_proj_mode#*:}
+    proj=${rest%%:*}
+    mode=${rest##*:}
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$id: brief was not scaffolded"
+    count=$(grep -c -F "# Code-writing inner loop" "$brief" || true)
+    [ "$count" = 1 ] || fail "$id: code-writing inner loop rendered $count times"
+    project_line=$(grep -n -F "# Project memory" "$brief" | cut -d: -f1)
+    inner_line=$(grep -n -F "# Code-writing inner loop" "$brief" | cut -d: -f1)
+    dod_line=$(grep -n -F "# Definition of done" "$brief" | cut -d: -f1)
+    [ "$project_line" -lt "$inner_line" ] || fail "$id: inner loop rendered before Project memory"
+    [ "$inner_line" -lt "$dod_line" ] || fail "$id: inner loop rendered after Definition of done"
+    assert_grep "**Verify isolation before anything else.**" "$brief" \
+      "$id: ship brief lost worktree isolation"
+    assert_grep "# Firstmate instruction inbox" "$brief" \
+      "$id: ship brief lost instruction inbox"
+    assert_grep "Report status by appending one line:" "$brief" \
+      "$id: ship brief lost status protocol"
+    grep -qx "Delivery contract: mode=$mode" "$brief" \
+      || fail "$id: ship brief lost its machine-readable delivery contract"
+    assert_grep "Never stop, restart, or update the shared \`no-mistakes\` daemon" "$brief" \
+      "$id: ship brief lost no-mistakes daemon protection"
+    assert_grep "# Definition of done" "$brief" \
+      "$id: ship brief lost Definition of done"
+    assert_grep "Simplify or subtract before adding machinery." "$brief" \
+      "$id: inner loop lost subtraction guidance"
+    assert_grep "Name the intended blast radius and keep the change inside it." "$brief" \
+      "$id: inner loop lost blast-radius containment"
+    assert_grep "Map or walk the system when the task crosses an unfamiliar/shared boundary, changes architecture, or diagnoses a bug" "$brief" \
+      "$id: inner loop lost conditional system-walk guidance"
+    assert_grep "for ordinary local edits in known files, you may skip that walk only if you can say why" "$brief" \
+      "$id: inner loop lost ordinary-edit skip-with-reason guidance"
+    assert_grep "Prove the real artifact with the strongest executable evidence available, not a proxy claim." "$brief" \
+      "$id: inner loop lost executable-evidence guidance"
+    assert_grep "Preserve Firstmate as dispatcher, isolation owner, supervisor, and delivery coordinator" "$brief" \
+      "$id: inner loop lost Firstmate authority"
+    assert_grep "preserve the selected delivery path, including no-mistakes when selected." "$brief" \
+      "$id: inner loop lost selected delivery-path authority"
+    assert_no_grep "pstack" "$brief" \
+      "$id: ship brief must not load or name pstack"
+    assert_no_grep ".cursor" "$brief" \
+      "$id: ship brief must not introduce Cursor config"
+  done
+  pass "fm-brief.sh: every ship mode renders the code-writing inner loop exactly once"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -765,6 +822,8 @@ test_scout_and_secondmate_scaffold() {
   assert_present "$brief" "scout brief was not scaffolded"
   assert_grep "SCOUT task" "$brief" "scout brief must declare itself a scout task"
   assert_grep "report.md" "$brief" "scout brief must point at the report deliverable"
+  assert_no_grep "# Code-writing inner loop" "$brief" \
+    "scout brief must stay knowledge-focused, without the ship inner-loop checklist"
   assert_grep "you may host the Lavish review loop yourself" "$brief" \
     "scout brief must mention the option to host a Lavish review loop"
 
@@ -783,6 +842,7 @@ test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_ship_modes_include_eval_step
+test_ship_modes_include_code_inner_loop_once
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

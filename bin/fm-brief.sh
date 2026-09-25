@@ -57,6 +57,8 @@
 # it carries the AGENTS.md authoring bar (widely useful knowledge only, pointers
 # over copied detail) and has the crewmate add the fm-ensure-agents-md.sh
 # self-governance section when a touched project AGENTS.md lacks it.
+# Ship tasks also include a compact code-writing inner-loop checklist between
+# project memory and Definition of done; scout and secondmate scaffolds omit it.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -383,6 +385,17 @@ A FAIL means loop and fix - never report done anyway.
 EOF
 EVAL_STEP=${EVAL_STEP%$'\n'}
 
+IFS= read -r -d '' SHIP_INNER_LOOP_SECTION <<'EOF' || true
+# Code-writing inner loop
+For code-writing work, run this checklist before you change code and again before Done.
+- Simplify or subtract before adding machinery.
+- Name the intended blast radius and keep the change inside it.
+- Map or walk the system when the task crosses an unfamiliar/shared boundary, changes architecture, or diagnoses a bug; for ordinary local edits in known files, you may skip that walk only if you can say why.
+- Prove the real artifact with the strongest executable evidence available, not a proxy claim.
+- Preserve Firstmate as dispatcher, isolation owner, supervisor, and delivery coordinator; preserve the selected delivery path, including no-mistakes when selected.
+EOF
+SHIP_INNER_LOOP_SECTION=${SHIP_INNER_LOOP_SECTION%$'\n'}
+
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -495,6 +508,8 @@ Record only project knowledge useful to almost every future session.
 For anything the codebase already shows, prefer a pointer to the authoritative file, command, or doc over copying the detail.
 If you touch a project \`AGENTS.md\` that lacks \`## Maintaining this file\`, add that short self-governance section from \`$FM_ROOT/bin/fm-ensure-agents-md.sh\` in the same pass.
 Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced no durable project knowledge.
+
+$SHIP_INNER_LOOP_SECTION
 
 $DOD
 EOF
