@@ -1,0 +1,2 @@
+?? cursor-smoke-followup.txt
+?? cursor-smoke-result.txt

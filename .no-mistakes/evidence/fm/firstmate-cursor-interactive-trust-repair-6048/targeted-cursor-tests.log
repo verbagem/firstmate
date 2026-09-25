@@ -1,0 +1,114 @@
+FM_TEST_BEGIN 2026-09-25T01:46:30Z tests/fm-cursor-harness.test.sh family=unclassified expected_gate_skip=none
+ok - fm_cursor_process_matches: cursor's real shapes identify; real node/agent lookalikes do not
+ok - fm_cursor_process_matches: name and install-tree signals each carry a verdict alone
+ok - fm_cursor_verify_executable: the legacy alias is accepted only with cursor evidence
+ok - fm_cursor_resolve_binary: prints the stable launcher, not the versioned target
+/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/bin/fm-cursor-lib.sh: line 108: 23504 Killed: 9               "$path" "$@" > "$out_file" 2> /dev/null
+ok - fm_cursor_bounded_output: fallback hard-kills a TERM-ignoring probe
+ok - tmux liveness: a cursor pane is agent; an unrelated node/agent is other, never dead
+ok - fm-harness.sh: cursor's marker outranks an inherited CLAUDECODE
+ok - fm-harness.sh: cursor-like node script names do not establish ancestry identity
+ok - cursor transcript fold: role:user opens a turn, turn_ended closes it, aborts included
+ok - cursor transcript fold: malformed closes cannot settle through either parser
+ok - cursor transcript fold: partial appends never make an active turn idle
+ok - cursor transcript fold: an unresolvable binding is unknown, never idle
+ok - cursor transcript binding: exact recorded workspacePath only, never a prefix or rebuilt slug
+ok - cursor transcript fold: a prior conversation is excluded so a relaunch folds its own turn
+FM_TEST_END 2026-09-25T01:46:44Z tests/fm-cursor-harness.test.sh exit=0 duration_ms=13823 gate_skip=false
+FM_TEST_BEGIN 2026-09-25T01:46:44Z tests/fm-spawn-dispatch-profile.test.sh family=backend-dispatch expected_gate_skip=none
+ok - no --model/--effort records defaults and types the claude launch instructions
+ok - non-cursor launches clear inherited Cursor identity markers
+ok - relative home overrides ignore CDPATH and become absolute before spawn launch construction
+ok - FM_HOME defaults resolve relative paths and preserve absolute spellings
+ok - absolute override spellings are preserved in spawn launch paths
+ok - unresolvable relative spawn overrides fail with named diagnostics
+ok - active crew-dispatch profile requires an explicit harness for ship spawns
+ok - active crew-dispatch profile requires an explicit harness for scout spawns
+ok - active crew-dispatch profile allows an explicit resolved harness
+ok - active crew-dispatch profile allows the legacy positional harness form
+ok - active crew-dispatch profile allows the raw launch-command escape hatch
+ok - claude receives --model and --effort profile flags
+ok - codex receives --model and model_reasoning_effort profile flags
+ok - codex omits unsupported max effort instead of passing a bad config value
+ok - grok receives --model and --reasoning-effort profile flags
+ok - grok omits unsupported max reasoning effort
+ok - grok omits unsupported xhigh reasoning effort
+ok - cursor receives its model-qualified reasoning class and exact task workspace
+ok - cursor interactive trust contract keeps --trust on the TTY launch
+ok - cursor refuses unsafe trust states before launch
+ok - cursor refuses model ids absent from its resolved binary's live catalog
+ok - cursor preserves the requested model when its live catalog is unreachable
+ok - opencode receives --model and omits the unsupported effort axis
+ok - pi receives --model and --thinking max profile flags
+ok - Pi launch probing omits --tui-mode on older Pi and preserves it on supporting Pi
+ok - pi-signed shares Pi launch semantics while preserving its configured and recorded identity
+ok - pi-signed refuses safely and actionably when the selected executable is unavailable
+ok - pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics
+ok - pi ship launches carry the recap widget and its FM_RECAP_* env; secondmates get neither
+ok - batch dispatch forwards shared --harness, --model, and --effort to every pair
+ok - claude forwards firstmate's CLAUDE_CONFIG_DIR so the crewmate uses the same credential store
+ok - claude omits the config-dir prefix when firstmate runs with the single-store default
+ok - non-claude harnesses do not receive the claude CLAUDE_CONFIG_DIR prefix
+ok - active crew-dispatch profile does not block secondmate launches
+# all fm-spawn-dispatch-profile tests passed
+FM_TEST_END 2026-09-25T01:48:56Z tests/fm-spawn-dispatch-profile.test.sh exit=0 duration_ms=131352 gate_skip=false
+FM_TEST_BEGIN 2026-09-25T01:48:56Z tests/fm-secondmate-harness.test.sh family=secondmate expected_gate_skip=none
+ok - A1 fm-harness.sh secondmate resolves the fallback chain; crew mode unchanged
+ok - fm-harness detects only Cursor Agent CLI's exact invocation marker
+ok - C1 fm-harness.sh secondmate-model/secondmate-effort resolve the optional tokens; bare harness stays empty (backward-compat)
+ok - pi-signed identity: authoritative launch selection distinguishes shared wrapper ancestry
+ok - harness identity: dash-leading ps command names are basename operands, not options
+ok - B1 propagate_inheritable_config: copy, idempotence, convergence, absence-mirror, exclusion, no-op, skip diagnostics
+ok - B2 spawn: secondmate runs the secondmate harness; its home inherits declared config
+ok - B3 spawn: an absent secondmate-harness falls back to the crew harness (backward-compat)
+ok - B4 spawn: no config at all -> own harness and no propagation side effects
+ok - B5 spawn: an explicit per-spawn harness arg overrides config/secondmate-harness
+ok - B6 spawn: an unverified resolved secondmate harness is refused (guard intact)
+ok - Cursor is accepted for secondmates and launches with the contract its park needs
+ok - B5b spawn: FM_BACKEND wins over inherited config/backend
+ok - B5c spawn: explicit --backend wins over FM_BACKEND and inherited config/backend
+ok - C2 spawn: a bare harness-only secondmate-harness file launches with no model/effort flag (backward-compat)
+ok - C3 spawn: config/secondmate-harness's model token threads --model into the launch and meta
+ok - C4 spawn: config/secondmate-harness's model+effort tokens thread into the launch and meta
+ok - C5 spawn: an explicit --model overrides config/secondmate-harness's model token; the file's effort token still applies
+ok - C6 spawn: an explicit --effort overrides config/secondmate-harness's effort token; the file's model token still applies
+ok - C7 spawn: an explicit --harness starts with clean model/effort defaults
+ok - C8 spawn: an explicit --harness still honors explicit model/effort flags
+ok - C9 spawn: secondmate launch pins supervision to its own harness
+ok - C9 spawn: the harness fallback chain still resolves with no tokens; crew/scout launches are unaffected by this feature
+ok - B7 bootstrap sweep pushes, re-converges, and mirrors absence; never inherits secondmate-harness
+ok - B8 bootstrap sweep propagates config even when the home's tracked files are already current
+ok - B9 bootstrap sweep defers new inherited config until the home ignores it
+ok - B10 bootstrap sweep materializes and inherits the startup-memory default while fast-forwarding
+ok - B12b backend inheritance: present values and primary absence converge exactly
+ok - B12c presentation inheritance: the primary default converges on, and only an explicit opt-out propagates off
+ok - B11 bootstrap sweep surfaces config propagation failures
+ok - B11 bootstrap rereads completed config writes after partial propagation
+ok - B12 config-push propagates via shared live discovery, reports items, rereads on change only, and does not fast-forward
+ok - B13 config-push reports dirty, non-allowing, and invalid homes without failing warnings-only runs
+ok - B14 config-push exits nonzero on real propagation errors
+ok - B14 config-push rereads completed config writes after partial propagation
+ok - B15 config reread is per-home, exact-byte, ordered, and pointer-only
+ok - B16 config reread isolation, ABSENT, generation safety, send failure, and retry
+ok - B20 config reread publication failures retain exact generations for retry
+ok - B21 config reread instruction-write failures retain exact retry generations
+ok - B21 config reread preserves exact bytes when temporary adoption also fails
+ok - B21 config reread serializes concurrent propagation and delivery
+ok - B22 full config reread retry queues drain before new publication
+ok - B23 mixed config reread delivery failures still bound sent history
+ok - B26 config reread delivery stops after the oldest failed generation
+ok - B17 config reread skips unchanged homes and reads destination post-write bytes
+ok - B18 bootstrap config reread path works; spawn flexibility remains defaults-only
+ok - B19 bootstrap respawns before inherited-config reread
+ok - B25 spawn quarantines stale rereads without blocking relaunch
+ok - B24 bootstrap detect-only mode remains filesystem read-only
+# all fm-secondmate-harness tests passed
+FM_TEST_END 2026-09-25T01:54:41Z tests/fm-secondmate-harness.test.sh exit=0 duration_ms=344761 gate_skip=false
+FM_TEST_SUMMARY total=3 failed=0 skipped_gate=0 duration_ms=490169
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=131352 failed=0
+FM_TEST_SUMMARY_FAMILY family=secondmate count=1 duration_ms=344761 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=13823 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-secondmate-harness.test.sh duration_ms=344761
+FM_TEST_SLOWEST rank=2 script=tests/fm-spawn-dispatch-profile.test.sh duration_ms=131352
+FM_TEST_SLOWEST rank=3 script=tests/fm-cursor-harness.test.sh duration_ms=13823
+fm-test-run: wrote timing artifact: /Users/temp/.no-mistakes/evidence/01M3B137CJE4A266E8VKWQHJJM/targeted-cursor-tests.json

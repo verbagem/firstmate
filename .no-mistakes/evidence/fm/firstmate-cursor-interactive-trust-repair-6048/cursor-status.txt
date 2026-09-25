@@ -1,0 +1,1 @@
+cursor-agent status: logged in (account redacted)

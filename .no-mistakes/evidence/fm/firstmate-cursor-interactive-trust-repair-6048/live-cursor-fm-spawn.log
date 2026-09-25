@@ -1,0 +1,22 @@
+id=cursor-live-53970
+lab=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970
+project=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project
+model=gpt-5.3-codex-low-fast
+cursor_bin=/Users/temp/.local/bin/cursor-agent
+trust_contract=interactive
+spawned cursor-live-53970 harness=cursor kind=scout window=firstmate:fm-cursor-live-53970 worktree=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.treehouse/project-28918c/1/project
+target=firstmate:fm-cursor-live-53970
+worktree=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.treehouse/project-28918c/1/project
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 54s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+control_exit_rc=0
+treehouse_return_rc=0
+tmux_kill_rc=0
+lab_cleanup_rc=0
+tasktmp_cleanup_rc=0
+LIVE_CURSOR_RESULT pass id=cursor-live-53970 target=firstmate:fm-cursor-live-53970 worktree=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.treehouse/project-28918c/1/project initial=INITIAL_OK_cursor-live-53970 followup=FOLLOWUP_OK_cursor-live-53970 final_verdict=idle cursor-transcript

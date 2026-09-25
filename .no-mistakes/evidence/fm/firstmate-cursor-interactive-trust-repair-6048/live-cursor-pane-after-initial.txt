@@ -1,0 +1,63 @@
+treehouse get
+
+project on  main on ☁️  brandon@verbagemedia.com
+❯ treehouse get
+A new version of treehouse is available: v2.1.1 → v2.3.0
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Entered worktree at ~/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8V
+KWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.treehouse/project-289
+18c/1/project. Type 'exit' to return.
+
+project on  HEAD (c976073) on ☁️  brandon@verbagemedia.com
+❯ export GOTMPDIR=/tmp/fm-cursor-live-53970/gotmp
+
+project on  HEAD (c976073) on ☁️  brandon@verbagemedia.com
+❯ env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u CURSOR_
+INVOKED_AS '/Users/temp/.local/bin/cursor-agent' --trust --yolo --model 'gpt-5.3
+-codex-low-fast' --workspace '/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01
+M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.tree
+house/project-28918c/1/project' "$('/Users/temp/.no-mistakes/worktrees/acee6d463
+bcf/01M3B137CJE4A266E8VKWQHJJM/bin/fm-operational-input.sh' encode launch-brief
+< '/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.l
+ive-cursor-lab/run-20260924190005-53970/home/data/cursor-live-53970/brief.md')"
+
+
+  Cursor Agent
+  v2026.09.23-86fc751
+  Tip: Type ? in the prompt bar to show in-app hints.
+
+
+  ⁣FIRSTMATE_OP: v1 launch-brief: Cursor live validation task
+  cursor-live-53970.
+
+  Operate only in the current workspace. Create a file named
+  cursor-smoke-result.txt containing exactly:
+  INITIAL_OK_cursor-live-53970
+
+  Do not modify any other file. After the file exists, reply with
+  exactly INITIAL_OK_cursor-live-53970 done and stop.
+
+
+  Creating cursor-smoke-result.txt with the exact required contents in this
+  workspace now.
+
+    Edited cursor-smoke-result.txt +1
+
+    ▎+ INITIAL_OK_cursor-live-53970
+
+  INITIAL_OK_cursor-live-53970 done
+
+
+
+
+  → Add a follow-up
+
+
+  Codex 5.3 Low Fast · 13.3% · 1 file edited                    Run Everything
+  ~/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor
+  -lab/run-20260924190005-53970/project/.treehouse/project-28918c/1/project ·
+  c976073
+
+

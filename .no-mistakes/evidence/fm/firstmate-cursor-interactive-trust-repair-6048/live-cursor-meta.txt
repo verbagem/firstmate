@@ -1,0 +1,10 @@
+window=firstmate:fm-cursor-live-53970
+endpoint_task_id=cursor-live-53970
+worktree=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.treehouse/project-28918c/1/project
+project=/Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project
+harness=cursor
+kind=scout
+tasktmp=/tmp/fm-cursor-live-53970
+model=gpt-5.3-codex-low-fast
+effort=default
+spawn_gen=s1790301640.73298.27082

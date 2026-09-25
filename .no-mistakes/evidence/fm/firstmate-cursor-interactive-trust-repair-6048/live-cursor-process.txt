@@ -1,0 +1,5 @@
+ 1431  1431 8862 -zsh             -zsh
+ 1773  1773 8862 treehouse        treehouse get
+ 2278  2278 8862 /bin/zsh         /bin/zsh
+ 8862  8862 8862 bash             bash /Users/temp/.local/bin/cursor-agent --trust --yolo --model gpt-5.3-codex-low-fast --workspace /Users/temp/.no-mistakes/worktrees/acee6d463bcf/01M3B137CJE4A266E8VKWQHJJM/.live-cursor-lab/run-20260924190005-53970/project/.treehouse/project-28918c/1/project \040-cFIRSTMATE_OP: v1 launch-brief: Cursor live validation task cursor-live-53970.\012\012Operate only in the current workspace. Create a file named cursor-smoke-result.txt containing exactly:\012INITIAL_OK_cursor-live-53970\012\012Do not modify any other file. After the file exists, reply with exactly INITIAL_OK_cursor-live-53970 done and stop.
+ 8919  8862 8862 /Users/temp/.loc /Users/temp/.local/share/cursor-agent/versions/2026.09.23-86fc751/node --use-system-ca --version

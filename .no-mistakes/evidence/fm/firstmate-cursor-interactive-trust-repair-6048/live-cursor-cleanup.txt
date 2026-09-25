@@ -1,0 +1,5 @@
+control_exit_rc=0
+treehouse_return_rc=0
+tmux_kill_rc=0
+lab_cleanup_rc=0
+tasktmp_cleanup_rc=0

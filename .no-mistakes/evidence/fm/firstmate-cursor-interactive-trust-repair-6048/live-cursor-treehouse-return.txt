@@ -1,0 +1,5 @@
+A new version of treehouse is available: v2.1.1 → v2.3.0
+Run "treehouse update" to update
+
+🌳 Terminated lingering processes: zsh (2278), node (13673), node (15744), node (19889)
+🌳 Worktree returned to pool.
