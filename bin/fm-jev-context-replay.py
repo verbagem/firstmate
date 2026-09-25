@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -71,6 +72,24 @@ def sha256_text(value: str) -> str:
 
 def stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def normalized_unit_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0 or number > 1:
+        return None
+    return number
+
+
+def normalized_token_count(value: Any) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return 0
+    return int(number) if number.is_integer() else number
 
 
 def load_json(path: Path) -> Any:
@@ -240,16 +259,22 @@ def parse_typesafe_response(raw: Any, source: str) -> tuple[dict[str, dict[str, 
         confidence = answer.get("confidence")
         if not isinstance(probabilities, dict):
             probabilities = {}
+        confidence_value = normalized_unit_number(confidence)
         proposals[seg_id] = {
             "action": choice if choice in ACTION_ORDER else "unknown",
             "probabilities": {
-                key: float(value)
+                key: number
                 for key, value in probabilities.items()
-                if key in ACTION_ORDER and isinstance(value, (int, float))
+                for number in [normalized_unit_number(value)]
+                if key in ACTION_ORDER and number is not None
             },
-            "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
+            "confidence": confidence_value,
         }
-    usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
+    raw_usage = raw.get("usage") if isinstance(raw.get("usage"), dict) else {}
+    usage = {
+        "input_tokens": normalized_token_count(raw_usage.get("input_tokens", 0)),
+        "output_tokens": normalized_token_count(raw_usage.get("output_tokens", 0)),
+    }
     return proposals, {"source": source, "model": raw.get("model", "unknown"), "usage": usage}
 
 
@@ -379,8 +404,8 @@ def evaluate(transcripts: list[dict[str, Any]], proposals: dict[str, dict[str, A
     baseline = answerability_metrics("baseline", rows, transcripts)
     jev = answerability_metrics("jev", rows, transcripts)
     usage = meta.get("usage", {})
-    input_tokens = usage.get("input_tokens", 0) if isinstance(usage.get("input_tokens", 0), (int, float)) else 0
-    output_tokens = usage.get("output_tokens", 0) if isinstance(usage.get("output_tokens", 0), (int, float)) else 0
+    input_tokens = normalized_token_count(usage.get("input_tokens", 0)) if isinstance(usage, dict) else 0
+    output_tokens = normalized_token_count(usage.get("output_tokens", 0)) if isinstance(usage, dict) else 0
     failures = []
     for metric in (baseline, jev):
         if metric["missing_constraints"]:

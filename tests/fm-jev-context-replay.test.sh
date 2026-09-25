@@ -16,7 +16,9 @@ OUT1="$TMP_ROOT/out1"
 OUT2="$TMP_ROOT/out2"
 OUT3="$TMP_ROOT/out3"
 OUT4="$TMP_ROOT/out4"
+OUT5="$TMP_ROOT/out5"
 BAD="$TMP_ROOT/bad.json"
+MALFORMED_PROPOSALS="$TMP_ROOT/malformed-proposals.json"
 FAKE_TRANSPORT="$TMP_ROOT/fake-typesafe.py"
 BASE_PATH=$PATH
 
@@ -224,6 +226,78 @@ if expected_line not in rendered:
 PY
 then
   fail "false-drop rate metrics cover zero and nonzero denominators"
+fi
+
+if ! python3 - "$FIXTURES" "$MALFORMED_PROPOSALS" <<'PY'
+import json
+import sys
+
+fixtures = json.load(open(sys.argv[1]))
+answers = {}
+for case in fixtures["transcripts"]:
+    for seg in case["segments"]:
+        answers[seg["id"]] = {"choice": "keep", "confidence": 0.99, "probabilities": {"keep": 0.99}}
+answers["c001-s3"] = {
+    "choice": "drop",
+    "confidence": True,
+    "probabilities": {"keep": True, "truncate": -0.1, "drop": 1.25},
+}
+answers["c001-s6"] = {
+    "choice": "drop",
+    "confidence": float("nan"),
+    "probabilities": {"keep": 0.4, "drop": float("inf")},
+}
+json.dump(
+    {
+        "model": "malformed-number-fixture",
+        "answers": answers,
+        "usage": {"input_tokens": True, "output_tokens": float("nan")},
+    },
+    open(sys.argv[2], "w"),
+)
+PY
+then
+  fail "malformed proposal fixture setup"
+fi
+
+PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network5.log" env -u TYPESAFE_API_KEY \
+  "$TOOL" --fixtures "$FIXTURES" --proposal-file "$MALFORMED_PROPOSALS" --out-dir "$OUT5" > "$TMP_ROOT/run5.out"
+[ ! -e "$TMP_ROOT/network5.log" ] || fail "proposal-file path did not call network"
+if ! python3 - "$OUT5/ledger.jsonl" "$OUT5/report.md" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+report = Path(sys.argv[2]).read_text()
+ordinary = next(row for row in rows if row["strategy"] == "jev" and row["segment_id"] == "c001-s3")
+if ordinary["final_action"] != "keep" or ordinary["decision_status"] != "low-confidence":
+    raise SystemExit("malformed boolean confidence drove a model action")
+if ordinary["proposal"]["confidence"] is not None:
+    raise SystemExit("malformed confidence was retained as numeric")
+if ordinary["proposal"]["probabilities"] != {}:
+    raise SystemExit("invalid probability values reached the ledger")
+noise = next(row for row in rows if row["strategy"] == "jev" and row["segment_id"] == "c001-s6")
+if noise["proposal"]["confidence"] is not None or noise["proposal"]["probabilities"] != {"keep": 0.4}:
+    raise SystemExit("non-finite proposal numbers were not normalized")
+for row in rows:
+    proposal = row["proposal"]
+    confidence = proposal.get("confidence")
+    if isinstance(confidence, bool):
+        raise SystemExit("boolean confidence reached ledger")
+    if confidence is not None and (not isinstance(confidence, (int, float)) or not math.isfinite(confidence) or confidence < 0 or confidence > 1):
+        raise SystemExit("invalid confidence reached ledger")
+    for value in proposal.get("probabilities", {}).values():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0 or value > 1:
+            raise SystemExit("invalid probability reached ledger")
+if "Input tokens: `0`" not in report or "Output tokens: `0`" not in report:
+    raise SystemExit("malformed usage token counts reached report")
+if "Estimated TypeSafe cost USD: `0.0`" not in report:
+    raise SystemExit("malformed usage changed estimated cost")
+PY
+then
+  fail "malformed proposal numbers are normalized through public output"
 fi
 
 PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network2.log" env -u TYPESAFE_API_KEY \
