@@ -3,13 +3,14 @@
 # profile from a task brief with typesafe.ai's System One model (Jev), opt-in.
 #
 # Usage:
-#   fm-dispatch-resolve.sh <brief-file> [--project <name>]
+#   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--json]
 #
 # Opt-in gate: TYPESAFE_API_KEY non-empty in this process environment, else a
 #   TYPESAFE_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
 #   accessor as FMX_PAIRING_TOKEN (bin/fm-env-lib.sh). The environment wins.
 #   Absent in both: one "dispatch-resolve: off" line on stderr, nothing on
-#   stdout, exit 0, no network call, so firstmate dispatches exactly as today.
+#   stdout by default, exit 0, no network call, so firstmate dispatches exactly
+#   as today. With --json, stdout carries the machine-readable off outcome.
 #   The key lives in one shell variable and reaches curl as a header read from
 #   a file descriptor, never on argv; nothing logs or writes it.
 #
@@ -27,9 +28,9 @@
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields and
 #   "Typed dispatch resolution" owns this tool's operator contract.
 #
-# Output (stdout, TOON-style block):
+# Output (stdout, compact TOON-style block by default; one JSON object with --json):
 #   dispatch-resolve:
-#     status: clear | ambiguous | escalate | error
+#     status: clear | ambiguous | escalate | error (or off with --json and no key)
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
 #     reason: <why the status is not clear>
 #     candidate: <harness>:<model> provider=.. scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason>
@@ -42,6 +43,10 @@
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
 #   existing unreadable rules file, malformed rules, or missing jq), which is
 #   actionable, never selected around.
+#
+#   --json is for fm-spawn's private composition and receipt path. It contains
+#   the parsed resolver result and local quota facts, never the brief, API key,
+#   request, or raw provider response.
 #
 # Environment:
 #   TYPESAFE_API_KEY is the only resolver-specific environment setting.
@@ -76,8 +81,21 @@ TS_TIMEOUT=5
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
+OUTPUT=text
+render_simple_result() {
+  local status=$1 reason=$2 escaped
+  if [ "$OUTPUT" = json ]; then
+    escaped=${reason//$'\n'/ }
+    escaped=${escaped//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+    printf '{"status":"%s","reason":"%s","model":null,"latency_ms":null,"tokens":null,"confidence":null,"candidates":[]}\n' \
+      "$status" "$escaped"
+  else
+    printf 'dispatch-resolve:\n  status: %s\n  reason: %s\n' "$status" "$reason"
+  fi
+}
 no_rules() {
-  printf 'dispatch-resolve:\n  status: escalate\n  reason: no rules to match\n'
+  render_simple_result escalate "no rules to match"
   exit 0
 }
 usage() {
@@ -92,6 +110,7 @@ BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
+    --json) OUTPUT=json; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
@@ -104,6 +123,9 @@ if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
 fi
 if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
   echo "dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
+  if [ "$OUTPUT" = json ]; then
+    render_simple_result off "TYPESAFE_API_KEY absent"
+  fi
   exit 0
 fi
 
@@ -134,6 +156,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
     elif $h == "opencode" or $h == "kimi" or $h == "cursor" then false
     else true end;
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  def model_id($m): ($m | type) == "string" and ($m | length) > 0 and ($m | length) <= 128 and ($m | test("^[A-Za-z0-9][A-Za-z0-9._:/+-]*$"));
   def floor_bad($f; $need_provider):
     ($f | type) != "object"
     or (($f.scope | type) != "string") or (($f.scope | length) == 0)
@@ -145,7 +168,7 @@ rules_err=$(jq -r --argjson verified_harnesses "$VERIFIED_HARNESSES" --arg provi
   def profile_bad($p):
     ($p | type) != "object"
     or (($p.harness | type) != "string") or (($p.harness | length) == 0)
-    or ($p | has("model") and ((.model | type) != "string" or (.model | length) == 0))
+    or ($p | has("model") and (model_id(.model) | not))
     or ($p | has("effort") and ((.effort | type) != "string" or (.effort | length) == 0))
     or ($p | has("provider") and (provider_id(.provider) | not))
     or ($p | has("floor") and floor_bad(.floor; false));
@@ -206,7 +229,7 @@ RULE_COUNT=$(jq -r '(.rules // []) | length' "$RULES")
 emit_error() {
   local reason=$1
   echo "dispatch-resolve: error ($reason)" >&2
-  printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
+  render_simple_result error "$reason"
   exit 0
 }
 
@@ -241,7 +264,7 @@ HTTP=$(printf '%s' "$REQUEST" | curl -sS --max-time "$TS_TIMEOUT" -o "$RESP_FILE
   --data-binary @- 2>/dev/null) || HTTP=000
 T1=$(fm_timing_now_ms)
 LAT_MS=$(( T1 - T0 ))
-[ "$HTTP" = 200 ] || emit_error "http $HTTP after ${LAT_MS} ms: $(head -c 200 "$RESP_FILE" 2>/dev/null | tr '\n' ' ')"
+[ "$HTTP" = 200 ] || emit_error "http $HTTP after ${LAT_MS} ms"
 jq -e --slurpfile rules "$RULES" '
     (($rules[0].rules | to_entries | map("rule_" + ((.key + 1) | tostring))) + ["default"] | sort) as $choices |
     (.answers.rule.choice | type) == "string" and
@@ -254,7 +277,9 @@ jq -e --slurpfile rules "$RULES" '
     ((has("usage") | not) or
       ((.usage | type) == "object" and
        (.usage.input_tokens | type) == "number" and
-       (.usage.output_tokens | type) == "number"))' \
+       .usage.input_tokens >= 0 and .usage.input_tokens == (.usage.input_tokens | floor) and
+       (.usage.output_tokens | type) == "number" and
+       .usage.output_tokens >= 0 and .usage.output_tokens == (.usage.output_tokens | floor)))' \
   "$RESP_FILE" >/dev/null 2>&1 || emit_error "response is not a rule Choice answer"
 
 # ---- quota evidence: one quota-axi --json snapshot -----------------------------
@@ -267,6 +292,10 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
   --slurpfile resp "$RESP_FILE" --slurpfile rules "$RULES" --slurpfile quota "$QUOTA" '
   ($resp[0]) as $r | ($rules[0]) as $cfg | ($quota[0]) as $q | ($r.answers.rule) as $a |
   def profiles($v): if ($v | type) == "array" then $v elif ($v | type) == "object" then [$v] else [] end;
+  def safe_model($v):
+    if ($v | type) == "string" and ($v | length) <= 128 and ($v | test("^[A-Za-z0-9][A-Za-z0-9._:/+-]*$")) then $v else null end;
+  def safe_usage($v):
+    if ($v | type) == "object" then {input_tokens: $v.input_tokens, output_tokens: $v.output_tokens} else null end;
   def prov($p): ([$q.providers[] | select(.provider == $p)] | first) // null;
   def rows($p): (prov($p) | .quotaSemantics.effectiveAvailability // []);
   def bare($m): ($m | split("/") | last);
@@ -350,7 +379,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
      then {source: "default", use: profiles($cfg.default // null), note: "rule \($choice) floor \($rule.floor.scope) below \($rule.floor.min_percent)%: fall through to default"}
    else {source: $choice, use: profiles($rule.use), note: "rule matched"} end) as $sel |
   {
-    model: $r.model, latency_ms: $lat, tokens: ($r.usage // null),
+    model: safe_model($r.model), latency_ms: $lat, tokens: safe_usage($r.usage),
     rule: $choice,
     rule_when: (if $rule == null then $none_criterion else $rule.when end | .[0:60]),
     confidence: $a.confidence, probabilities: $a.probabilities
@@ -377,6 +406,11 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
       end
     end
   end') || emit_error "resolution failed"
+
+if [ "$OUTPUT" = json ]; then
+  jq -c '.' <<<"$RESULT" || emit_error "JSON output rendering failed"
+  exit 0
+fi
 
 TEXT=$(jq -r '
   def flat: tostring | gsub("[\t\r\n]"; " ");

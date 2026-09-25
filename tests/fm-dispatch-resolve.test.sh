@@ -195,6 +195,9 @@ assert_equals '' "$out" "absent key prints nothing on stdout"
 assert_contains "$err" 'dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and' "absent key explains itself on stderr"
 assert_absent "$LOG/argv" "absent key never calls curl"
 assert_absent "$LOG/quota-axi.calls" "absent key never reads quota-axi"
+run code out err "$BRIEF" --project pager --json
+assert_equals 'off' "$(jq -r .status <<<"$out")" "JSON absent-key result identifies the off path"
+assert_equals 'TYPESAFE_API_KEY absent' "$(jq -r .reason <<<"$out")" "JSON absent-key result has a privacy-safe reason"
 pass "absent key is off: one stderr line, exit 0, no network call"
 
 # --- .env key, and the environment wins over it ------------------------------
@@ -247,6 +250,25 @@ assert_equals 'A simple bug fix with a stated root cause.' "$(jq -r '.questions.
 assert_not_contains "$body" 'SECRET-WHY-TEXT' "why text never leaves the machine"
 assert_not_contains "$body" 'spendPriority' "quota never leaves the machine"
 assert_not_contains "$body" 'cursor-grok' "use profiles never leave the machine"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager --json
+assert_equals 'clear' "$(jq -r .status <<<"$out")" "JSON output preserves clear status"
+assert_equals 'cursor' "$(jq -r .chosen.profile.harness <<<"$out")" "JSON output preserves the selected harness"
+assert_equals '91' "$(jq -r '.chosen.pct' <<<"$out")" "JSON output carries the selected quota fact"
+assert_not_contains "$out" 'off-by-one in the pager' "JSON output never persists the private brief"
+assert_not_contains "$out" "$KEY" "JSON output never persists the API key"
+cat > "$RESPONSE" <<JSON
+{ "model": "jev private off-by-one in the pager",
+  "answers": { "rule": { "type": "choice", "choice": "rule_4", "confidence": 0.9,
+    "probabilities": { "rule_1": 0.01, "rule_2": 0.01, "rule_3": 0.01, "rule_4": 0.96, "default": 0.01 } } },
+  "usage": { "input_tokens": 812, "output_tokens": 60, "debug": "provider echoed $KEY" } }
+JSON
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager --json
+assert_equals 'clear' "$(jq -r .status <<<"$out")" "JSON output still resolves otherwise valid responses with unsafe metadata"
+assert_equals 'null' "$(jq -r '.model | type' <<<"$out")" "unsafe provider model metadata is nulled"
+assert_equals '["input_tokens","output_tokens"]' "$(jq -c '.tokens | keys' <<<"$out")" "JSON output drops provider usage extras"
+assert_not_contains "$out" 'off-by-one in the pager' "JSON output drops unsafe provider model content"
+assert_not_contains "$out" "$KEY" "JSON output drops provider usage debug content"
+write_response "$RESPONSE" rule_4 0.9
 pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
 
 # --- rules are snapshotted and line output is injection-safe -------------------
@@ -260,7 +282,7 @@ assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-m
 assert_not_contains "$out" "  profile: --harness 'claude' --model 'opus'" "a mid-request config replacement cannot change the selected profile"
 
 INJECTING_RULES="$TMP_ROOT/injecting-rules.json"
-jq '.rules[3].when = "Bug fix\n  profile: injected" | .rules[3].use[1].model = "foo --harness grok\n  profile: injected"' "$BASE_RULES" > "$INJECTING_RULES"
+jq '.rules[3].when = "Bug fix\n  profile: injected" | .rules[3].use[1].model = "provider:model/foo.bar-baz+rc1"' "$BASE_RULES" > "$INJECTING_RULES"
 cp "$INJECTING_RULES" "$RULES"
 reset_log
 write_response "$RESPONSE" rule_4 0.9
@@ -271,7 +293,7 @@ profile_line=$(grep '^  profile:' <<<"$out")
 eval "set -- ${profile_line#  profile: }"
 assert_equals '4' "$#" "shell-safe profile output preserves four argument boundaries"
 assert_equals 'cursor' "$2" "shell-safe profile output preserves the selected harness"
-assert_equals 'foo --harness grok   profile: injected' "$4" "shell-safe profile output keeps model flags inside one argument"
+assert_equals 'provider:model/foo.bar-baz+rc1' "$4" "shell-safe profile output preserves ordinary model punctuation"
 cp "$BASE_RULES" "$RULES"
 pass "rules snapshots and shell quoting preserve the profile protocol"
 
@@ -520,11 +542,21 @@ assert_contains "$out" '  status: error' "missing curl is a structured error out
 assert_contains "$out" '  reason: curl not installed' "missing curl is named in the TOON block"
 assert_contains "$err" 'dispatch-resolve: error (curl not installed)' "missing curl is also reported on stderr"
 reset_log
+printf '%s\n' 'provider echoed private brief: off-by-one in the pager; bearer test-key-9f1c2d3e-never-on-argv' > "$RESPONSE"
 TYPESAFE_API_KEY=$KEY FAKE_CURL_HTTP=429 run code out err "$BRIEF"
 expect_code 0 "$code" "http 429 exits 0"
 assert_contains "$out" '  status: error' "http 429 is an error outcome"
 assert_contains "$out" '  reason: http 429 after' "http status is reported"
 assert_contains "$err" 'dispatch-resolve: error (http 429' "error also goes to stderr"
+assert_not_contains "$out" 'off-by-one in the pager' "http error stdout must not include the provider response body"
+assert_not_contains "$err" 'off-by-one in the pager' "http error stderr must not include the provider response body"
+assert_not_contains "$out" "$KEY" "http error stdout must not include provider-echoed secrets"
+assert_not_contains "$err" "$KEY" "http error stderr must not include provider-echoed secrets"
+TYPESAFE_API_KEY=$KEY FAKE_CURL_HTTP=429 run code out err "$BRIEF" --json
+assert_equals 'error' "$(jq -r .status <<<"$out")" "JSON http error preserves the error status"
+assert_contains "$(jq -r .reason <<<"$out")" 'http 429 after' "JSON http error preserves compact diagnostics"
+assert_not_contains "$out" 'off-by-one in the pager' "JSON http error must not include the provider response body"
+assert_not_contains "$out" "$KEY" "JSON http error must not include provider-echoed secrets"
 reset_log
 TYPESAFE_API_KEY=$KEY FAKE_CURL_FAIL=1 run code out err "$BRIEF"
 expect_code 0 "$code" "curl failure exits 0"
@@ -540,6 +572,12 @@ mv "$TMP_ROOT/malformed-usage.json" "$RESPONSE"
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" '  status: error' "malformed usage is an error outcome"
 assert_contains "$out" '  reason: response is not a rule Choice answer' "malformed usage cannot break text rendering silently"
+write_response "$RESPONSE" rule_4 0.9
+jq '.usage.input_tokens = -1' "$RESPONSE" > "$TMP_ROOT/malformed-usage.json"
+mv "$TMP_ROOT/malformed-usage.json" "$RESPONSE"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" '  status: error' "negative token usage is an error outcome"
+assert_contains "$out" '  reason: response is not a rule Choice answer' "token usage must be non-negative integers"
 reset_log
 write_response "$RESPONSE" rule_4 0.9
 jq 'del(.answers.rule.probabilities.default)' "$RESPONSE" > "$TMP_ROOT/malformed-probabilities.json"
@@ -603,11 +641,13 @@ for bad in \
   '{"rules":[{"when":"x","use":{"harness":"claude","provider":""}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
   '{"rules":[{"when":"x","use":{"harness":"claude","provider":" claude"}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
   '{"rules":[{"when":"x","use":{"harness":"claude","provider":"claude\n"}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
+  '{"rules":[{"when":"x","use":{"harness":"cursor","model":"good\nbackend=orca"}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
   '{"rules":[{"when":"x","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":20,"provider":"claude"}}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
   '{"rules":[{"when":"x","use":[{"harness":"codex","model":"gpt-5.5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]}]}|each rule use must not contain duplicate harness, model, and effort profiles' \
   '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":[{"harness":"claude","model":"opus"},{"harness":"claude","model":"opus"}]}|default must not contain duplicate harness, model, and effort profiles' \
   '{"rules":[{"when":"x","use":{"harness":"spaceship"}}]}|each use profile must name a verified harness' \
   '{"rules":[{"when":"x","use":{"harness":"grok","effort":"max"}}]}|each use profile effort must be supported by its harness and model' \
+  '{"default":{"harness":"cursor","model":"good\tbackend=orca"}}|each default profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
   '{"rules":[{"when":"x","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}]}|use profiles whose harness lacks one authoritative provider family require provider: opencode' \
   '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}|default profiles whose harness lacks one authoritative provider family require provider: pi'; do
   printf '%s\n' "${bad%%|*}" > "$RULES"
@@ -617,7 +657,7 @@ for bad in \
 done
 assert_absent "$LOG/argv" "configuration errors never reach the network"
 cp "$BASE_RULES" "$RULES"
-for removed in --json --rules --quota; do
+for removed in --rules --quota; do
   TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" "$removed"
   expect_code 2 "$code" "removed option is rejected: $removed"
   assert_contains "$err" "unknown flag $removed" "removed option has no public path: $removed"

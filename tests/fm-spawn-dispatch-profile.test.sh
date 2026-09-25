@@ -103,7 +103,19 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = return ] && [ "${2:-}" = --force ] && [ -n "${3:-}" ]; then
+  target=$3
+  case "$target" in ''|/) exit 1 ;; esac
+  if [ "${FM_FAKE_TREEHOUSE_RETURN_REMOVES:-0}" = 1 ]; then
+    git -C "$(pwd)" worktree remove --force "$target" >/dev/null 2>&1 || rm -rf "$target"
+  fi
+fi
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
 shift
@@ -150,6 +162,45 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+set -u
+out=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat >/dev/null
+[ -z "${FM_FAKE_DISPATCH_CURL_LOG:-}" ] || printf '%s\n' called >> "$FM_FAKE_DISPATCH_CURL_LOG"
+if [ -n "${FM_FAKE_DISPATCH_BODY:-}" ]; then
+  printf '%s\n' "$FM_FAKE_DISPATCH_BODY" > "$out"
+else
+  dispatch_choice=${FM_FAKE_DISPATCH_CHOICE:-default}
+  dispatch_confidence=${FM_FAKE_DISPATCH_CONFIDENCE:-0.97}
+  dispatch_rule_probability=${FM_FAKE_DISPATCH_RULE_PROBABILITY:-0.97}
+  dispatch_default_probability=${FM_FAKE_DISPATCH_DEFAULT_PROBABILITY:-0.03}
+  cat > "$out" <<JSON
+{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"$dispatch_choice","confidence":$dispatch_confidence,"probabilities":{"rule_1":$dispatch_rule_probability,"default":$dispatch_default_probability}}},"usage":{"input_tokens":321,"output_tokens":42}}
+JSON
+fi
+printf '%s' "${FM_FAKE_DISPATCH_HTTP:-200}"
+SH
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ "${1:-}" = --json ] || exit 2
+cat <<'JSON'
+{"generatedAt":"2030-01-01T00:00:00Z","schemaVersion":5,"providers":[
+{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.5}}]}},
+{"provider":"cursor","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.8}}]}},
+{"provider":"grok","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"},"selection":{"spendPriority":-2}}]}},
+{"provider":"kimi","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":88,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.7}}]}}
+]}
+JSON
+SH
+  chmod +x "$fakebin/curl" "$fakebin/quota-axi"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   printf '%s\n' "$fakebin"
@@ -182,6 +233,87 @@ enable_dispatch_profile() {
     > "$home/config/crew-dispatch.json"
 }
 
+enable_cursor_dispatch_profile() {
+  local home=$1 approval=${2:-}
+  jq -n --arg approval "$approval" '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:[
+        {harness:"grok",model:"grok-4",effort:"medium"},
+        {harness:"cursor",model:"cursor-grok-4.6-medium"}
+      ]
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }
+  | if $approval == "" then . else .rules[0].approval = $approval end' \
+    > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
+enable_harness_only_grok_dispatch_profile() {
+  local home=$1
+  jq -n '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:[
+        {harness:"grok"},
+        {harness:"cursor",model:"cursor-grok-4.6-medium"}
+      ]
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }' > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
+enable_codex_floor_dispatch_profile() {
+  local home=$1
+  jq -n '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:[
+        {harness:"codex",model:"gpt-5",effort:"high",floor:{scope:"all_models",min_percent:90}},
+        {harness:"cursor",model:"cursor-grok-4.6-medium"}
+      ]
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }' > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
+enable_kimi_dispatch_profile() {
+  local home=$1
+  printf '%s\n' '{"rules":[{"when":"Other work","use":{"harness":"codex","model":"gpt-5","effort":"medium"}}],"default":{"harness":"kimi","model":"kimi-code/k3"}}' \
+    > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
+enable_control_char_model_dispatch_profile() {
+  local home=$1
+  jq -n '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:{harness:"cursor",model:"good\nbackend=orca"}
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }' > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
+last_dispatch_receipt() {
+  tail -n 1 "$1/state/dispatch-receipts.jsonl"
+}
+
+hold_test_lock() {
+  local lock=$1
+  mkdir -p "$lock"
+  printf '%s\n' "$$" > "$lock/pid"
+  printf '0\n' > "$lock/bash-sublevel"
+}
+
+release_test_lock() {
+  rm -rf "$1"
+}
+
 make_seeded_secondmate_home() {
   local home=$1 id=$2
   mkdir -p "$home/bin" "$home/data"
@@ -210,7 +342,9 @@ run_spawn() {
     FM_FAKE_CURSOR_HELP_MODE="${FM_TEST_CURSOR_HELP_MODE:-headless}" \
     FM_FAKE_CURSOR_TRUST_STATUS="${FM_TEST_CURSOR_TRUST_STATUS:-0}" \
     FM_FAKE_CURSOR_TRUST_LOG="${FM_TEST_CURSOR_TRUST_LOG:-}" \
-    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
+    FM_FAKE_DISPATCH_CURL_LOG="${FM_TEST_DISPATCH_CURL_LOG:-}" \
+    FM_FAKE_TREEHOUSE_RETURN_REMOVES="${FM_TEST_TREEHOUSE_RETURN_REMOVES:-0}" \
+    HOME="${FM_TEST_HOME:-${HOME:-}}" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
 
@@ -414,20 +548,634 @@ test_unresolvable_relative_overrides_fail_loudly() {
   pass "unresolvable relative spawn overrides fail with named diagnostics"
 }
 
+test_explicit_model_identifier_rejects_control_characters() {
+  local rec id out status bad_model
+  id=profile-explicit-model-control-z1e
+  rec=$(make_spawn_case profile-explicit-model-control claude "$id")
+  read_case_record "$rec"
+  bad_model=$'good\nbackend=orca'
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model "$bad_model")
+  status=$?
+  expect_code 1 "$status" "explicit model identifiers with control characters should fail"
+  assert_contains "$out" "--model is not a valid model identifier" \
+    "invalid explicit model did not fail at the model boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "invalid explicit model must not reach metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "invalid explicit model reached the worker launch command"
+  pass "explicit model identifiers reject control characters before metadata"
+}
+
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
-  local rec id out status
+  local rec id out status receipt window_dir
   id=profile-required-ship-z11
   rec=$(make_spawn_case profile-required-ship claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  out=$(FM_TEST_TMUX_WINDOW_DIR="$window_dir" FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active"
   assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
     "spawn did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "ship refusal should happen before meta is written"
+  assert_absent "$window_dir/fm-$id" "absent-key refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "absent-key refusal left the fresh worktree"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = off ] || fail "absent-key receipt did not record resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = absent_key ] || fail "absent-key receipt did not explain fallback"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "refused absent-key launch receipt claims a worker launched"
   pass "active crew-dispatch profile requires an explicit harness for ship spawns"
+}
+
+test_fake_typesafe_response_fixture_is_valid_clear_json() {
+  local rec body status
+  rec=$(make_spawn_case profile-fake-typesafe-json claude profile-fake-typesafe-json-z11a0)
+  read_case_record "$rec"
+  body="$CASE_DIR/typesafe-response.json"
+
+  FM_FAKE_DISPATCH_CHOICE=default "$FAKEBIN_DIR/curl" -o "$body" https://typesafe.test/resolve >/dev/null <<<'{}'
+  status=$?
+  expect_code 0 "$status" "fake TypeSafe transport should produce a response"
+  jq -e '
+    .model == "jev-1.13.0"
+    and .answers.rule.type == "choice"
+    and .answers.rule.choice == "default"
+    and .usage.input_tokens == 321
+    and .usage.output_tokens == 42
+  ' "$body" >/dev/null || fail "fake TypeSafe response is not valid clear-result JSON with top-level usage"
+  pass "fake TypeSafe response fixture is valid clear-result JSON"
+}
+
+test_typed_dispatch_validates_project_before_resolver_call() {
+  local rec id out status curl_log lock
+  id=profile-typed-missing-project-z11a
+  rec=$(make_spawn_case profile-typed-missing-project claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id")
+  status=$?
+  expect_code 1 "$status" "typed dispatch with a missing project should fail before resolver call"
+  assert_contains "$out" "project directory required before typed dispatch" \
+    "missing-project refusal did not happen at the typed-dispatch project boundary"
+  assert_absent "$curl_log" "typed dispatch called the resolver before validating the project"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "missing-project refusal should happen before arming the typed-dispatch receipt"
+
+  id=profile-typed-nonrepo-project-z11a1
+  rec=$(make_spawn_case profile-typed-nonrepo-project claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  mkdir -p "$CASE_DIR/not-a-repo"
+
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$CASE_DIR/not-a-repo")
+  status=$?
+  expect_code 1 "$status" "typed dispatch with a non-git project should fail before resolver call"
+  assert_contains "$out" "project directory must be a git worktree before typed dispatch" \
+    "non-git project refusal did not happen at the typed-dispatch project boundary"
+  assert_absent "$curl_log" "typed dispatch called the resolver before validating the project worktree"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "non-git project refusal should happen before arming the typed-dispatch receipt"
+
+  id=profile-typed-invalid-backend-z11a2
+  rec=$(make_spawn_case profile-typed-invalid-backend claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend bogus)
+  status=$?
+  expect_code 1 "$status" "typed dispatch with an invalid backend should fail before resolver call"
+  assert_contains "$out" "unknown backend 'bogus'" \
+    "invalid-backend refusal did not come from backend validation"
+  assert_absent "$curl_log" "typed dispatch called the resolver before backend validation"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "invalid-backend refusal should happen before arming the typed-dispatch receipt"
+
+  id=profile-typed-task-set-lock-z11a3
+  rec=$(make_spawn_case profile-typed-task-set-lock claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  lock="$HOME_DIR/state/.task-set.lock"
+  hold_test_lock "$lock"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  release_test_lock "$lock"
+  expect_code 1 "$status" "typed dispatch with a held task-set lock should fail before resolver call"
+  assert_contains "$out" "task set is locked" \
+    "task-set-lock refusal did not come from spawn locking"
+  assert_absent "$curl_log" "typed dispatch called the resolver before acquiring the task-set lock"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "task-set-lock refusal should happen before arming the typed-dispatch receipt"
+
+  id=profile-typed-spawn-lock-z11a4
+  rec=$(make_spawn_case profile-typed-spawn-lock claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  lock="$HOME_DIR/state/.spawn-$id.lock"
+  hold_test_lock "$lock"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  release_test_lock "$lock"
+  expect_code 1 "$status" "typed dispatch with a held spawn lock should fail before resolver call"
+  assert_contains "$out" "another spawn is already creating task $id" \
+    "spawn-lock refusal did not come from per-task spawn locking"
+  assert_absent "$curl_log" "typed dispatch called the resolver before acquiring the spawn lock"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "spawn-lock refusal should happen before arming the typed-dispatch receipt"
+  pass "typed dispatch validates local launch preflight before invoking the resolver"
+}
+
+test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
+  local rec id out status launch receipt window_dir
+  id=profile-typed-cursor-z11b
+  rec=$(make_spawn_case profile-typed-cursor claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
+
+  out=$(FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "clear typed Cursor selection should launch without repeated profile flags"
+  assert_contains "$out" "spawned $id harness=cursor" "clear typed selection did not reach Cursor"
+  assert_present "$window_dir/fm-$id" "successful typed launch did not preserve the tmux endpoint"
+  assert_present "$WT_DIR" "successful typed launch did not preserve the worktree"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--model 'cursor-grok-4.6-medium'" "typed Cursor model did not reach the worker command"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = clear ] || fail "clear receipt lost resolver status"
+  [ "$(jq -r .resolver.model <<<"$receipt")" = jev-1.13.0 ] || fail "clear receipt lost resolver model"
+  [ "$(jq -r .resolver.tokens.input_tokens <<<"$receipt")" = 321 ] || fail "clear receipt lost input token count"
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "clear receipt lost selected harness"
+  [ "$(jq -r .selected.effort <<<"$receipt")" = default ] || fail "clear receipt did not normalize omitted selected effort"
+  [ "$(jq -r .launched.harness <<<"$receipt")" = cursor ] || fail "clear receipt lost launched harness"
+  [ "$(jq -r .launched.model <<<"$receipt")" = cursor-grok-4.6-medium ] || fail "clear receipt lost launched model"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = none ] || fail "matching typed launch recorded a divergence"
+  [ "$(jq -r '.quota_facts[] | select(.harness == "cursor") | .remaining_percent' <<<"$receipt")" = 90 ] \
+    || fail "clear receipt lost current Cursor quota facts"
+  assert_not_contains "$receipt" "brief for $id" "receipt persisted private brief text"
+  assert_not_contains "$receipt" "test-key" "receipt persisted the resolver key"
+  pass "clear typed Cursor selection reaches the launch command with a matching private receipt"
+}
+
+test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
+  local rec id out status receipt curl_log raw_command
+  id=profile-typed-divergence-z11c
+  rec=$(make_spawn_case profile-typed-divergence claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 1 "$status" "unexplained clear-result divergence should refuse launch"
+  assert_contains "$out" "pass --dispatch-override-reason" "clear divergence refusal did not name the required reason"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = manual_override_missing_reason ] \
+    || fail "unexplained divergence receipt lost its reason"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "divergence refusal claims a launch"
+
+  rm -f "$HOME_DIR/state/dispatch-receipts.jsonl"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness grok --model grok-4 --effort medium \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a quota-ineligible candidate must not launch through manual override"
+  assert_contains "$out" "profile is ineligible" "ineligible-candidate refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "ineligible-candidate receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "ineligible candidate reached the worker launch command"
+
+  id=profile-typed-harness-only-veto-z11c1
+  rec=$(make_spawn_case profile-typed-harness-only-veto claude "$id")
+  read_case_record "$rec"
+  enable_harness_only_grok_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness grok \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a harness-only override to an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "harness-only ineligible refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "harness-only ineligible receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "harness-only ineligible candidate reached the worker launch command"
+
+  id=profile-typed-raw-veto-z11c3
+  rec=$(make_spawn_case profile-typed-raw-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "grok --model grok-4 --reasoning-effort medium" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a raw command for an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "raw-command ineligible refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "raw-command ineligible receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw-command ineligible candidate reached the worker launch command"
+
+  id=profile-typed-raw-codex-short-veto-z11c9
+  rec=$(make_spawn_case profile-typed-raw-codex-short-veto claude "$id")
+  read_case_record "$rec"
+  enable_codex_floor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "codex -m gpt-5 -c model_reasoning_effort=high" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a raw Codex short-axis command for an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "raw Codex short-axis refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "raw Codex short-axis receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw Codex short-axis candidate reached the worker launch command"
+
+  id=profile-typed-raw-wrapper-veto-z11c4
+  rec=$(make_spawn_case profile-typed-raw-wrapper-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "env GROK_HOME='path with spaces' grok --model grok-4 --reasoning-effort medium" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a quoted wrapper raw command must not hide an ineligible worker"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "quoted-wrapper raw-command refusal did not name the launch profile problem"
+  assert_absent "$curl_log" "quoted-wrapper raw command called the resolver before local rejection"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "quoted-wrapper raw-command receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "quoted-wrapper raw command reached the worker launch command"
+
+  id=profile-typed-raw-newline-veto-z11c8
+  rec=$(make_spawn_case profile-typed-raw-newline-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  raw_command=$'true\ngrok --model grok-4 --reasoning-effort medium'
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "$raw_command" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a newline raw command must not hide a second worker command"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "newline raw-command refusal did not name the launch profile problem"
+  assert_absent "$curl_log" "newline raw command called the resolver before local rejection"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "newline raw-command receipt lost adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "newline raw-command receipt claims a launch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "newline raw command reached the worker launch command"
+
+  id=profile-typed-raw-unparsed-config-z11c10
+  rec=$(make_spawn_case profile-typed-raw-unparsed-config claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "codex -c model_reasoning_effort high" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "an unparsed raw Codex effort config must refuse before launch"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "unparsed raw Codex effort config did not name the launch profile problem"
+  assert_absent "$curl_log" "unparsed raw Codex effort config called the resolver before local rejection"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "unparsed raw Codex effort config receipt lost adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "unparsed raw Codex effort config receipt claims a launch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "unparsed raw Codex effort config reached the worker launch command"
+
+  id=profile-typed-raw-no-worker-z11c5
+  rec=$(make_spawn_case profile-typed-raw-no-worker claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "env GROK_HOME=$CASE_DIR/grok-home" \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a raw command with no identifiable worker must refuse before launch"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "unidentified raw-command refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "unidentified raw-command receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "unidentified raw command reached the worker launch command"
+
+  id=profile-typed-raw-shell-wrapper-veto-z11c6
+  rec=$(make_spawn_case profile-typed-raw-shell-wrapper-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "bash -lc 'grok --model grok-4 --reasoning-effort medium'" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a shell-wrapped raw command must not hide an ineligible worker"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "shell-wrapped raw-command refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "shell-wrapped raw-command receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "shell-wrapped raw command reached the worker launch command"
+
+  id=profile-typed-override-z11c2
+  rec=$(make_spawn_case profile-typed-override claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 0 "$status" "a supported explained override to a profile without contradictory evidence should launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "override receipt lost typed selection"
+  [ "$(jq -r .launched.harness <<<"$receipt")" = codex ] || fail "override receipt lost actual launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = supported_manual_override ] \
+    || fail "supported override receipt lost its reason"
+
+  id=profile-typed-raw-override-z11c7
+  rec=$(make_spawn_case profile-typed-raw-override claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "codex -m=gpt-5 -c=model_reasoning_effort=high" \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 0 "$status" "a supported raw override should launch with parsed axes"
+  assert_contains "$out" "spawned $id harness=codex" "raw override did not report parsed harness"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "raw override receipt lost typed selection"
+  [ "$(jq -r .launched.harness <<<"$receipt")" = codex ] || fail "raw override receipt lost parsed harness"
+  [ "$(jq -r .launched.model <<<"$receipt")" = gpt-5 ] || fail "raw override receipt lost parsed model"
+  [ "$(jq -r .launched.effort <<<"$receipt")" = high ] || fail "raw override receipt lost parsed effort"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = supported_manual_override ] \
+    || fail "raw supported override receipt lost its reason"
+  pass "clear divergence is explained and an ineligible candidate cannot be silently launched"
+}
+
+test_nonclear_and_launch_refusal_receipts_are_complete() {
+  local rec id out status receipt window_dir
+  id=profile-typed-nonclear-z11d
+  rec=$(make_spawn_case profile-typed-nonclear claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+
+  out=$(FM_FAKE_DISPATCH_CONFIDENCE=0.4 \
+    FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 0 "$status" "ambiguous typed result should allow the existing manual intake"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = ambiguous ] || fail "ambiguous receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "ambiguous fallback was unexplained"
+
+  id=profile-typed-nonclear-refusal-z11d1
+  rec=$(make_spawn_case profile-typed-nonclear-refusal claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
+  out=$(FM_FAKE_DISPATCH_CONFIDENCE=0.4 \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
+    FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "ambiguous typed result without a launch profile should refuse"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = ambiguous ] || fail "ambiguous refusal receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] \
+    || fail "ambiguous refusal receipt lost non_clear_result"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "ambiguous refusal receipt claims a launch"
+  assert_absent "$HOME_DIR/state/$id.meta" "ambiguous refusal wrote task metadata"
+  assert_absent "$window_dir/fm-$id" "ambiguous refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "ambiguous refusal left the fresh worktree"
+  [ ! -s "$LAUNCH_LOG" ] || fail "ambiguous refusal reached the worker launch command"
+
+  id=profile-typed-invalid-model-z11d2
+  rec=$(make_spawn_case profile-typed-invalid-model claude "$id")
+  read_case_record "$rec"
+  enable_control_char_model_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
+  out=$(FM_TEST_TMUX_WINDOW_DIR="$window_dir" FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 2 "$status" "dispatch profile model control characters should fail before launch"
+  assert_contains "$out" "typed dispatch resolution failed configuration validation" \
+    "invalid selected model did not fail at typed-dispatch validation"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = resolver_configuration_error ] \
+    || fail "invalid model receipt lost configuration-error reason"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "invalid model receipt claims a worker launched"
+  assert_absent "$HOME_DIR/state/$id.meta" "invalid model must not reach line-oriented metadata"
+  assert_absent "$window_dir/fm-$id" "invalid model refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "invalid model refusal left the fresh worktree"
+  [ ! -s "$LAUNCH_LOG" ] || fail "invalid model reached the worker launch command"
+
+  id=profile-typed-error-z11e
+  rec=$(make_spawn_case profile-typed-error claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_HTTP=500 \
+    FM_FAKE_DISPATCH_BODY="provider echoed private brief for $id and test-key" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 0 "$status" "typed resolver error should allow explicit existing intake"
+  assert_contains "$out" "dispatch-resolve: error (http 500 after" "typed resolver error kept compact status diagnostics"
+  assert_not_contains "$out" "provider echoed private brief" "spawn output must not forward provider response bodies"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = error ] || fail "error receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "error fallback was unexplained"
+  assert_not_contains "$receipt" "provider echoed private brief" "resolver-error receipt must not persist provider response bodies"
+
+  id=profile-typed-success-metadata-z11e2
+  rec=$(make_spawn_case profile-typed-success-metadata claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_BODY="{\"model\":\"jev private brief for $id\",\"answers\":{\"rule\":{\"type\":\"choice\",\"choice\":\"default\",\"confidence\":0.97,\"probabilities\":{\"rule_1\":0.97,\"default\":0.03}}},\"usage\":{\"input_tokens\":321,\"output_tokens\":42,\"debug\":\"provider echoed test-key and brief for $id\"}}" \
+    FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "malicious provider success metadata should not block an otherwise valid typed launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r '.resolver.model | type' <<<"$receipt")" = null ] || fail "receipt persisted unsafe resolver model metadata"
+  [ "$(jq -c '.resolver.tokens | keys' <<<"$receipt")" = '["input_tokens","output_tokens"]' ] \
+    || fail "receipt persisted provider usage extras"
+  assert_not_contains "$receipt" "private brief for $id" "receipt persisted unsafe provider model content"
+  assert_not_contains "$receipt" "provider echoed test-key" "receipt persisted provider usage debug content"
+
+  id=profile-typed-escalate-z11f
+  rec=$(make_spawn_case profile-typed-escalate claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR" captain
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium)
+  status=$?
+  expect_code 1 "$status" "captain-approval typed result should refuse an unapproved launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = escalate ] || fail "escalate receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = captain_approval_required ] \
+    || fail "approval refusal receipt lost its reason"
+
+  id=profile-typed-approved-z11f2
+  rec=$(make_spawn_case profile-typed-approved claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR" captain
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium \
+      --dispatch-override-reason captain_override)
+  status=$?
+  expect_code 0 "$status" "an explicitly approved typed result should launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = captain_override ] \
+    || fail "approved escalation receipt lost captain override reason"
+
+  id=profile-typed-pi-signed-missing-z11f3
+  rec=$(make_spawn_case profile-typed-pi-signed-missing claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  rm -f "$FAKEBIN_DIR/pi-signed"
+  out=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness pi-signed \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "missing pi-signed after an accepted override should refuse before launch"
+  assert_contains "$out" "pi-signed executable not found on PATH" \
+    "missing pi-signed override refusal did not name the adapter"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "missing pi-signed receipt lost selected profile"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "missing pi-signed receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "missing pi-signed receipt kept the earlier override reason"
+  [ ! -s "$LAUNCH_LOG" ] || fail "missing pi-signed override reached the worker launch command"
+
+  id=profile-typed-template-missing-z11f4
+  rec=$(make_spawn_case profile-typed-template-missing claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness not-a-real-harness \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "unknown template adapter after an accepted override should refuse before launch"
+  assert_contains "$out" "unknown harness 'not-a-real-harness'" \
+    "unknown template adapter refusal did not name the harness"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "template-adapter receipt lost selected profile"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "template-adapter receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "template-adapter receipt kept the earlier override reason"
+  [ ! -s "$LAUNCH_LOG" ] || fail "template-adapter refusal reached the worker launch command"
+
+  id=profile-typed-raw-adapter-refusal-z11f5
+  rec=$(make_spawn_case profile-typed-raw-adapter-refusal claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "bash -lc 'cursor-agent --model cursor-grok-4.6-medium'" \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "unidentified raw adapter should refuse before launch"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "raw adapter refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "raw adapter refusal receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "raw adapter refusal receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw adapter refusal reached the worker launch command"
+
+  id=profile-typed-catalog-z11g
+  rec=$(make_spawn_case profile-typed-catalog claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
+  out=$(FM_TEST_CURSOR_MODELS=$'Available models\nother-model - Other' \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
+    FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "clear selection rejected by the live catalog should refuse launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = clear ] || fail "catalog-refusal receipt lost clear selection"
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "catalog-refusal receipt lost selected profile"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "catalog-refusal receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = catalog_rejection ] \
+    || fail "catalog-refusal receipt lost deterministic reason"
+  assert_absent "$HOME_DIR/state/$id.meta" "catalog refusal wrote task metadata"
+  assert_absent "$window_dir/fm-$id" "catalog refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "catalog refusal left the fresh worktree"
+  pass "ambiguous, error, escalation, and launch-refusal paths each record one explained receipt"
+}
+
+test_kimi_adapter_refusals_record_adapter_unavailable() {
+  local rec id out status receipt
+  id=profile-typed-kimi-missing-z11h
+  rec=$(make_spawn_case profile-typed-kimi-missing claude "$id")
+  read_case_record "$rec"
+  enable_kimi_dispatch_profile "$HOME_DIR"
+
+  out=$(FM_TEST_HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "clear Kimi selection with no executable should refuse before launch"
+  assert_contains "$out" "kimi executable not found" "missing Kimi binary refusal did not name the adapter"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = kimi ] || fail "missing-binary receipt lost selected Kimi profile"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "missing-binary receipt did not record adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "missing-binary receipt claims a launch"
+
+  id=profile-typed-kimi-hook-z11i
+  rec=$(make_spawn_case profile-typed-kimi-hook claude "$id")
+  read_case_record "$rec"
+  enable_kimi_dispatch_profile "$HOME_DIR"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKEBIN_DIR/kimi"
+  chmod +x "$FAKEBIN_DIR/kimi"
+  out=$(FM_TEST_HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "clear Kimi selection with an unsafe hook install should refuse before launch"
+  assert_contains "$out" "global turn-end hook could not be installed safely" \
+    "Kimi hook-install refusal did not name the prelaunch dependency"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = kimi ] || fail "hook-refusal receipt lost selected Kimi profile"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "hook-refusal receipt did not record adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "hook-refusal receipt claims a launch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "Kimi prelaunch refusal reached the worker launch command"
+  pass "Kimi binary and hook-install refusals record adapter_unavailable"
 }
 
 test_active_dispatch_profile_requires_explicit_harness_for_scout() {
@@ -481,8 +1229,39 @@ test_active_dispatch_profile_allows_positional_harness() {
   pass "active crew-dispatch profile allows the legacy positional harness form"
 }
 
-test_active_dispatch_profile_allows_raw_launch_command() {
+test_no_profile_preserves_raw_launch_escape_hatch() {
   local rec id out status launch
+  id=profile-raw-no-dispatch-z14b
+  rec=$(make_spawn_case profile-raw-no-dispatch claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "FOO=bar custom-agent --flag" --model gpt-5 --effort high)
+  status=$?
+  expect_code 0 "$status" "non-typed raw launch with a leading assignment should launch"
+  assert_contains "$out" "spawned $id harness=custom-agent" \
+    "non-typed raw launch did not preserve the legacy harness label"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent gpt-5 high
+  launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" = "FOO=bar custom-agent --flag" ] || fail "non-typed raw launch command changed"$'\n'"actual: $launch"
+
+  id=profile-raw-wrapper-no-dispatch-z14c
+  rec=$(make_spawn_case profile-raw-wrapper-no-dispatch claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "FOO=bar bash -lc 'custom-agent --flag'" --model gpt-5 --effort high)
+  status=$?
+  expect_code 0 "$status" "non-typed raw wrapper launch should launch literally"
+  assert_contains "$out" "spawned $id harness=bash" \
+    "non-typed raw wrapper did not preserve the legacy wrapper harness label"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" bash gpt-5 high
+  launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" = "FOO=bar bash -lc 'custom-agent --flag'" ] || fail "non-typed raw wrapper command changed"$'\n'"actual: $launch"
+  pass "non-typed raw launch commands keep the legacy literal escape hatch"
+}
+
+test_active_dispatch_profile_allows_raw_launch_command() {
+  local rec id out status launch receipt
   id=profile-raw-z15
   rec=$(make_spawn_case profile-raw claude "$id")
   read_case_record "$rec"
@@ -496,7 +1275,86 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(cat "$LAUNCH_LOG")
   [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+
+  id=profile-raw-assignment-z15a
+  rec=$(make_spawn_case profile-raw-assignment claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "FOO=bar custom-agent --flag")
+  status=$?
+  expect_code 1 "$status" "typed raw launch with a leading assignment should still fail closed"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "typed raw assignment refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "typed raw assignment receipt lost adapter_unavailable"
+  assert_absent "$HOME_DIR/state/$id.meta" "typed raw assignment wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "typed raw assignment reached the worker launch command"
+
+  id=profile-raw-shell-wrapper-z15b
+  rec=$(make_spawn_case profile-raw-shell-wrapper claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "bash -lc 'custom-agent --flag'")
+  status=$?
+  expect_code 1 "$status" "a raw shell wrapper should not satisfy active dispatch-profile requirements"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "shell-wrapped raw-command refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "shell-wrapped raw-command receipt lost adapter_unavailable"
+  assert_absent "$HOME_DIR/state/$id.meta" "shell-wrapped raw command wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "shell-wrapped raw command reached the worker launch command"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
+}
+
+test_dispatch_override_reason_requires_typed_intake_receipt() {
+  local rec id out status sm
+
+  id=profile-override-relaunch-z15c
+  rec=$(make_spawn_case profile-override-relaunch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" --relaunch --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "relaunch should reject dispatch override reasons"
+  assert_contains "$out" "--dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" \
+    "relaunch rejection did not name the typed-dispatch intake boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "relaunch override refusal wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "relaunch override refusal reached the worker launch command"
+
+  id=profile-override-secondmate-z15d
+  rec=$(make_spawn_case profile-override-secondmate codex "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$sm" --secondmate --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "secondmate spawn should reject dispatch override reasons"
+  assert_contains "$out" "--dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" \
+    "secondmate rejection did not name the typed-dispatch intake boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "secondmate override refusal wrote task metadata"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" "secondmate override refusal wrote a dispatch receipt"
+  [ ! -s "$LAUNCH_LOG" ] || fail "secondmate override refusal reached the worker launch command"
+
+  id=profile-override-inactive-z15e
+  rec=$(make_spawn_case profile-override-inactive codex "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "fresh spawn without active dispatch profile should reject dispatch override reasons"
+  assert_contains "$out" "--dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" \
+    "inactive-profile rejection did not name the typed-dispatch intake boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "inactive-profile override refusal wrote task metadata"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" "inactive-profile override refusal wrote a dispatch receipt"
+  [ ! -s "$LAUNCH_LOG" ] || fail "inactive-profile override refusal reached the worker launch command"
+
+  pass "dispatch override reasons are rejected outside receipted typed intakes"
 }
 
 test_claude_threads_model_and_effort() {
@@ -992,11 +1850,20 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
+test_explicit_model_identifier_rejects_control_characters
 test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_fake_typesafe_response_fixture_is_valid_clear_json
+test_typed_dispatch_validates_project_before_resolver_call
+test_clear_typed_cursor_selection_reaches_launch_and_receipt
+test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused
+test_nonclear_and_launch_refusal_receipts_are_complete
+test_kimi_adapter_refusals_record_adapter_unavailable
 test_active_dispatch_profile_requires_explicit_harness_for_scout
 test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness
+test_no_profile_preserves_raw_launch_escape_hatch
 test_active_dispatch_profile_allows_raw_launch_command
+test_dispatch_override_reason_requires_typed_intake_receipt
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
 test_codex_omits_invalid_max_effort

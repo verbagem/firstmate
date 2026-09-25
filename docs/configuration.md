@@ -307,7 +307,8 @@ Changing this pin affects the next secondmate spawn or control-plane relaunch; t
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; for a local route, an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
 Remote secondmate routes accept verified harness adapters only and reject raw launch commands.
-When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
+When `config/crew-dispatch.json` exists, crewmate and scout spawns do not automatically fall back to `config/crew-harness`.
+They either realize a clear typed selection or require an explicit resolved harness with supported fallback handling for non-clear outcomes.
 The inherited-local-material contract is owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); its harness-relevant consequence is that a secondmate's own crewmates use the primary's dispatch profiles and static harness value.
 Those inherited values are defaults and rules only; `fm-spawn` still permits a consciously chosen explicit runtime outside the config.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
@@ -324,8 +325,9 @@ For Pi and pi-signed ship and scout launches, `fm-spawn.sh` also loads the track
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Without [typed dispatch resolution](#typed-dispatch-resolution-env-typesafe_api_key), shell scripts do not match those rules; firstmate chooses the best matching rule with judgment, resolves its profile object or array under the operating contract in `AGENTS.md` section 4 and `quota-array-dispatch`, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
 The typed resolver path below is the only shell-owned matching path, and it stays bounded to the declared fields, clear/non-clear outcomes, and authority boundaries documented there.
-When the file exists, `fm-spawn.sh` enforces that contract by refusing crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
-Batch spawns satisfy the same requirement with a shared `--harness`.
+When the file exists, `fm-spawn.sh` allows a clear typed selection to supply the profile automatically and otherwise refuses crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
+Non-clear typed outcomes still require supported fallback handling with an explicit resolved harness.
+When explicit fallback handling is needed, batch spawns satisfy the same requirement with a shared `--harness`.
 Secondmate spawns are exempt and still resolve through `config/secondmate-harness` and its optional model and effort tokens.
 This section is the single owner of the canonical schema and its per-field semantics.
 `AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
@@ -374,14 +376,21 @@ Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstr
 Malformed JSON, malformed rules, an empty or malformed profile array, an unverified harness, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`.
 While typed resolution is active, malformed `approval`, `floor`, and present `provider` declarations receive the same diagnostic; without the key those inert declarations preserve the pre-existing bootstrap behavior.
 Missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
-While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
+While the file remains present, every crewmate or scout spawn must either realize a clear typed selection or carry an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
 ## Typed Dispatch Resolution (.env TYPESAFE_API_KEY)
 
 Typed dispatch resolution is off unless the effective Firstmate home environment, or its gitignored `.env`, contains non-empty `TYPESAFE_API_KEY`.
-When it is off, `bin/fm-dispatch-resolve.sh` prints one stderr line, emits no stdout, exits 0, and makes no TypeSafe or quota call, so existing dispatch intake behavior is unchanged.
-When it is on, Firstmate may invoke `bin/fm-dispatch-resolve.sh <brief-file> --project <name>` after writing a task brief.
+When it is off, a direct `bin/fm-dispatch-resolve.sh` call prints one stderr line, emits no stdout, exits 0, and makes no TypeSafe or quota call, so existing dispatch intake behavior is unchanged.
+`--json` is the private composition surface used by `fm-spawn.sh`; it returns the same parsed outcome, including an `off` result, without including the brief, API key, request, or raw provider response.
+For every fresh crewmate or scout intake with `config/crew-dispatch.json`, `fm-spawn.sh` invokes that JSON surface once after the brief exists.
+It applies a clear profile when the caller omitted one, then retains its existing launch validation authority.
+An explicit profile that differs from a clear selection requires `--dispatch-override-reason` with one of `adapter_unavailable`, `catalog_rejection`, `credential_failure`, `privacy_veto`, `quota_runway_veto`, `captain_override`, or `supported_manual_override`.
+That flag is accepted only on fresh crewmate or scout intakes while `config/crew-dispatch.json` is active, so relaunches, secondmate launches, and inactive-profile fresh launches reject it instead of silently dropping the audit reason.
+An explicit profile already proven ineligible by the resolver cannot launch through an override.
+Ambiguous, non-approval escalation, and error outcomes return to the existing manual intake with `non_clear_result`; approval-gated outcomes require `captain_override`; an absent key retains the explicit-profile behavior with `absent_key`.
+Secondmate launches and relaunches do not perform a new typed intake.
 The resolver sends TypeSafe only the project name, the brief text, and one Choice question over the `config/crew-dispatch.json` rule `when` strings plus the fixed neutral option `No listed rule applies to this task.`.
 It never sends `why`, profile objects, quota data, fleet state, approvals, local catalogs, or secrets.
 
@@ -391,9 +400,14 @@ Live credentialed verification is an operator step, not part of the test suite.
 
 Everything after the typed rule choice stays local and inspectable.
 The tool enforces the confidence floor, `approval: "captain"`, rule and profile quota floors, one local `quota-axi --json` snapshot, and the `spendPriority` argmax over rankable eligible candidates.
-It returns a TOON-style block with `status: clear`, `ambiguous`, `escalate`, or `error`; only `clear` includes a `profile:` line for `fm-spawn.sh`.
+The default human output returns a TOON-style block with `status: clear`, `ambiguous`, `escalate`, or `error`; only `clear` includes a `profile:` line for `fm-spawn.sh`.
 API, network, HTTP, malformed response, missing dependency, low-confidence, approval-gated, unprovable-floor, unrankable-candidate, and genuine-tie cases are non-clear outcomes for Firstmate to decide from the existing intake procedure.
 This tool does not replace Firstmate judgment, `quota-array-dispatch`, captain approval, local provider/catalog evidence, or `fm-spawn.sh` validation.
+Every typed intake appends exactly one mode-`0600` JSON line to the effective home's private `state/dispatch-receipts.jsonl`.
+Each line records task, kind, project name, resolver status/model/token counts/confidence, selected and launched harness/model/effort, the parsed quota facts used for each candidate, and a machine-readable divergence reason.
+It never records secrets, credentials, full briefs, raw TypeSafe responses, or unrelated fleet state.
+The recorded reason is `none` for a matched launch, the consumed override reason for an accepted manual or captain override, `absent_key`, `non_clear_result`, `captain_approval_required`, `manual_override_missing_reason`, `resolver_configuration_error`, or a launch-refusal reason such as `adapter_unavailable`, `catalog_rejection`, `credential_failure`, `privacy_veto`, `quota_runway_veto`, or `launch_refusal`.
+Launch refusals retain the selection and record no launched profile.
 
 ## Toolchain
 
