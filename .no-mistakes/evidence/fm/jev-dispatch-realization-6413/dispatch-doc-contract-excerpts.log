@@ -1,0 +1,8 @@
+docs/verification/dispatch-resolve.md:64:$ jq -c '{task,resolver,selected,launched,quota_facts,divergence_reason}' <isolated-home>/state/dispatch-receipts.jsonl
+docs/configuration.md:311:They either realize a clear typed selection or require an explicit resolved harness with supported fallback handling for non-clear outcomes.
+docs/configuration.md:328:When the file exists, `fm-spawn.sh` allows a clear typed selection to supply the profile automatically and otherwise refuses crewmate and scout spawns that lack an explicit harness (`--harness`, a positional adapter, or a raw launch command).
+docs/configuration.md:379:While the file remains present, every crewmate or scout spawn must either realize a clear typed selection or carry an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
+docs/configuration.md:405:Every typed intake appends exactly one mode-`0600` JSON line to the effective home's private `state/dispatch-receipts.jsonl`.
+docs/architecture.md:220:When the file exists, `fm-spawn.sh` stops `config/crew-harness` from acting as an automatic crewmate/scout fallback; a clear typed selection may supply the profile automatically, and other outcomes require an explicit resolved harness with supported fallback handling.
+AGENTS.md:211:When dispatch profiles exist, consult them at every crewmate or scout intake; `fm-spawn` realizes an opted-in clear typed selection and requires a deterministic reason for divergence while retaining final launch validation.
+AGENTS.md:212:`docs/configuration.md` "Typed Dispatch Resolution" owns the optional `TYPESAFE_API_KEY` resolver, private receipt, and fallback contract; absent the key or on a non-clear result, the existing intake remains authoritative.

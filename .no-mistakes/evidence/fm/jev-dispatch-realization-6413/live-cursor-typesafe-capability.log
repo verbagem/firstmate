@@ -1,0 +1,5 @@
+cursor-agent: present (/Users/temp/.local/bin/cursor-agent)
+cursor: present (/Users/temp/.local/bin/cursor)
+tmux: present (/opt/homebrew/bin/tmux)
+quota-axi: present (/Users/temp/.npm-global/bin/quota-axi)
+TYPESAFE_API_KEY: absent from environment

@@ -1,0 +1,2 @@
+dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and /Users/temp/.no-mistakes/evidence/01M3BB78V64PVF80RP91B3253G/live-resolver-home/.env)
+{"status":"off","reason":"TYPESAFE_API_KEY absent","model":null,"latency_ms":null,"tokens":null,"confidence":null,"candidates":[]}
