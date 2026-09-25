@@ -600,6 +600,22 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
     || fail "harness-only ineligible receipt lost the quota veto"
   [ ! -s "$LAUNCH_LOG" ] || fail "harness-only ineligible candidate reached the worker launch command"
 
+  id=profile-typed-raw-veto-z11c3
+  rec=$(make_spawn_case profile-typed-raw-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "grok --model grok-4 --reasoning-effort medium" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a raw command for an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "raw-command ineligible refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "raw-command ineligible receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw-command ineligible candidate reached the worker launch command"
+
   id=profile-typed-override-z11c2
   rec=$(make_spawn_case profile-typed-override claude "$id")
   read_case_record "$rec"

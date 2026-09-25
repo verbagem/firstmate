@@ -830,6 +830,44 @@ dispatch_model_id_ok() {
   [[ $model =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]
 }
 
+spawn_raw_command_profile() {
+  local raw=$1 word want=
+  SPAWN_RAW_HARNESS=
+  SPAWN_RAW_MODEL=
+  SPAWN_RAW_EFFORT=
+  for word in $raw; do
+    if [ -z "$SPAWN_RAW_HARNESS" ]; then
+      case "$word" in
+        [A-Za-z_]*=*) continue ;;
+        *) SPAWN_RAW_HARNESS=$(basename "$word"); continue ;;
+      esac
+    fi
+    if [ -n "$want" ]; then
+      case "$word" in
+        --*) ;;
+        *)
+          case "$want" in
+            model) SPAWN_RAW_MODEL=$word ;;
+            effort) SPAWN_RAW_EFFORT=$word ;;
+          esac
+          ;;
+      esac
+      want=
+      continue
+    fi
+    case "$word" in
+      --model=*) SPAWN_RAW_MODEL=${word#--model=} ;;
+      --model) want=model ;;
+      --effort=*) SPAWN_RAW_EFFORT=${word#--effort=} ;;
+      --effort) want=effort ;;
+      --reasoning-effort=*) SPAWN_RAW_EFFORT=${word#--reasoning-effort=} ;;
+      --reasoning-effort) want=effort ;;
+      --thinking=*) SPAWN_RAW_EFFORT=${word#--thinking=} ;;
+      --thinking) want=effort ;;
+    esac
+  done
+}
+
 spawn_abort_cleanup() {
   local status=$?
   if ! dispatch_receipt_emit; then
@@ -1088,6 +1126,30 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
   DISPATCH_REQUESTED_HARNESS=${HARNESS_ARG:-${POS[2]:-}}
   DISPATCH_REQUESTED_MODEL=${MODEL:-default}
   DISPATCH_REQUESTED_EFFORT=${EFFORT:-default}
+  DISPATCH_REQUESTED_RAW_COMMAND=0
+  DISPATCH_REQUESTED_MODEL_EXACT=1
+  DISPATCH_REQUESTED_EFFORT_EXACT=1
+  case "$DISPATCH_REQUESTED_HARNESS" in
+    *' '*)
+      DISPATCH_REQUESTED_RAW_COMMAND=1
+      spawn_raw_command_profile "$DISPATCH_REQUESTED_HARNESS"
+      DISPATCH_REQUESTED_HARNESS=$SPAWN_RAW_HARNESS
+      if [ "$MODEL_SET" -eq 0 ]; then
+        DISPATCH_REQUESTED_MODEL_EXACT=0
+        if [ -n "$SPAWN_RAW_MODEL" ] && dispatch_model_id_ok "$SPAWN_RAW_MODEL"; then
+          DISPATCH_REQUESTED_MODEL=$SPAWN_RAW_MODEL
+          DISPATCH_REQUESTED_MODEL_EXACT=1
+        fi
+      fi
+      if [ "$EFFORT_SET" -eq 0 ]; then
+        DISPATCH_REQUESTED_EFFORT_EXACT=0
+        if [ -n "$SPAWN_RAW_EFFORT" ]; then
+          DISPATCH_REQUESTED_EFFORT=$SPAWN_RAW_EFFORT
+          DISPATCH_REQUESTED_EFFORT_EXACT=1
+        fi
+      fi
+      ;;
+  esac
   case "$DISPATCH_STATUS" in
     clear)
       DISPATCH_SELECTED_HARNESS=$(jq -r '.chosen.profile.harness // empty' <<<"$DISPATCH_RESULT")
@@ -1116,7 +1178,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
         fi
         DISPATCH_DIVERGENCE_REASON=none
       else
-        if [ "$DISPATCH_REQUESTED_HARNESS" = "$DISPATCH_SELECTED_HARNESS" ]; then
+        if [ "$DISPATCH_REQUESTED_RAW_COMMAND" -eq 0 ] && [ "$DISPATCH_REQUESTED_HARNESS" = "$DISPATCH_SELECTED_HARNESS" ]; then
           [ "$MODEL_SET" -eq 1 ] || DISPATCH_REQUESTED_MODEL=$DISPATCH_SELECTED_MODEL
           [ "$EFFORT_SET" -eq 1 ] || DISPATCH_REQUESTED_EFFORT=$DISPATCH_SELECTED_EFFORT
         fi
@@ -1168,12 +1230,14 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
     if jq -e \
       --arg harness "$DISPATCH_REQUESTED_HARNESS" \
       --arg model "$DISPATCH_REQUESTED_MODEL" \
-      --arg effort "$DISPATCH_REQUESTED_EFFORT" '
+      --arg effort "$DISPATCH_REQUESTED_EFFORT" \
+      --arg model_exact "$DISPATCH_REQUESTED_MODEL_EXACT" \
+      --arg effort_exact "$DISPATCH_REQUESTED_EFFORT_EXACT" '
         any(.candidates[]?;
           (.eligible == false)
           and .profile.harness == $harness
-          and (.profile.model // "default") == $model
-          and (.profile.effort // "default") == $effort)
+          and ($model_exact != "1" or (.profile.model // "default") == $model)
+          and ($effort_exact != "1" or (.profile.effort // "default") == $effort))
       ' <<<"$DISPATCH_RESULT" >/dev/null; then
       DISPATCH_DIVERGENCE_REASON=quota_runway_veto
       echo "error: the explicit dispatch profile is ineligible in the current typed-dispatch evidence and cannot be launched" >&2
@@ -1494,10 +1558,8 @@ launch_template() {
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
-    HARNESS=""
-    for word in $LAUNCH; do
-      case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
-    done
+    spawn_raw_command_profile "$LAUNCH"
+    HARNESS=$SPAWN_RAW_HARNESS
     ;;
   '')
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
