@@ -930,7 +930,7 @@ spawn_raw_axis_unknown() {
 }
 
 spawn_raw_command_profile() {
-  local raw=$1 word want= value
+  local raw=$1 word want='' value
   SPAWN_RAW_HARNESS=
   SPAWN_RAW_MODEL=
   SPAWN_RAW_EFFORT=
