@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+printf 'network-called\n' >> "${NETWORK_LOG:?}"
+exit 99

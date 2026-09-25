@@ -1,0 +1,24 @@
+{
+  "first_run": {
+    "baseline_metric_row": "| baseline | 30 | 0 | 0 | 0 | 0.804753 | 0 | 0 |",
+    "cost_line": "Estimated TypeSafe cost USD: `0.0`",
+    "fixture_count_line": "Fixture transcripts: `30`",
+    "input_tokens_line": "Input tokens: `0`",
+    "jev_metric_row": "| jev | 30 | 0 | 0 | 0 | 1.0 | 0 | 0 |",
+    "output_tokens_line": "Output tokens: `0`",
+    "status_line": "Status: `pass`"
+  },
+  "ledger_cmp_output_bytes": 0,
+  "offline_a_network_log_exists": false,
+  "offline_b_network_log_exists": false,
+  "report_cmp_output_bytes": 0,
+  "second_run": {
+    "baseline_metric_row": "| baseline | 30 | 0 | 0 | 0 | 0.804753 | 0 | 0 |",
+    "cost_line": "Estimated TypeSafe cost USD: `0.0`",
+    "fixture_count_line": "Fixture transcripts: `30`",
+    "input_tokens_line": "Input tokens: `0`",
+    "jev_metric_row": "| jev | 30 | 0 | 0 | 0 | 1.0 | 0 | 0 |",
+    "output_tokens_line": "Output tokens: `0`",
+    "status_line": "Status: `pass`"
+  }
+}

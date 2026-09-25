@@ -1,0 +1,32 @@
+{
+  "flag_counts": {
+    "approval": 1,
+    "blocker": 1,
+    "security_boundary": 1,
+    "source_receipt": 10,
+    "unresolved_decision": 1
+  },
+  "notes": "Synthetic sanitized fixtures for offline replay only. They contain no live agent context.",
+  "question_count": 30,
+  "representative_cases": {
+    "ask_user_decisions": "case-003-ask-user",
+    "command_output_noise": "case-004-command-noise",
+    "contradictory_updates": "case-001-contradictory-update",
+    "long_evidence_payloads": "case-005-long-evidence",
+    "low_confidence_unknown": "case-019-low-confidence",
+    "no_key_no_network": "case-017-no-key",
+    "scope_supersession": "case-002-scope-supersession",
+    "truncation_provenance": "case-025-source-id"
+  },
+  "schema": "fm-jev-context-replay-fixtures.v1",
+  "segment_type_counts": {
+    "accepted_requirement": 23,
+    "captain_instruction": 18,
+    "evidence_tool_output": 17,
+    "noise": 27,
+    "ordinary_progress": 30,
+    "superseded_data": 13,
+    "unknown": 2
+  },
+  "transcript_count": 30
+}

@@ -1,0 +1,49 @@
+{
+  "baseline_truncation_sample": {
+    "final_action": "truncate",
+    "has_original_sha256": true,
+    "original_chars": 198,
+    "original_segment_id": "c025-s2",
+    "segment_id": "c025-s2"
+  },
+  "deterministic_override_sample": {
+    "decision_reasons": [
+      "type:captain_instruction",
+      "required-evidence"
+    ],
+    "decision_status": "deterministic-override",
+    "final_action": "keep",
+    "segment_id": "c001-s1"
+  },
+  "low_confidence_unknown_sample": {
+    "decision_status": "low-confidence",
+    "final_action": "keep",
+    "proposal": {
+      "action": "drop",
+      "confidence": 0.41,
+      "probabilities": {
+        "drop": 0.41,
+        "keep": 0.34,
+        "truncate": 0.25
+      }
+    },
+    "segment_id": "c019-s3"
+  },
+  "network_log_exists": false,
+  "protected_drop_count": 0,
+  "report": {
+    "baseline_metric_row": "| baseline | 30 | 0 | 0 | 0 | 0.804753 | 0 | 0 |",
+    "cost_line": "Estimated TypeSafe cost USD: `4.2e-05`",
+    "fixture_count_line": "Fixture transcripts: `30`",
+    "input_tokens_line": "Input tokens: `1000`",
+    "jev_metric_row": "| jev | 30 | 0 | 0 | 0 | 0.771674 | 0 | 0 |",
+    "output_tokens_line": "Output tokens: `60`",
+    "status_line": "Status: `pass`"
+  },
+  "verbatim_keep_sample": {
+    "ledger_text_sha256": "b00a7452d7063dff574909e2918c83584609e61e30afa16eef29629f530686cf",
+    "segment_id": "c011-s1",
+    "source_text_sha256": "b00a7452d7063dff574909e2918c83584609e61e30afa16eef29629f530686cf",
+    "text_matches_source": true
+  }
+}
