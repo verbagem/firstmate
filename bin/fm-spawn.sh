@@ -719,6 +719,8 @@ DISPATCH_PROJECT=
 DISPATCH_LAUNCHED=0
 DISPATCH_DIVERGENCE_REASON=
 DISPATCH_FAILURE_REASON=launch_refusal
+DISPATCH_PROFILE_ACTIVE=0
+SPAWN_RAW_PROFILE_READY=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -846,54 +848,59 @@ dispatch_project_preflight() {
   }
 }
 
+dispatch_arm_local_refusal_receipt() {
+  local reason=$1
+  DISPATCH_RESULT=$(jq -cn --arg reason "$reason" \
+    '{status:"error",reason:$reason,model:null,tokens:null,confidence:null,candidates:[]}')
+  DISPATCH_DIVERGENCE_REASON=$reason
+  DISPATCH_FAILURE_REASON=$reason
+  if [ -z "$DISPATCH_PROJECT" ]; then
+    if [ -n "${PROJ_ABS:-}" ]; then
+      DISPATCH_PROJECT=$(basename -- "$PROJ_ABS")
+    elif [ -n "${PROJ:-}" ]; then
+      DISPATCH_PROJECT=$(basename -- "$PROJ")
+    else
+      DISPATCH_PROJECT=${DISPATCH_PROJECT_ARG:-unknown}
+    fi
+  fi
+  DISPATCH_RECEIPT_ACTIVE=1
+}
+
 if [ "$MODEL_SET" -eq 1 ] && ! dispatch_model_id_ok "$MODEL"; then
   echo "error: --model is not a valid model identifier" >&2
   exit 1
 fi
 
 spawn_raw_command_profile() {
-  local raw=$1 word want= env_wrapper=0 skip_next=0
+  local raw=$1 word want= value
   SPAWN_RAW_HARNESS=
   SPAWN_RAW_MODEL=
   SPAWN_RAW_EFFORT=
+  case "$raw" in
+    *\'*|*\"*|*\\*|*\`*|*\$*|*\(*|*\)*|*\{*|*\}*|*\[*|*\]*|*\?*|*\**|*\;*|*\&*|*\|*|*\<*|*\>*|*\!*|*\~*|*\#*)
+      return 1
+      ;;
+  esac
   for word in $raw; do
     if [ -z "$SPAWN_RAW_HARNESS" ]; then
-      if [ "$skip_next" -eq 1 ]; then
-        skip_next=0
-        continue
-      fi
       case "$word" in
-        [A-Za-z_]*=*) continue ;;
-      esac
-      case "$word" in
-        command|exec|nohup) continue ;;
-        env) env_wrapper=1; continue ;;
-      esac
-      if [ "$env_wrapper" -eq 1 ]; then
-        case "$word" in
-          --) continue ;;
-          -i|-0|--ignore-environment|--null) continue ;;
-          -S|--split-string|--split-string=*) return 0 ;;
-          -u|--unset|-C|--chdir) skip_next=1; continue ;;
-          -u*|--unset=*|--chdir=*) continue ;;
-          -*) continue ;;
-        esac
-      fi
-      case "$word" in
-        -*) continue ;;
+        *=*|-*) return 1 ;;
       esac
       case "$(basename "$word")" in
-        sh|bash|zsh|dash|ksh|fish) return 0 ;;
+        env|command|exec|nohup|sh|bash|zsh|dash|ksh|fish|time|sudo|doas|nice|ionice|chrt|setsid|stdbuf|timeout|script|unbuffer|rlwrap|arch|xcrun) return 1 ;;
       esac
       SPAWN_RAW_HARNESS=$(basename "$word")
       continue
     fi
     if [ -n "$want" ]; then
       case "$word" in
-        --*) ;;
+        --*) return 1 ;;
         *)
           case "$want" in
-            model) SPAWN_RAW_MODEL=$word ;;
+            model)
+              dispatch_model_id_ok "$word" || return 1
+              SPAWN_RAW_MODEL=$word
+              ;;
             effort) SPAWN_RAW_EFFORT=$word ;;
           esac
           ;;
@@ -902,16 +909,34 @@ spawn_raw_command_profile() {
       continue
     fi
     case "$word" in
-      --model=*) SPAWN_RAW_MODEL=${word#--model=} ;;
+      --model=*)
+        value=${word#--model=}
+        [ -n "$value" ] && dispatch_model_id_ok "$value" || return 1
+        SPAWN_RAW_MODEL=$value
+        ;;
       --model) want=model ;;
-      --effort=*) SPAWN_RAW_EFFORT=${word#--effort=} ;;
+      --effort=*)
+        value=${word#--effort=}
+        [ -n "$value" ] || return 1
+        SPAWN_RAW_EFFORT=$value
+        ;;
       --effort) want=effort ;;
-      --reasoning-effort=*) SPAWN_RAW_EFFORT=${word#--reasoning-effort=} ;;
+      --reasoning-effort=*)
+        value=${word#--reasoning-effort=}
+        [ -n "$value" ] || return 1
+        SPAWN_RAW_EFFORT=$value
+        ;;
       --reasoning-effort) want=effort ;;
-      --thinking=*) SPAWN_RAW_EFFORT=${word#--thinking=} ;;
+      --thinking=*)
+        value=${word#--thinking=}
+        [ -n "$value" ] || return 1
+        SPAWN_RAW_EFFORT=$value
+        ;;
       --thinking) want=effort ;;
     esac
   done
+  [ -n "$SPAWN_RAW_HARNESS" ] || return 1
+  [ -z "$want" ] || return 1
 }
 
 spawn_abort_cleanup() {
@@ -1143,6 +1168,7 @@ fi
 # the sole owner of rule matching and quota selection; this block only realizes
 # its result, enforces explained divergence, and arms one private receipt.
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
+  DISPATCH_PROFILE_ACTIVE=1
   DISPATCH_BRIEF="$DATA/$ID/brief.md"
   [ -f "$DISPATCH_BRIEF" ] || {
     echo "error: no brief at $DISPATCH_BRIEF" >&2
@@ -1153,13 +1179,16 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
     echo "error: project directory required before typed dispatch" >&2
     exit 1
   }
-  DISPATCH_PROJECT_PATH=$(resolve_project_dir_arg "$DISPATCH_PROJECT_ARG")
-  if ! DISPATCH_PROJECT_ABS=$(CDPATH='' cd -- "$DISPATCH_PROJECT_PATH" 2>/dev/null && pwd); then
+fi
+
+typed_dispatch_resolve_and_apply() {
+  [ "$DISPATCH_PROFILE_ACTIVE" = 1 ] || return 0
+  [ -n "${PROJ_ABS:-}" ] || {
     echo "error: project directory cannot be resolved before typed dispatch: $DISPATCH_PROJECT_ARG" >&2
     exit 1
-  fi
-  dispatch_project_preflight "$DISPATCH_PROJECT_ABS" "$DISPATCH_PROJECT_ARG" || exit 1
-  DISPATCH_PROJECT=$(basename -- "$DISPATCH_PROJECT_ABS")
+  }
+  dispatch_project_preflight "$PROJ_ABS" "$DISPATCH_PROJECT_ARG" || exit 1
+  DISPATCH_PROJECT=$(basename -- "$PROJ_ABS")
   DISPATCH_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-dispatch-resolve.XXXXXX") || {
     echo "error: could not create typed-dispatch error capture" >&2
     exit 1
@@ -1188,7 +1217,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
   fi
 
   DISPATCH_STATUS=$(jq -r '.status' <<<"$DISPATCH_RESULT")
-  DISPATCH_REQUESTED_HARNESS=${HARNESS_ARG:-${POS[2]:-}}
+  DISPATCH_REQUESTED_HARNESS=${ARG3:-}
   DISPATCH_REQUESTED_MODEL=${MODEL:-default}
   DISPATCH_REQUESTED_EFFORT=${EFFORT:-default}
   DISPATCH_REQUESTED_RAW_COMMAND=0
@@ -1197,27 +1226,20 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
   case "$DISPATCH_REQUESTED_HARNESS" in
     *' '*)
       DISPATCH_REQUESTED_RAW_COMMAND=1
-      spawn_raw_command_profile "$DISPATCH_REQUESTED_HARNESS"
+      if [ "$SPAWN_RAW_PROFILE_READY" -ne 1 ] \
+         && ! spawn_raw_command_profile "$DISPATCH_REQUESTED_HARNESS"; then
+        DISPATCH_DIVERGENCE_REASON=adapter_unavailable
+        echo "error: raw launch command did not identify a worker command" >&2
+        exit 1
+      fi
       DISPATCH_REQUESTED_HARNESS=$SPAWN_RAW_HARNESS
       if [ -z "$DISPATCH_REQUESTED_HARNESS" ]; then
         DISPATCH_DIVERGENCE_REASON=adapter_unavailable
         echo "error: raw launch command did not identify a worker command" >&2
         exit 1
       fi
-      if [ "$MODEL_SET" -eq 0 ]; then
-        DISPATCH_REQUESTED_MODEL_EXACT=0
-        if [ -n "$SPAWN_RAW_MODEL" ] && dispatch_model_id_ok "$SPAWN_RAW_MODEL"; then
-          DISPATCH_REQUESTED_MODEL=$SPAWN_RAW_MODEL
-          DISPATCH_REQUESTED_MODEL_EXACT=1
-        fi
-      fi
-      if [ "$EFFORT_SET" -eq 0 ]; then
-        DISPATCH_REQUESTED_EFFORT_EXACT=0
-        if [ -n "$SPAWN_RAW_EFFORT" ]; then
-          DISPATCH_REQUESTED_EFFORT=$SPAWN_RAW_EFFORT
-          DISPATCH_REQUESTED_EFFORT_EXACT=1
-        fi
-      fi
+      DISPATCH_REQUESTED_MODEL=${SPAWN_RAW_MODEL:-default}
+      DISPATCH_REQUESTED_EFFORT=${SPAWN_RAW_EFFORT:-default}
       ;;
   esac
   case "$DISPATCH_STATUS" in
@@ -1319,7 +1341,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
     echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules; typed dispatch status '$DISPATCH_STATUS' did not select a profile" >&2
     exit 1
   fi
-fi
+}
 
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_CONTROL_LOCK="$STATE/.control-$ID.lock"
@@ -1507,6 +1529,18 @@ else
   ARG3=${POS[2]:-}
 fi
 [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
+if [ "$DISPATCH_PROFILE_ACTIVE" = 1 ]; then
+  case "$ARG3" in
+    *' '*)
+      spawn_raw_command_profile "$ARG3" || {
+        dispatch_arm_local_refusal_receipt adapter_unavailable
+        echo "error: raw launch command did not identify a worker command" >&2
+        exit 1
+      }
+      SPAWN_RAW_PROFILE_READY=1
+      ;;
+  esac
+fi
 
 shell_quote() {
   printf "'"
@@ -1624,130 +1658,6 @@ launch_template() {
     *) return 1 ;;
   esac
 }
-
-case "$ARG3" in
-  *' '*)  # raw launch command (unverified-adapter escape hatch)
-    LAUNCH=$ARG3
-    spawn_raw_command_profile "$LAUNCH"
-    HARNESS=$SPAWN_RAW_HARNESS
-    [ -n "$HARNESS" ] || {
-      DISPATCH_FAILURE_REASON=adapter_unavailable
-      echo "error: raw launch command did not identify a worker command" >&2
-      exit 1
-    }
-    ;;
-  '')
-    # No explicit harness: resolve from config. A secondmate AGENT launches on the
-    # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
-    # every other kind uses the crew harness only when no dispatch profile file is
-    # active. Resolving here on every spawn is what makes the split DURABLE - a
-    # respawn (recovery, /updatefirstmate, restart) re-resolves, so
-    # config/secondmate-harness keeps governing secondmate launches across restarts.
-    # The launch_template lookup below is the unverified-adapter guard for both
-    # kinds: a harness with no template aborts the spawn.
-    if [ "$KIND" = secondmate ]; then
-      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
-      harness_src='config/secondmate-harness (falling back to config/crew-harness)'
-    else
-      if [ -f "$CONFIG/crew-dispatch.json" ]; then
-        echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
-        exit 1
-      fi
-      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
-      harness_src='config/crew-harness'
-    fi
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
-      DISPATCH_FAILURE_REASON=adapter_unavailable
-      echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2
-      exit 1
-    }
-    ;;
-  *)
-    HARNESS=$ARG3
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
-      DISPATCH_FAILURE_REASON=adapter_unavailable
-      echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2
-      exit 1
-    }
-    ;;
-esac
-
-# muse is verified as a CREWMATE/SCOUT adapter only. A secondmate is a firstmate
-# instance, so it needs a primary supervision protocol; muse has none, and its
-# Claude-compatible hook dialect explicitly rejects the model-reawakening and
-# asyncRewake handlers that firstmate's primary turn-end supervision is built on
-# (muse 0.1.0-R708.1). Refusing here keeps that gap loud instead of standing up a
-# secondmate whose supervision cycle could never be armed.
-if [ "$KIND" = secondmate ] && [ "$HARNESS" = muse ]; then
-  echo "error: muse is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
-  exit 1
-fi
-
-case "$HARNESS" in
-  pi|pi-signed)
-    DISPATCH_FAILURE_REASON=adapter_unavailable
-    PI_BIN=$(resolve_pi_executable "$HARNESS") || {
-      echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
-      exit 1
-    }
-    PI_TUI_MODE=
-    if pi_supports_tui_mode "$PI_BIN"; then
-      PI_TUI_MODE=' --tui-mode regular'
-    fi
-    LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
-    LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH"
-    DISPATCH_FAILURE_REASON=launch_refusal
-    ;;
-  cursor)
-    # `cursor` is not the CLI name, and the legacy alias `agent` is far too
-    # generic to launch on its name alone, so resolution runs through the
-    # verified owner rather than a bare command lookup. Refusing here keeps a
-    # missing install a loud spawn refusal instead of a pane that dies with a
-    # command-not-found the supervisor would read as a wedged worker.
-    DISPATCH_FAILURE_REASON=adapter_unavailable
-    CURSOR_BIN=$(fm_cursor_resolve_binary) || exit 1
-    DISPATCH_FAILURE_REASON=privacy_veto
-    CURSOR_TRUST_CONTRACT=$(fm_cursor_trust_contract "$CURSOR_BIN") || exit 1
-    if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
-      if CURSOR_MODELS=$(fm_cursor_list_models "$CURSOR_BIN"); then
-        if ! printf '%s\n' "$CURSOR_MODELS" | fm_cursor_catalog_has_model "$MODEL"; then
-          DISPATCH_FAILURE_REASON=catalog_rejection
-          echo "error: Cursor model '$MODEL' is not available from '$CURSOR_BIN --list-models'; choose an id listed by that command or omit --model" >&2
-          exit 1
-        fi
-      fi
-    fi
-    DISPATCH_FAILURE_REASON=launch_refusal
-    ;;
-esac
-
-# config/secondmate-harness may carry optional model/effort tokens alongside the
-# harness ("<harness> [<model>] [<effort>]"). They apply only when this is a
-# --secondmate spawn and no explicit per-spawn harness/raw launch was supplied, so
-# the harness itself came from the secondmate config fallback chain. Resolving
-# here on every spawn makes the pin durable across respawns. Precedence: explicit
-# --model/--effort flags still win over the file's tokens.
-if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
-  if [ "$MODEL_SET" -eq 0 ]; then
-    SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
-    if [ -n "$SM_MODEL" ]; then
-      if ! dispatch_model_id_ok "$SM_MODEL"; then
-        echo "error: config/secondmate-harness model token is not a valid model identifier" >&2
-        exit 1
-      fi
-      MODEL=$SM_MODEL
-    fi
-  fi
-  if [ "$EFFORT_SET" -eq 0 ]; then
-    SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
-    if [ -n "$SM_EFFORT" ]; then
-      case "$SM_EFFORT" in
-        low|medium|high|xhigh|max) EFFORT=$SM_EFFORT ;;
-        *) echo "warning: config/secondmate-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max; ignoring" >&2 ;;
-      esac
-    fi
-  fi
-fi
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
@@ -1893,43 +1803,153 @@ effort_flag_for_harness() {
   esac
 }
 
-case "$LAUNCH" in
-  *__MUSEBIN__*)
-    DISPATCH_FAILURE_REASON=adapter_unavailable
-    MUSE_BIN=$(resolve_muse_binary) || exit 1
-    MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
-    MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
-    MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
-    if ! muse_credential_present "$MUSE_AUTH_FILE"; then
-      DISPATCH_FAILURE_REASON=credential_failure
-      if [ -n "${META_API_KEY:-}" ]; then
-        echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
-      else
-        echo "error: muse has no worker-reachable credential; META_API_KEY cannot be proven present in the $BACKEND worker environment and '$MUSE_AUTH_FILE' is absent or empty. Store the fleet credential with 'muse login' or 'muse auth set --api-key-stdin'." >&2
+resolve_spawn_launch_profile() {
+  local harness_src
+  case "$ARG3" in
+    *' '*)
+      LAUNCH=$ARG3
+      if [ "$SPAWN_RAW_PROFILE_READY" -ne 1 ]; then
+        spawn_raw_command_profile "$LAUNCH" || {
+          DISPATCH_FAILURE_REASON=adapter_unavailable
+          echo "error: raw launch command did not identify a worker command" >&2
+          exit 1
+        }
+        SPAWN_RAW_PROFILE_READY=1
       fi
-      exit 1
-    fi
-    LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
-    LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
-    LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
-    DISPATCH_FAILURE_REASON=launch_refusal
-    ;;
-esac
-
-case "$LAUNCH" in
-  *__KIMIBIN__*)
-    DISPATCH_FAILURE_REASON=adapter_unavailable
-    KIMI_BIN=$(resolve_kimi_binary) || exit 1
-    LAUNCH=${LAUNCH//__KIMIBIN__/$(shell_quote "$KIMI_BIN")}
-    if [ "$KIND" != secondmate ]; then
-      "$FM_ROOT/bin/fm-kimi-turnend-hook.sh" install || {
-        echo "error: refusing Kimi spawn because the global turn-end hook could not be installed safely" >&2
+      HARNESS=$SPAWN_RAW_HARNESS
+      MODEL=${SPAWN_RAW_MODEL:-default}
+      EFFORT=${SPAWN_RAW_EFFORT:-default}
+      ;;
+    '')
+      if [ "$KIND" = secondmate ]; then
+        HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
+        harness_src='config/secondmate-harness (falling back to config/crew-harness)'
+      else
+        if [ -f "$CONFIG/crew-dispatch.json" ]; then
+          echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
+          exit 1
+        fi
+        HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
+        harness_src='config/crew-harness'
+      fi
+      LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
+        DISPATCH_FAILURE_REASON=adapter_unavailable
+        echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2
         exit 1
       }
+      ;;
+    *)
+      HARNESS=$ARG3
+      LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
+        DISPATCH_FAILURE_REASON=adapter_unavailable
+        echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2
+        exit 1
+      }
+      ;;
+  esac
+
+  if [ "$KIND" = secondmate ] && [ "$HARNESS" = muse ]; then
+    echo "error: muse is a verified crewmate/scout adapter only and cannot run a secondmate; it has no primary supervision protocol. Select a harness verified for secondmates." >&2
+    exit 1
+  fi
+
+  case "$HARNESS" in
+    pi|pi-signed)
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      PI_BIN=$(resolve_pi_executable "$HARNESS") || {
+        echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
+        exit 1
+      }
+      PI_TUI_MODE=
+      if pi_supports_tui_mode "$PI_BIN"; then
+        PI_TUI_MODE=' --tui-mode regular'
+      fi
+      LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
+      LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH"
+      DISPATCH_FAILURE_REASON=launch_refusal
+      ;;
+    cursor)
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      CURSOR_BIN=$(fm_cursor_resolve_binary) || exit 1
+      DISPATCH_FAILURE_REASON=privacy_veto
+      CURSOR_TRUST_CONTRACT=$(fm_cursor_trust_contract "$CURSOR_BIN") || exit 1
+      if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
+        if CURSOR_MODELS=$(fm_cursor_list_models "$CURSOR_BIN"); then
+          if ! printf '%s\n' "$CURSOR_MODELS" | fm_cursor_catalog_has_model "$MODEL"; then
+            DISPATCH_FAILURE_REASON=catalog_rejection
+            echo "error: Cursor model '$MODEL' is not available from '$CURSOR_BIN --list-models'; choose an id listed by that command or omit --model" >&2
+            exit 1
+          fi
+        fi
+      fi
+      DISPATCH_FAILURE_REASON=launch_refusal
+      ;;
+  esac
+
+  if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
+    if [ "$MODEL_SET" -eq 0 ]; then
+      SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
+      if [ -n "$SM_MODEL" ]; then
+        if ! dispatch_model_id_ok "$SM_MODEL"; then
+          echo "error: config/secondmate-harness model token is not a valid model identifier" >&2
+          exit 1
+        fi
+        MODEL=$SM_MODEL
+      fi
     fi
-    DISPATCH_FAILURE_REASON=launch_refusal
-    ;;
-esac
+    if [ "$EFFORT_SET" -eq 0 ]; then
+      SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
+      if [ -n "$SM_EFFORT" ]; then
+        case "$SM_EFFORT" in
+          low|medium|high|xhigh|max) EFFORT=$SM_EFFORT ;;
+          *) echo "warning: config/secondmate-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max; ignoring" >&2 ;;
+        esac
+      fi
+    fi
+  fi
+
+  case "$LAUNCH" in
+    *__MUSEBIN__*)
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      MUSE_BIN=$(resolve_muse_binary) || exit 1
+      MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
+      MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
+      MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
+      if ! muse_credential_present "$MUSE_AUTH_FILE"; then
+        DISPATCH_FAILURE_REASON=credential_failure
+        if [ -n "${META_API_KEY:-}" ]; then
+          echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
+        else
+          echo "error: muse has no worker-reachable credential; META_API_KEY cannot be proven present in the $BACKEND worker environment and '$MUSE_AUTH_FILE' is absent or empty. Store the fleet credential with 'muse login' or 'muse auth set --api-key-stdin'." >&2
+        fi
+        exit 1
+      fi
+      LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
+      LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
+      LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
+      DISPATCH_FAILURE_REASON=launch_refusal
+      ;;
+  esac
+
+  case "$LAUNCH" in
+    *__KIMIBIN__*)
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      KIMI_BIN=$(resolve_kimi_binary) || exit 1
+      LAUNCH=${LAUNCH//__KIMIBIN__/$(shell_quote "$KIMI_BIN")}
+      if [ "$KIND" != secondmate ]; then
+        "$FM_ROOT/bin/fm-kimi-turnend-hook.sh" install || {
+          echo "error: refusing Kimi spawn because the global turn-end hook could not be installed safely" >&2
+          exit 1
+        }
+      fi
+      DISPATCH_FAILURE_REASON=launch_refusal
+      ;;
+  esac
+}
+
+if [ "$DISPATCH_PROFILE_ACTIVE" != 1 ]; then
+  resolve_spawn_launch_profile
+fi
 
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
@@ -2805,6 +2825,11 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+fi
+if [ "$DISPATCH_PROFILE_ACTIVE" = 1 ]; then
+  typed_dispatch_resolve_and_apply
+  [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
+  resolve_spawn_launch_profile
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't

@@ -276,6 +276,17 @@ last_dispatch_receipt() {
   tail -n 1 "$1/state/dispatch-receipts.jsonl"
 }
 
+hold_test_lock() {
+  local lock=$1
+  mkdir -p "$lock"
+  printf '%s\n' "$$" > "$lock/pid"
+  printf '0\n' > "$lock/bash-sublevel"
+}
+
+release_test_lock() {
+  rm -rf "$1"
+}
+
 make_seeded_secondmate_home() {
   local home=$1 id=$2
   mkdir -p "$home/bin" "$home/data"
@@ -567,7 +578,7 @@ test_fake_typesafe_response_fixture_is_valid_clear_json() {
 }
 
 test_typed_dispatch_validates_project_before_resolver_call() {
-  local rec id out status curl_log
+  local rec id out status curl_log lock
   id=profile-typed-missing-project-z11a
   rec=$(make_spawn_case profile-typed-missing-project claude "$id")
   read_case_record "$rec"
@@ -600,7 +611,59 @@ test_typed_dispatch_validates_project_before_resolver_call() {
   assert_absent "$curl_log" "typed dispatch called the resolver before validating the project worktree"
   assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
     "non-git project refusal should happen before arming the typed-dispatch receipt"
-  pass "typed dispatch validates project worktree preconditions before invoking the resolver"
+
+  id=profile-typed-invalid-backend-z11a2
+  rec=$(make_spawn_case profile-typed-invalid-backend claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --backend bogus)
+  status=$?
+  expect_code 1 "$status" "typed dispatch with an invalid backend should fail before resolver call"
+  assert_contains "$out" "unknown backend 'bogus'" \
+    "invalid-backend refusal did not come from backend validation"
+  assert_absent "$curl_log" "typed dispatch called the resolver before backend validation"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "invalid-backend refusal should happen before arming the typed-dispatch receipt"
+
+  id=profile-typed-task-set-lock-z11a3
+  rec=$(make_spawn_case profile-typed-task-set-lock claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  lock="$HOME_DIR/state/.task-set.lock"
+  hold_test_lock "$lock"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  release_test_lock "$lock"
+  expect_code 1 "$status" "typed dispatch with a held task-set lock should fail before resolver call"
+  assert_contains "$out" "task set is locked" \
+    "task-set-lock refusal did not come from spawn locking"
+  assert_absent "$curl_log" "typed dispatch called the resolver before acquiring the task-set lock"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "task-set-lock refusal should happen before arming the typed-dispatch receipt"
+
+  id=profile-typed-spawn-lock-z11a4
+  rec=$(make_spawn_case profile-typed-spawn-lock claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  lock="$HOME_DIR/state/.spawn-$id.lock"
+  hold_test_lock "$lock"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  release_test_lock "$lock"
+  expect_code 1 "$status" "typed dispatch with a held spawn lock should fail before resolver call"
+  assert_contains "$out" "another spawn is already creating task $id" \
+    "spawn-lock refusal did not come from per-task spawn locking"
+  assert_absent "$curl_log" "typed dispatch called the resolver before acquiring the spawn lock"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "spawn-lock refusal should happen before arming the typed-dispatch receipt"
+  pass "typed dispatch validates local launch preflight before invoking the resolver"
 }
 
 test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
@@ -635,7 +698,7 @@ test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
 }
 
 test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
-  local rec id out status receipt
+  local rec id out status receipt curl_log
   id=profile-typed-divergence-z11c
   rec=$(make_spawn_case profile-typed-divergence claude "$id")
   read_case_record "$rec"
@@ -700,17 +763,20 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
   rec=$(make_spawn_case profile-typed-raw-wrapper-veto claude "$id")
   read_case_record "$rec"
   enable_cursor_dispatch_profile "$HOME_DIR"
-  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" FM_FAKE_DISPATCH_CHOICE=rule_1 \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-      "$id" "$PROJ_DIR" "env GROK_HOME=$CASE_DIR/grok-home grok --model grok-4 --reasoning-effort medium" \
+      "$id" "$PROJ_DIR" "env GROK_HOME='path with spaces' grok --model grok-4 --reasoning-effort medium" \
       --dispatch-override-reason supported_manual_override)
   status=$?
-  expect_code 1 "$status" "a wrapped raw command for an ineligible candidate must not launch"
-  assert_contains "$out" "profile is ineligible" "wrapped raw-command ineligible refusal did not explain the veto"
+  expect_code 1 "$status" "a quoted wrapper raw command must not hide an ineligible worker"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "quoted-wrapper raw-command refusal did not name the launch profile problem"
+  assert_absent "$curl_log" "quoted-wrapper raw command called the resolver before local rejection"
   receipt=$(last_dispatch_receipt "$HOME_DIR")
-  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
-    || fail "wrapped raw-command ineligible receipt lost the quota veto"
-  [ ! -s "$LAUNCH_LOG" ] || fail "wrapped raw-command ineligible candidate reached the worker launch command"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "quoted-wrapper raw-command receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "quoted-wrapper raw command reached the worker launch command"
 
   id=profile-typed-raw-no-worker-z11c5
   rec=$(make_spawn_case profile-typed-raw-no-worker claude "$id")
@@ -759,6 +825,25 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
   [ "$(jq -r .launched.harness <<<"$receipt")" = codex ] || fail "override receipt lost actual launch"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = supported_manual_override ] \
     || fail "supported override receipt lost its reason"
+
+  id=profile-typed-raw-override-z11c7
+  rec=$(make_spawn_case profile-typed-raw-override claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "codex --model gpt-5 --effort high" \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 0 "$status" "a supported raw override should launch with parsed axes"
+  assert_contains "$out" "spawned $id harness=codex" "raw override did not report parsed harness"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "raw override receipt lost typed selection"
+  [ "$(jq -r .launched.harness <<<"$receipt")" = codex ] || fail "raw override receipt lost parsed harness"
+  [ "$(jq -r .launched.model <<<"$receipt")" = gpt-5 ] || fail "raw override receipt lost parsed model"
+  [ "$(jq -r .launched.effort <<<"$receipt")" = high ] || fail "raw override receipt lost parsed effort"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = supported_manual_override ] \
+    || fail "raw supported override receipt lost its reason"
   pass "clear divergence is explained and an ineligible candidate cannot be silently launched"
 }
 
