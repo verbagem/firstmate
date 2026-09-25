@@ -1061,6 +1061,61 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = captain_override ] \
     || fail "approved escalation receipt lost captain override reason"
 
+  id=profile-typed-pi-signed-missing-z11f3
+  rec=$(make_spawn_case profile-typed-pi-signed-missing claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  rm -f "$FAKEBIN_DIR/pi-signed"
+  out=$(PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness pi-signed \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "missing pi-signed after an accepted override should refuse before launch"
+  assert_contains "$out" "pi-signed executable not found on PATH" \
+    "missing pi-signed override refusal did not name the adapter"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "missing pi-signed receipt lost selected profile"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "missing pi-signed receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "missing pi-signed receipt kept the earlier override reason"
+  [ ! -s "$LAUNCH_LOG" ] || fail "missing pi-signed override reached the worker launch command"
+
+  id=profile-typed-template-missing-z11f4
+  rec=$(make_spawn_case profile-typed-template-missing claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness not-a-real-harness \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "unknown template adapter after an accepted override should refuse before launch"
+  assert_contains "$out" "unknown harness 'not-a-real-harness'" \
+    "unknown template adapter refusal did not name the harness"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "template-adapter receipt lost selected profile"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "template-adapter receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "template-adapter receipt kept the earlier override reason"
+  [ ! -s "$LAUNCH_LOG" ] || fail "template-adapter refusal reached the worker launch command"
+
+  id=profile-typed-raw-adapter-refusal-z11f5
+  rec=$(make_spawn_case profile-typed-raw-adapter-refusal claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "bash -lc 'cursor-agent --model cursor-grok-4.6-medium'" \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "unidentified raw adapter should refuse before launch"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "raw adapter refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "raw adapter refusal receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "raw adapter refusal receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "raw adapter refusal reached the worker launch command"
+
   id=profile-typed-catalog-z11g
   rec=$(make_spawn_case profile-typed-catalog claude "$id")
   read_case_record "$rec"

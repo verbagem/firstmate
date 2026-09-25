@@ -725,7 +725,7 @@ DISPATCH_RESULT='{}'
 DISPATCH_PROJECT=
 DISPATCH_LAUNCHED=0
 DISPATCH_DIVERGENCE_REASON=
-DISPATCH_FAILURE_REASON=launch_refusal
+DISPATCH_FAILURE_REASON=
 DISPATCH_PROFILE_ACTIVE=0
 SPAWN_RAW_PROFILE_READY=0
 
@@ -758,8 +758,12 @@ dispatch_receipt_emit() {
     [ -f "$receipt_path" ] && [ ! -L "$receipt_path" ] || return 1
   fi
   reason=$DISPATCH_DIVERGENCE_REASON
-  if [ "$DISPATCH_LAUNCHED" = 0 ] && { [ -z "$reason" ] || [ "$reason" = none ]; }; then
-    reason=$DISPATCH_FAILURE_REASON
+  if [ "$DISPATCH_LAUNCHED" = 0 ]; then
+    if [ -n "$DISPATCH_FAILURE_REASON" ]; then
+      reason=$DISPATCH_FAILURE_REASON
+    elif [ -z "$reason" ] || [ "$reason" = none ]; then
+      reason=launch_refusal
+    fi
   fi
   [ -n "$reason" ] || reason=none
   if [ "$DISPATCH_LAUNCHED" = 1 ]; then
@@ -2077,6 +2081,8 @@ resolve_spawn_launch_profile() {
       DISPATCH_FAILURE_REASON=launch_refusal
       ;;
   esac
+
+  [ -n "$DISPATCH_FAILURE_REASON" ] || DISPATCH_FAILURE_REASON=launch_refusal
 }
 
 if [ "$DISPATCH_PROFILE_ACTIVE" != 1 ]; then
