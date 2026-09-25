@@ -150,6 +150,35 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/timeout" "$fakebin/cursor-agent"
+  cat > "$fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+set -u
+out=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cat >/dev/null
+cat > "$out" <<JSON
+{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"${FM_FAKE_DISPATCH_CHOICE:-default}","confidence":${FM_FAKE_DISPATCH_CONFIDENCE:-0.97},"probabilities":{"rule_1":${FM_FAKE_DISPATCH_RULE_PROBABILITY:-0.97},"default":${FM_FAKE_DISPATCH_DEFAULT_PROBABILITY:-0.03}}}},"usage":{"input_tokens":321,"output_tokens":42}}
+JSON
+printf '%s' "${FM_FAKE_DISPATCH_HTTP:-200}"
+SH
+  cat > "$fakebin/quota-axi" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ "${1:-}" = --json ] || exit 2
+cat <<'JSON'
+{"generatedAt":"2030-01-01T00:00:00Z","schemaVersion":5,"providers":[
+{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":75,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.5}}]}},
+{"provider":"cursor","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":90,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.8}}]}},
+{"provider":"grok","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"},"selection":{"spendPriority":-2}}]}}
+]}
+JSON
+SH
+  chmod +x "$fakebin/curl" "$fakebin/quota-axi"
   make_spawn_pi_probe "$fakebin" pi
   make_spawn_pi_probe "$fakebin" pi-signed
   printf '%s\n' "$fakebin"
@@ -180,6 +209,27 @@ enable_dispatch_profile() {
   local home=$1
   printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"grok","model":"grok-4","effort":"high"}}],"default":{"harness":"codex","model":"gpt-5","effort":"medium"}}' \
     > "$home/config/crew-dispatch.json"
+}
+
+enable_cursor_dispatch_profile() {
+  local home=$1 approval=${2:-}
+  jq -n --arg approval "$approval" '{
+    rules:[{
+      when:"Well-specified implementation work.",
+      use:[
+        {harness:"grok",model:"grok-4",effort:"medium"},
+        {harness:"cursor",model:"cursor-grok-4.6-medium"}
+      ]
+    }],
+    default:{harness:"cursor",model:"cursor-grok-4.6-medium"}
+  }
+  | if $approval == "" then . else .rules[0].approval = $approval end' \
+    > "$home/config/crew-dispatch.json"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$home/.env"
+}
+
+last_dispatch_receipt() {
+  tail -n 1 "$1/state/dispatch-receipts.jsonl"
 }
 
 make_seeded_secondmate_home() {
@@ -427,7 +477,165 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
     "spawn did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "ship refusal should happen before meta is written"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = off ] || fail "absent-key receipt did not record resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = absent_key ] || fail "absent-key receipt did not explain fallback"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "refused absent-key launch receipt claims a worker launched"
   pass "active crew-dispatch profile requires an explicit harness for ship spawns"
+}
+
+test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
+  local rec id out status launch receipt
+  id=profile-typed-cursor-z11b
+  rec=$(make_spawn_case profile-typed-cursor claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+
+  out=$(FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "clear typed Cursor selection should launch without repeated profile flags"
+  assert_contains "$out" "spawned $id harness=cursor" "clear typed selection did not reach Cursor"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--model 'cursor-grok-4.6-medium'" "typed Cursor model did not reach the worker command"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = clear ] || fail "clear receipt lost resolver status"
+  [ "$(jq -r .resolver.model <<<"$receipt")" = jev-1.13.0 ] || fail "clear receipt lost resolver model"
+  [ "$(jq -r .resolver.tokens.input_tokens <<<"$receipt")" = 321 ] || fail "clear receipt lost input token count"
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "clear receipt lost selected harness"
+  [ "$(jq -r .selected.effort <<<"$receipt")" = default ] || fail "clear receipt did not normalize omitted selected effort"
+  [ "$(jq -r .launched.harness <<<"$receipt")" = cursor ] || fail "clear receipt lost launched harness"
+  [ "$(jq -r .launched.model <<<"$receipt")" = cursor-grok-4.6-medium ] || fail "clear receipt lost launched model"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = none ] || fail "matching typed launch recorded a divergence"
+  [ "$(jq -r '.quota_facts[] | select(.harness == "cursor") | .remaining_percent' <<<"$receipt")" = 90 ] \
+    || fail "clear receipt lost current Cursor quota facts"
+  assert_not_contains "$receipt" "brief for $id" "receipt persisted private brief text"
+  assert_not_contains "$receipt" "test-key" "receipt persisted the resolver key"
+  pass "clear typed Cursor selection reaches the launch command with a matching private receipt"
+}
+
+test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
+  local rec id out status receipt
+  id=profile-typed-divergence-z11c
+  rec=$(make_spawn_case profile-typed-divergence claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 1 "$status" "unexplained clear-result divergence should refuse launch"
+  assert_contains "$out" "pass --dispatch-override-reason" "clear divergence refusal did not name the required reason"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = manual_override_missing_reason ] \
+    || fail "unexplained divergence receipt lost its reason"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "divergence refusal claims a launch"
+
+  rm -f "$HOME_DIR/state/dispatch-receipts.jsonl"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness grok --model grok-4 --effort medium \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a quota-ineligible candidate must not launch through manual override"
+  assert_contains "$out" "profile is ineligible" "ineligible-candidate refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "ineligible-candidate receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "ineligible candidate reached the worker launch command"
+
+  id=profile-typed-override-z11c2
+  rec=$(make_spawn_case profile-typed-override claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 0 "$status" "a supported explained override to a profile without contradictory evidence should launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "override receipt lost typed selection"
+  [ "$(jq -r .launched.harness <<<"$receipt")" = codex ] || fail "override receipt lost actual launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = supported_manual_override ] \
+    || fail "supported override receipt lost its reason"
+  pass "clear divergence is explained and an ineligible candidate cannot be silently launched"
+}
+
+test_nonclear_and_launch_refusal_receipts_are_complete() {
+  local rec id out status receipt
+  id=profile-typed-nonclear-z11d
+  rec=$(make_spawn_case profile-typed-nonclear claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+
+  out=$(FM_FAKE_DISPATCH_CONFIDENCE=0.4 \
+    FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium)
+  status=$?
+  expect_code 0 "$status" "ambiguous typed result should allow the existing manual intake"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = ambiguous ] || fail "ambiguous receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "ambiguous fallback was unexplained"
+
+  id=profile-typed-error-z11e
+  rec=$(make_spawn_case profile-typed-error claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_HTTP=500 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness codex --model gpt-5 --effort medium)
+  status=$?
+  expect_code 0 "$status" "typed resolver error should allow explicit existing intake"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = error ] || fail "error receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "error fallback was unexplained"
+
+  id=profile-typed-escalate-z11f
+  rec=$(make_spawn_case profile-typed-escalate claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR" captain
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium)
+  status=$?
+  expect_code 1 "$status" "captain-approval typed result should refuse an unapproved launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = escalate ] || fail "escalate receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = captain_approval_required ] \
+    || fail "approval refusal receipt lost its reason"
+
+  id=profile-typed-approved-z11f2
+  rec=$(make_spawn_case profile-typed-approved claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR" captain
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" --harness cursor --model cursor-grok-4.6-medium \
+      --dispatch-override-reason captain_override)
+  status=$?
+  expect_code 0 "$status" "an explicitly approved typed result should launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = captain_override ] \
+    || fail "approved escalation receipt lost captain override reason"
+
+  id=profile-typed-catalog-z11g
+  rec=$(make_spawn_case profile-typed-catalog claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_TEST_CURSOR_MODELS=$'Available models\nother-model - Other' \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "clear selection rejected by the live catalog should refuse launch"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = clear ] || fail "catalog-refusal receipt lost clear selection"
+  [ "$(jq -r .selected.harness <<<"$receipt")" = cursor ] || fail "catalog-refusal receipt lost selected profile"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "catalog-refusal receipt claims a worker launch"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = catalog_rejection ] \
+    || fail "catalog-refusal receipt lost deterministic reason"
+  pass "ambiguous, error, escalation, and launch-refusal paths each record one explained receipt"
 }
 
 test_active_dispatch_profile_requires_explicit_harness_for_scout() {
@@ -993,6 +1201,9 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
 test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_clear_typed_cursor_selection_reaches_launch_and_receipt
+test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused
+test_nonclear_and_launch_refusal_receipts_are_complete
 test_active_dispatch_profile_requires_explicit_harness_for_scout
 test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness

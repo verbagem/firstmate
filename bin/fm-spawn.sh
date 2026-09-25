@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--dispatch-override-reason <reason>] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--dispatch-override-reason <reason>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -40,6 +40,14 @@
 #   axes chosen by firstmate at intake. They are only threaded into harnesses whose
 #   installed CLIs were verified to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed.
+#   When typed dispatch is active, fm-spawn invokes fm-dispatch-resolve.sh once
+#   for every fresh crewmate/scout intake and privately records selected versus
+#   launched profile evidence in state/dispatch-receipts.jsonl. A clear result
+#   supplies an omitted profile directly. An explicit divergent profile requires
+#   --dispatch-override-reason with one of adapter_unavailable,
+#   catalog_rejection, credential_failure, privacy_veto, quota_runway_veto,
+#   captain_override, or supported_manual_override. A resolver candidate already
+#   proven ineligible may not be manually launched.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -101,9 +109,10 @@
 #   per-home task-set lock and refuses rather than waits when forced teardown owns
 #   it; relaunch is exempt because the existing task's control lock covers it.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
-#   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
-#   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
+#   config/crew-dispatch.json is absent. When that file exists, a clear typed result
+#   supplies the profile; every non-clear result still requires an explicit harness
+#   so firstmate cannot silently skip dispatch profile consultation. A --secondmate
+#   spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|muse)
@@ -155,8 +164,9 @@
 #   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
-#   If config/crew-dispatch.json exists, shared --harness is required for crewmate
-#   and scout batches. The loop lives here, in bash, so callers never hand-write a
+#   Each child resolves typed dispatch independently when configured; a shared
+#   explicit profile remains available and is checked for explained divergence.
+#   The loop lives here, in bash, so callers never hand-write a
 #   multi-task shell loop (the tool shell is zsh, which does not word-split unquoted
 #   $vars and silently breaks ad-hoc `for ... in $pairs` loops).
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
@@ -286,6 +296,7 @@ KIND_SET=0
 HARNESS_ARG=
 MODEL=
 EFFORT=
+DISPATCH_OVERRIDE_REASON=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -293,6 +304,7 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+DISPATCH_OVERRIDE_REASON_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -309,6 +321,7 @@ for a in "$@"; do
       harness) HARNESS_ARG=$a; HARNESS_SET=1 ;;
       model) MODEL=$a; MODEL_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
+      dispatch-override-reason) DISPATCH_OVERRIDE_REASON=$a; DISPATCH_OVERRIDE_REASON_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
@@ -328,6 +341,8 @@ for a in "$@"; do
     --model=*) MODEL=${a#--model=}; MODEL_SET=1 ;;
     --effort) want_value=effort ;;
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
+    --dispatch-override-reason) want_value=dispatch-override-reason ;;
+    --dispatch-override-reason=*) DISPATCH_OVERRIDE_REASON=${a#--dispatch-override-reason=}; DISPATCH_OVERRIDE_REASON_SET=1 ;;
     --backend) want_value=backend ;;
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
     --mode) want_value=mode ;;
@@ -343,6 +358,7 @@ done
 [ "$HARNESS_SET" -eq 0 ] || [ -n "$HARNESS_ARG" ] || { echo "error: --harness requires a non-empty value" >&2; exit 1; }
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
+[ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || [ -n "$DISPATCH_OVERRIDE_REASON" ] || { echo "error: --dispatch-override-reason requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 [ "$MODE_SET" -eq 0 ] || [ -n "$MODE" ] || { echo "error: --mode requires a non-empty value" >&2; exit 1; }
 [ "$YOLO_SET" -eq 0 ] || [ -n "$YOLO" ] || { echo "error: --yolo requires a non-empty value" >&2; exit 1; }
@@ -364,6 +380,10 @@ case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
+case "$DISPATCH_OVERRIDE_REASON" in
+  ''|adapter_unavailable|catalog_rejection|credential_failure|privacy_veto|quota_runway_veto|captain_override|supported_manual_override) ;;
+  *) echo "error: --dispatch-override-reason must be one of adapter_unavailable, catalog_rejection, credential_failure, privacy_veto, quota_runway_veto, captain_override, supported_manual_override" >&2; exit 1 ;;
+esac
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
 # so every axis this block resolves for a fresh spawn instead comes from that
@@ -374,6 +394,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
+  [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || { echo "error: --dispatch-override-reason applies only to fresh crewmate or scout spawns" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -691,6 +712,13 @@ RELAUNCH_REPLACEMENT_STATE=
 RELAUNCH_REPLACEMENT_WT=
 CONFIG_INHERIT_LOCK=
 CONFIG_INHERIT_LOCK_HELD=0
+DISPATCH_RECEIPT_ACTIVE=0
+DISPATCH_RECEIPT_EMITTED=0
+DISPATCH_RESULT='{}'
+DISPATCH_PROJECT=
+DISPATCH_LAUNCHED=0
+DISPATCH_DIVERGENCE_REASON=
+DISPATCH_FAILURE_REASON=launch_refusal
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -709,8 +737,98 @@ parse_orca_worktree_result() {
   fi
 }
 
+dispatch_receipt_emit() {
+  local receipt_path lock_path tmp reason launched_json
+  [ "$DISPATCH_RECEIPT_ACTIVE" = 1 ] || return 0
+  [ "$DISPATCH_RECEIPT_EMITTED" = 0 ] || return 0
+  DISPATCH_RECEIPT_EMITTED=1
+  mkdir -p "$STATE" || return 1
+  receipt_path="$STATE/dispatch-receipts.jsonl"
+  lock_path="$STATE/.dispatch-receipts.lock"
+  if [ -e "$receipt_path" ] || [ -L "$receipt_path" ]; then
+    [ -f "$receipt_path" ] && [ ! -L "$receipt_path" ] || return 1
+  fi
+  reason=$DISPATCH_DIVERGENCE_REASON
+  if [ "$DISPATCH_LAUNCHED" = 0 ] && { [ -z "$reason" ] || [ "$reason" = none ]; }; then
+    reason=$DISPATCH_FAILURE_REASON
+  fi
+  [ -n "$reason" ] || reason=none
+  if [ "$DISPATCH_LAUNCHED" = 1 ]; then
+    launched_json=$(jq -cn \
+      --arg harness "${HARNESS:-}" \
+      --arg model "${MODEL:-default}" \
+      --arg effort "${EFFORT:-default}" \
+      '{harness:$harness,model:$model,effort:$effort}')
+  else
+    launched_json=null
+  fi
+  umask 077
+  tmp=$(mktemp "$STATE/.dispatch-receipt.XXXXXX") || return 1
+  if ! jq -cn \
+      --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg task "$ID" \
+      --arg kind "$KIND" \
+      --arg project "$DISPATCH_PROJECT" \
+      --arg reason "$reason" \
+      --argjson resolver "$DISPATCH_RESULT" \
+      --argjson launched "$launched_json" '
+        {
+          at:$at,
+          task:$task,
+          kind:$kind,
+          project:$project,
+          resolver:{
+            status:($resolver.status // "error"),
+            model:($resolver.model // null),
+            tokens:($resolver.tokens // null),
+            confidence:($resolver.confidence // null)
+          },
+          selected:(
+            if $resolver.chosen.profile then {
+              harness:$resolver.chosen.profile.harness,
+              model:($resolver.chosen.profile.model // "default"),
+              effort:($resolver.chosen.profile.effort // "default")
+            } else null end
+          ),
+          launched:$launched,
+          quota_facts:[
+            ($resolver.candidates[]? | {
+              harness:(.profile.harness // null),
+              model:(.profile.model // null),
+              effort:(.profile.effort // null),
+              provider:(.provider // null),
+              eligible:(.eligible // false),
+              scope:(.scope // null),
+              remaining_percent:(.pct // null),
+              spend_priority:(.spendPriority // null),
+              runway:(.runway // null),
+              bounds:(.bounds // []),
+              reason:(.reason // null)
+            })
+          ],
+          divergence_reason:$reason
+        }' > "$tmp"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  if ! fm_lock_acquire_wait "$lock_path"; then
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  local append_status=0
+  cat "$tmp" >> "$receipt_path" || append_status=1
+  chmod 600 "$receipt_path" 2>/dev/null || true
+  fm_lock_release "$lock_path" || append_status=1
+  rm -f "$tmp" 2>/dev/null || true
+  return "$append_status"
+}
+
 spawn_abort_cleanup() {
   local status=$?
+  if ! dispatch_receipt_emit; then
+    echo "error: could not record typed-dispatch receipt for ${ID:-unknown}" >&2
+    status=1
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] \
      && [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] \
      && [ -n "$SPAWN_META_TMP" ] \
@@ -880,15 +998,12 @@ if [ "$RELAUNCH" -eq 1 ] && [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart"
   exit 1
 fi
 if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in */*) false ;; *) true ;; esac; then
-  if [ "$KIND" != secondmate ] && [ -z "$HARNESS_ARG" ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
-    echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
-    exit 1
-  fi
   rc=0
   shared_args=()
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ -z "$DISPATCH_OVERRIDE_REASON" ] || shared_args+=(--dispatch-override-reason "$DISPATCH_OVERRIDE_REASON")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -923,6 +1038,139 @@ fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; 
 if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)"
 fi
+
+# Typed dispatch is resolved in the launch authority itself so a clear profile
+# cannot be dropped between intake and the worker command. The resolver remains
+# the sole owner of rule matching and quota selection; this block only realizes
+# its result, enforces explained divergence, and arms one private receipt.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-dispatch.json" ]; then
+  DISPATCH_BRIEF="$DATA/$ID/brief.md"
+  [ -f "$DISPATCH_BRIEF" ] || {
+    echo "error: no brief at $DISPATCH_BRIEF" >&2
+    exit 1
+  }
+  DISPATCH_PROJECT=$(basename -- "${POS[1]:-unknown}")
+  DISPATCH_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-dispatch-resolve.XXXXXX") || {
+    echo "error: could not create typed-dispatch error capture" >&2
+    exit 1
+  }
+  if DISPATCH_RESULT=$(
+    FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/fm-dispatch-resolve.sh" "$DISPATCH_BRIEF" \
+      --project "$DISPATCH_PROJECT" --json 2>"$DISPATCH_ERR"
+  ); then
+    DISPATCH_RESOLVE_RC=0
+  else
+    DISPATCH_RESOLVE_RC=$?
+  fi
+  [ ! -s "$DISPATCH_ERR" ] || cat "$DISPATCH_ERR" >&2
+  rm -f "$DISPATCH_ERR"
+  if ! jq -e 'type == "object" and (.status | type == "string")' \
+      <<<"$DISPATCH_RESULT" >/dev/null 2>&1; then
+    DISPATCH_RESULT='{"status":"error","reason":"resolver returned invalid structured output","model":null,"tokens":null,"confidence":null,"candidates":[]}'
+    DISPATCH_RESOLVE_RC=2
+  fi
+  DISPATCH_RECEIPT_ACTIVE=1
+  if [ "$DISPATCH_RESOLVE_RC" -ne 0 ]; then
+    DISPATCH_DIVERGENCE_REASON=resolver_configuration_error
+    echo "error: typed dispatch resolution failed configuration validation" >&2
+    exit "$DISPATCH_RESOLVE_RC"
+  fi
+
+  DISPATCH_STATUS=$(jq -r '.status' <<<"$DISPATCH_RESULT")
+  DISPATCH_REQUESTED_HARNESS=${HARNESS_ARG:-${POS[2]:-}}
+  DISPATCH_REQUESTED_MODEL=${MODEL:-default}
+  DISPATCH_REQUESTED_EFFORT=${EFFORT:-default}
+  case "$DISPATCH_STATUS" in
+    clear)
+      DISPATCH_SELECTED_HARNESS=$(jq -r '.chosen.profile.harness // empty' <<<"$DISPATCH_RESULT")
+      DISPATCH_SELECTED_MODEL=$(jq -r '.chosen.profile.model // "default"' <<<"$DISPATCH_RESULT")
+      DISPATCH_SELECTED_EFFORT=$(jq -r '.chosen.profile.effort // "default"' <<<"$DISPATCH_RESULT")
+      [ -n "$DISPATCH_SELECTED_HARNESS" ] || {
+        DISPATCH_DIVERGENCE_REASON=resolver_configuration_error
+        echo "error: typed dispatch returned clear without a selected harness" >&2
+        exit 1
+      }
+      if [ -z "$DISPATCH_REQUESTED_HARNESS" ]; then
+        HARNESS_ARG=$DISPATCH_SELECTED_HARNESS
+        HARNESS_SET=1
+        if [ "$MODEL_SET" -eq 0 ] && [ "$DISPATCH_SELECTED_MODEL" != default ]; then
+          MODEL=$DISPATCH_SELECTED_MODEL
+          MODEL_SET=1
+        fi
+        if [ "$EFFORT_SET" -eq 0 ] && [ "$DISPATCH_SELECTED_EFFORT" != default ]; then
+          EFFORT=$DISPATCH_SELECTED_EFFORT
+          EFFORT_SET=1
+        fi
+        DISPATCH_DIVERGENCE_REASON=none
+      else
+        [ "$MODEL_SET" -eq 1 ] || DISPATCH_REQUESTED_MODEL=$DISPATCH_SELECTED_MODEL
+        [ "$EFFORT_SET" -eq 1 ] || DISPATCH_REQUESTED_EFFORT=$DISPATCH_SELECTED_EFFORT
+        if [ "$DISPATCH_REQUESTED_HARNESS" = "$DISPATCH_SELECTED_HARNESS" ] \
+           && [ "$DISPATCH_REQUESTED_MODEL" = "$DISPATCH_SELECTED_MODEL" ] \
+           && [ "$DISPATCH_REQUESTED_EFFORT" = "$DISPATCH_SELECTED_EFFORT" ]; then
+          [ "$MODEL_SET" -eq 1 ] || {
+            MODEL=$DISPATCH_SELECTED_MODEL
+            [ "$MODEL" = default ] || MODEL_SET=1
+          }
+          [ "$EFFORT_SET" -eq 1 ] || {
+            EFFORT=$DISPATCH_SELECTED_EFFORT
+            [ "$EFFORT" = default ] || EFFORT_SET=1
+          }
+          DISPATCH_DIVERGENCE_REASON=none
+        elif [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ]; then
+          DISPATCH_DIVERGENCE_REASON=manual_override_missing_reason
+          echo "error: explicit dispatch profile diverges from the clear typed selection; pass --dispatch-override-reason with the concrete reason" >&2
+          exit 1
+        else
+          DISPATCH_DIVERGENCE_REASON=$DISPATCH_OVERRIDE_REASON
+        fi
+      fi
+      ;;
+    off)
+      DISPATCH_DIVERGENCE_REASON=absent_key
+      ;;
+    ambiguous|escalate|error)
+      DISPATCH_DIVERGENCE_REASON=${DISPATCH_OVERRIDE_REASON:-non_clear_result}
+      if [ "$DISPATCH_STATUS" = escalate ] \
+         && jq -e '.reason == "rule requires the captain'\''s explicit approval before dispatch"' \
+           <<<"$DISPATCH_RESULT" >/dev/null \
+         && [ "$DISPATCH_OVERRIDE_REASON" != captain_override ]; then
+        DISPATCH_DIVERGENCE_REASON=captain_approval_required
+        echo "error: typed dispatch matched a captain-approval rule; pass --dispatch-override-reason captain_override only after approval" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      DISPATCH_DIVERGENCE_REASON=resolver_configuration_error
+      echo "error: typed dispatch returned unknown status '$DISPATCH_STATUS'" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ -n "$DISPATCH_REQUESTED_HARNESS" ]; then
+    if jq -e \
+      --arg harness "$DISPATCH_REQUESTED_HARNESS" \
+      --arg model "$DISPATCH_REQUESTED_MODEL" \
+      --arg effort "$DISPATCH_REQUESTED_EFFORT" '
+        any(.candidates[]?;
+          (.eligible == false)
+          and .profile.harness == $harness
+          and (.profile.model // "default") == $model
+          and (.profile.effort // "default") == $effort)
+      ' <<<"$DISPATCH_RESULT" >/dev/null; then
+      DISPATCH_DIVERGENCE_REASON=quota_runway_veto
+      echo "error: the explicit dispatch profile is ineligible in the current typed-dispatch evidence and cannot be launched" >&2
+      exit 1
+    fi
+  fi
+
+  if [ -z "$HARNESS_ARG" ] && [ -z "${POS[2]:-}" ]; then
+    echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules; typed dispatch status '$DISPATCH_STATUS' did not select a profile" >&2
+    exit 1
+  fi
+fi
+
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_CONTROL_LOCK="$STATE/.control-$ID.lock"
   control_owner=$(cat "$SPAWN_CONTROL_LOCK/pid" 2>/dev/null || true)
@@ -1255,11 +1503,19 @@ case "$ARG3" in
       HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
       harness_src='config/crew-harness'
     fi
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
+    LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2
+      exit 1
+    }
     ;;
   *)
     HARNESS=$ARG3
-    LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2; exit 1; }
+    LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2
+      exit 1
+    }
     ;;
 esac
 
@@ -1276,6 +1532,7 @@ fi
 
 case "$HARNESS" in
   pi|pi-signed)
+    DISPATCH_FAILURE_REASON=adapter_unavailable
     PI_BIN=$(resolve_pi_executable "$HARNESS") || {
       echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
       exit 1
@@ -1286,6 +1543,7 @@ case "$HARNESS" in
     fi
     LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
     LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH"
+    DISPATCH_FAILURE_REASON=launch_refusal
     ;;
   cursor)
     # `cursor` is not the CLI name, and the legacy alias `agent` is far too
@@ -1293,16 +1551,20 @@ case "$HARNESS" in
     # verified owner rather than a bare command lookup. Refusing here keeps a
     # missing install a loud spawn refusal instead of a pane that dies with a
     # command-not-found the supervisor would read as a wedged worker.
+    DISPATCH_FAILURE_REASON=adapter_unavailable
     CURSOR_BIN=$(fm_cursor_resolve_binary) || exit 1
+    DISPATCH_FAILURE_REASON=privacy_veto
     CURSOR_TRUST_CONTRACT=$(fm_cursor_trust_contract "$CURSOR_BIN") || exit 1
     if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
       if CURSOR_MODELS=$(fm_cursor_list_models "$CURSOR_BIN"); then
         if ! printf '%s\n' "$CURSOR_MODELS" | fm_cursor_catalog_has_model "$MODEL"; then
+          DISPATCH_FAILURE_REASON=catalog_rejection
           echo "error: Cursor model '$MODEL' is not available from '$CURSOR_BIN --list-models'; choose an id listed by that command or omit --model" >&2
           exit 1
         fi
       fi
     fi
+    DISPATCH_FAILURE_REASON=launch_refusal
     ;;
 esac
 
@@ -1474,11 +1736,13 @@ effort_flag_for_harness() {
 
 case "$LAUNCH" in
   *__MUSEBIN__*)
+    DISPATCH_FAILURE_REASON=adapter_unavailable
     MUSE_BIN=$(resolve_muse_binary) || exit 1
     MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
     MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
     MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
     if ! muse_credential_present "$MUSE_AUTH_FILE"; then
+      DISPATCH_FAILURE_REASON=credential_failure
       if [ -n "${META_API_KEY:-}" ]; then
         echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
       else
@@ -1489,6 +1753,7 @@ case "$LAUNCH" in
     LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
     LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
     LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
+    DISPATCH_FAILURE_REASON=launch_refusal
     ;;
 esac
 
@@ -2419,7 +2684,9 @@ case "$HARNESS" in
         ;;
       headless)
         spawn_cursor_preflight_endpoint_cleanup_arm
+        DISPATCH_FAILURE_REASON=privacy_veto
         fm_cursor_trust_workspace_headless "$CURSOR_BIN" "$WT" || exit 1
+        DISPATCH_FAILURE_REASON=launch_refusal
         spawn_cursor_preflight_endpoint_cleanup_disarm
         LAUNCH=${LAUNCH//__CURSORTRUST__/}
         ;;
@@ -2996,6 +3263,7 @@ if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
   spawn_herdr_presentation_order_lock_release
 fi
 spawn_send_key "$T" Enter
+DISPATCH_LAUNCHED=1
 if [ "$HARNESS" = kimi ]; then
   if ! kimi_wait_for_ready; then
     kimi_spawn_fail "kimi did not show a verified ready signal before brief delivery"

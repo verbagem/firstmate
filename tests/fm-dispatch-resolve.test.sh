@@ -195,6 +195,9 @@ assert_equals '' "$out" "absent key prints nothing on stdout"
 assert_contains "$err" 'dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and' "absent key explains itself on stderr"
 assert_absent "$LOG/argv" "absent key never calls curl"
 assert_absent "$LOG/quota-axi.calls" "absent key never reads quota-axi"
+run code out err "$BRIEF" --project pager --json
+assert_equals 'off' "$(jq -r .status <<<"$out")" "JSON absent-key result identifies the off path"
+assert_equals 'TYPESAFE_API_KEY absent' "$(jq -r .reason <<<"$out")" "JSON absent-key result has a privacy-safe reason"
 pass "absent key is off: one stderr line, exit 0, no network call"
 
 # --- .env key, and the environment wins over it ------------------------------
@@ -247,6 +250,12 @@ assert_equals 'A simple bug fix with a stated root cause.' "$(jq -r '.questions.
 assert_not_contains "$body" 'SECRET-WHY-TEXT' "why text never leaves the machine"
 assert_not_contains "$body" 'spendPriority' "quota never leaves the machine"
 assert_not_contains "$body" 'cursor-grok' "use profiles never leave the machine"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager --json
+assert_equals 'clear' "$(jq -r .status <<<"$out")" "JSON output preserves clear status"
+assert_equals 'cursor' "$(jq -r .chosen.profile.harness <<<"$out")" "JSON output preserves the selected harness"
+assert_equals '91' "$(jq -r '.chosen.pct' <<<"$out")" "JSON output carries the selected quota fact"
+assert_not_contains "$out" 'off-by-one in the pager' "JSON output never persists the private brief"
+assert_not_contains "$out" "$KEY" "JSON output never persists the API key"
 pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
 
 # --- rules are snapshotted and line output is injection-safe -------------------
@@ -617,7 +626,7 @@ for bad in \
 done
 assert_absent "$LOG/argv" "configuration errors never reach the network"
 cp "$BASE_RULES" "$RULES"
-for removed in --json --rules --quota; do
+for removed in --rules --quota; do
   TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" "$removed"
   expect_code 2 "$code" "removed option is rejected: $removed"
   assert_contains "$err" "unknown flag $removed" "removed option has no public path: $removed"

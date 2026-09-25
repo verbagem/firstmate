@@ -53,21 +53,43 @@ The maximum latency was one outlier; the next slowest request was 309 ms.
 The differing clear result was a synthetic small tweak that matched the simple-bug-fix rule at 0.90 and selected `cursor-grok-4.6-medium` instead of the hand-labeled `cursor-grok-4.6-high`: the tweak exemption removed from the none-option text belongs in that rule's own `when` text.
 Two default-labeled briefs became ambiguous.
 
+## Live launch realization
+
+Verified 2026-09-24 with Cursor Agent `v2026.09.23-86fc751`, TypeSafe model `jev-1.13.0`, and the installed `gpt-5.6-sol-medium` catalog entry.
+The probe used an isolated throwaway project and home, a no-write scout brief, the real TypeSafe API, the real quota snapshot, and the public spawn interface without explicit harness, model, or effort flags.
+
+```console
+$ TYPESAFE_API_KEY=<injected> FM_HOME=<isolated-home> bin/fm-spawn.sh live-cursor-e2e <isolated-project> --scout
+spawned live-cursor-e2e harness=cursor kind=scout ...
+$ jq -c '{task,resolver,selected,launched,quota_facts,divergence_reason}' <isolated-home>/state/dispatch-receipts.jsonl
+{"task":"live-cursor-e2e","resolver":{"status":"clear","model":"jev-1.13.0","tokens":{"input_tokens":417,"output_tokens":35},"confidence":0.83},"selected":{"harness":"cursor","model":"gpt-5.6-sol-medium","effort":"default"},"launched":{"harness":"cursor","model":"gpt-5.6-sol-medium","effort":"default"},"quota_facts":[{"harness":"cursor","model":"gpt-5.6-sol-medium","effort":null,"provider":"cursor","eligible":true,"scope":"all_models","remaining_percent":97,"spend_priority":3.0107,"runway":"through_reset","bounds":[{"scope":"all_models","status":"known","pct":97,"runway":"through_reset","spendPriority":3.0107}],"reason":"ok"}],"divergence_reason":"none"}
+```
+
+The real worker rendered `GPT-5.6 Sol ... Medium`, replied `READY`, and returned to its idle follow-up prompt.
+The selected and launched profiles matched, the receipt carried the current provider facts, and there was no unexplained divergence.
+The probe made no project changes and was stopped and cleaned through the guarded lifecycle commands after evidence capture.
+
 ## Offline behavior
 
 `tests/fm-dispatch-resolve.test.sh` drives the public interface with a fake `curl` that records argv, the request body, the header read from file descriptor 3, and whether the secret reached its environment, plus a fake `quota-axi` that performs the same environment check.
 It proves firstmate can invoke the resolve path without a preflight, rules are snapshotted once from the isolated home's canonical `config/crew-dispatch.json`, and dynamic output fields are flattened to one line.
 It proves the absent key (environment and `.env`) prints one stderr line, nothing on stdout, exits 0, and never invokes `curl` or `quota-axi`.
+It also proves the opt-in JSON surface reports that path as `off` without adding a dependency on either command.
 It proves absent, default-only, and empty-rules files return `no rules to match` without a model or quota request, while a broken rules-file symlink exits 2 as unreadable.
 It proves the documented starter configuration resolves its Pi default through the declared Claude provider, a `.env` key turns the tool on, and the environment wins over it.
 It proves the key is absent from child environments, never appears on `curl` argv, and arrives only as the bearer header on the descriptor.
 It proves the request uses the fixed endpoint and model, carries only the project, brief, and rule Choice with one option per rule plus the fixed neutral none option, and never carries `why`, `use`, or quota.
+It proves the JSON composition surface preserves only parsed selection and quota evidence and contains neither the brief nor key.
 It proves the clear, fixed-floor ambiguous with candidate evidence, escalate (approval with candidate evidence, unverifiable rule floor, tie, nothing rankable), known rule-floor fall-through, known and unverifiable profile-floor evidence, explicit-provider and provider-ID enforcement, explicit-provider multi-provider harness routing, partial providers, eligible unranked candidates and their clear-result note, concrete quota vetoes and profile-floor shortfalls taking precedence over uncertainty, account-wide quota veto, limiting-bound ranking, missing-curl and quota-axi failures, HTTP 429 and 500, transport failure, malformed usage, zero-mass or malformed probabilities or confidence, malformed or duplicate profile, invalid selector, removed-option rejection, and out-of-range rule ID paths behave as the contract states, with configuration errors exiting 2 before any network call.
 `tests/fm-bootstrap.test.sh` proves bootstrap ignores resolver-only fields without the typed key and validates resolver-only malformed shapes when the home `.env` activates typed resolution.
+`tests/fm-spawn-dispatch-profile.test.sh` proves every typed launch intake emits one private selected-versus-launched receipt across absent-key, clear, ambiguous, escalation, error, ineligible-candidate, and launch-refusal paths.
+It proves a clear medium-reasoning Cursor selection reaches the Cursor worker command without repeated profile flags, matching selected and launched fields are recorded with Jev model/token/confidence and current quota facts, an unexplained clear divergence is refused, and an ineligible candidate cannot be launched through the supported override flag.
 
 ```console
 $ bash tests/fm-dispatch-resolve.test.sh | tail -1
 # all fm-dispatch-resolve tests passed
+$ bash tests/fm-spawn-dispatch-profile.test.sh | tail -1
+# all fm-spawn-dispatch-profile tests passed
 ```
 
 A live run needs a key and is not part of the suite; rerun the table above by pointing the tool at a brief with the key injected for that one command.

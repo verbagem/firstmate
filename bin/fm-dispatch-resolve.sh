@@ -3,13 +3,14 @@
 # profile from a task brief with typesafe.ai's System One model (Jev), opt-in.
 #
 # Usage:
-#   fm-dispatch-resolve.sh <brief-file> [--project <name>]
+#   fm-dispatch-resolve.sh <brief-file> [--project <name>] [--json]
 #
 # Opt-in gate: TYPESAFE_API_KEY non-empty in this process environment, else a
 #   TYPESAFE_API_KEY= line in $FM_HOME/.env read with fmx_env_get, the same
 #   accessor as FMX_PAIRING_TOKEN (bin/fm-env-lib.sh). The environment wins.
 #   Absent in both: one "dispatch-resolve: off" line on stderr, nothing on
-#   stdout, exit 0, no network call, so firstmate dispatches exactly as today.
+#   stdout by default, exit 0, no network call, so firstmate dispatches exactly
+#   as today. With --json, stdout carries the machine-readable off outcome.
 #   The key lives in one shell variable and reaches curl as a header read from
 #   a file descriptor, never on argv; nothing logs or writes it.
 #
@@ -27,7 +28,7 @@
 #   docs/configuration.md "Crew dispatch profiles" owns the declared fields and
 #   "Typed dispatch resolution" owns this tool's operator contract.
 #
-# Output (stdout, TOON-style block):
+# Output (stdout, compact TOON-style block by default; one JSON object with --json):
 #   dispatch-resolve:
 #     status: clear | ambiguous | escalate | error
 #     model/latency_ms/tokens, rule (when excerpt) and confidence, probabilities
@@ -42,6 +43,10 @@
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
 #   existing unreadable rules file, malformed rules, or missing jq), which is
 #   actionable, never selected around.
+#
+#   --json is for the private fm-spawn receipt path. It contains the parsed
+#   resolver result and local quota facts, never the brief, API key, request, or
+#   raw provider response.
 #
 # Environment:
 #   TYPESAFE_API_KEY is the only resolver-specific environment setting.
@@ -76,8 +81,21 @@ TS_TIMEOUT=5
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
+OUTPUT=text
+render_simple_result() {
+  local status=$1 reason=$2 escaped
+  if [ "$OUTPUT" = json ]; then
+    escaped=${reason//$'\n'/ }
+    escaped=${escaped//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+    printf '{"status":"%s","reason":"%s","model":null,"latency_ms":null,"tokens":null,"confidence":null,"candidates":[]}\n' \
+      "$status" "$escaped"
+  else
+    printf 'dispatch-resolve:\n  status: %s\n  reason: %s\n' "$status" "$reason"
+  fi
+}
 no_rules() {
-  printf 'dispatch-resolve:\n  status: escalate\n  reason: no rules to match\n'
+  render_simple_result escalate "no rules to match"
   exit 0
 }
 usage() {
@@ -92,6 +110,7 @@ BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
+    --json) OUTPUT=json; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown flag $1" ;;
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
@@ -104,6 +123,9 @@ if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
 fi
 if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
   echo "dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
+  if [ "$OUTPUT" = json ]; then
+    render_simple_result off "TYPESAFE_API_KEY absent"
+  fi
   exit 0
 fi
 
@@ -206,7 +228,7 @@ RULE_COUNT=$(jq -r '(.rules // []) | length' "$RULES")
 emit_error() {
   local reason=$1
   echo "dispatch-resolve: error ($reason)" >&2
-  printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
+  render_simple_result error "$reason"
   exit 0
 }
 
@@ -377,6 +399,11 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
       end
     end
   end') || emit_error "resolution failed"
+
+if [ "$OUTPUT" = json ]; then
+  jq -c '.' <<<"$RESULT" || emit_error "JSON output rendering failed"
+  exit 0
+fi
 
 TEXT=$(jq -r '
   def flat: tostring | gsub("[\t\r\n]"; " ");
