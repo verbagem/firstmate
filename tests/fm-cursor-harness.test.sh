@@ -172,6 +172,7 @@ SH
   chmod +x "$probe"
   bash_bin=${BASH:-$(command -v bash)}
   (
+    # shellcheck disable=SC2016 # Positional parameters expand inside the isolated child shell.
     PATH="$minimal" FM_CURSOR_PROBE_TIMEOUT=1 FM_TEST_CURSOR_CHILD_PID="$pid_file" \
       "$bash_bin" -c '. "$1"; fm_cursor_bounded_output "$2" --help > "$3"; printf "%s\n" "$?" > "$4"' \
         _ "$ROOT/bin/fm-cursor-lib.sh" "$probe" "$out_file" "$rc_file"
