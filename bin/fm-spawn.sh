@@ -2378,6 +2378,23 @@ exclude_path() {
   mkdir -p "$(dirname "$EXCL")"
   grep -qxF "$rel" "$EXCL" 2>/dev/null || echo "$rel" >> "$EXCL"
 }
+case "$HARNESS" in
+  cursor)
+    case "${CURSOR_TRUST_CONTRACT:-}" in
+      interactive)
+        LAUNCH=${LAUNCH//__CURSORTRUST__/--trust }
+        ;;
+      headless)
+        fm_cursor_trust_workspace_headless "$CURSOR_BIN" "$WT" || exit 1
+        LAUNCH=${LAUNCH//__CURSORTRUST__/}
+        ;;
+      *)
+        echo "error: unsupported Cursor workspace-trust contract '${CURSOR_TRUST_CONTRACT:-unknown}'; refusing to launch without a verified trust path" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 if [ "$RELAUNCH" -eq 1 ]; then
   # Retire the previous incarnation's per-task harness wiring before arming the
   # new one. Without this, a harness switch would leave the old adapter's hook
@@ -2832,23 +2849,6 @@ sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_pirecapext=$(shell_quote "$FM_ROOT/.pi/extensions/fm-task-recap.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
-case "$HARNESS" in
-  cursor)
-    case "${CURSOR_TRUST_CONTRACT:-}" in
-      interactive)
-        LAUNCH=${LAUNCH//__CURSORTRUST__/--trust }
-        ;;
-      headless)
-        fm_cursor_trust_workspace_headless "$CURSOR_BIN" "$WT" || exit 1
-        LAUNCH=${LAUNCH//__CURSORTRUST__/}
-        ;;
-      *)
-        echo "error: unsupported Cursor workspace-trust contract '${CURSOR_TRUST_CONTRACT:-unknown}'; refusing to launch without a verified trust path" >&2
-        exit 1
-        ;;
-    esac
-    ;;
-esac
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}

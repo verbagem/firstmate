@@ -630,6 +630,8 @@ test_cursor_headless_trust_failure_refuses_launch() {
   assert_contains "$out" "Cursor workspace trust preflight failed" \
     "cursor trust failure did not name the failed preflight"
   [ ! -s "$LAUNCH_LOG" ] || fail "cursor trust refusal must happen before the interactive launch is typed"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "cursor trust refusal must happen before task metadata is published"
+  [ ! -e "$HOME_DIR/state/$id.cursor-session" ] || fail "cursor trust refusal must happen before cursor transcript binding is published"
   pass "cursor refuses unsafe trust states before launch"
 }
 

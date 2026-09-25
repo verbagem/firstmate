@@ -583,34 +583,75 @@ test_spawn_unverified_secondmate_harness_refused() {
   pass "B6 spawn: an unverified resolved secondmate harness is refused (guard intact)"
 }
 
+install_fake_cursor_agent() {  # <fakebin>
+  local fakebin=$1
+  cat > "$fakebin/cursor-agent" <<'SH'
+#!/usr/bin/env bash
+set -u
+case " $* " in
+  *" --help "*)
+    case "${FM_TEST_CURSOR_HELP_MODE:-headless}" in
+      headless)
+        printf '%s\n' \
+          'Usage: agent [options] [command] [prompt...]' \
+          'Start the Cursor Agent' \
+          '  --trust                      Trust the current workspace without prompting (only works with --print/headless mode)'
+        ;;
+      interactive)
+        printf '%s\n' \
+          'Usage: agent [options] [command] [prompt...]' \
+          'Start the Cursor Agent' \
+          '  --trust                      Trust the current workspace without prompting'
+        ;;
+    esac
+    exit 0
+    ;;
+  *" create-chat "*)
+    [ "${FM_TEST_CURSOR_TRUST_STATUS:-0}" -eq 0 ] || exit "${FM_TEST_CURSOR_TRUST_STATUS}"
+    if [ -n "${FM_TEST_CURSOR_TRUST_LOG:-}" ]; then
+      printf '%s\n' "$*" >> "$FM_TEST_CURSOR_TRUST_LOG"
+    fi
+    printf '%s\n' fake-chat-id
+    exit 0
+    ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/cursor-agent"
+}
+
 test_spawn_cursor_secondmate_launches_with_its_primary_contract() {
-  local w sm fakebin launchlog launch meta rc
+  local w sm sm_real fakebin launchlog trustlog launch meta rc
   w="$TMP_ROOT/spawn-cursor-secondmate"
   sm="$w/sm"
   launchlog="$w/launch.log"
+  trustlog="$w/cursor-trust.log"
   mkdir -p "$w/home/config" "$w/home/state" "$w/home/data" "$w/home/projects"
   printf 'cursor\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
+  sm_real=$(cd "$sm" && pwd -P)
   fakebin=$(make_launch_capturing_tmux "$w/tmux")
+  install_fake_cursor_agent "$fakebin"
   : > "$launchlog"
+  : > "$trustlog"
   rc=0
   PATH="$fakebin:$BASE_PATH" TMUX='' CLAUDECODE=1 \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_PANE_PATH="$sm" \
+    FM_TEST_CURSOR_TRUST_LOG="$trustlog" \
     "$ROOT/bin/fm-spawn.sh" sm "$sm" --secondmate >/dev/null 2>&1 || rc=$?
 
-  [ "$rc" -eq 0 ] || {
-    echo "skip: cursor executable not resolvable in this environment, so the launch could not be built"
-    return
-  }
+  [ "$rc" -eq 0 ] || fail "cursor secondmate launch should build against the fake Cursor CLI"
   meta="$w/home/state/sm.meta"
   [ "$(meta_field "$meta" harness)" = cursor ] || fail "a cursor secondmate must record its own harness"
   [ "$(meta_field "$meta" kind)" = secondmate ] || fail "a cursor secondmate must record kind=secondmate"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "--trust" \
-    "a cursor secondmate must launch with --trust, or none of its project hooks load and its home has no supervision at all"
+  assert_not_contains "$launch" "--trust" \
+    "a headless-only cursor secondmate contract must omit interactive --trust"
+  assert_contains "$(cat "$trustlog")" "--trust --workspace $sm_real create-chat" \
+    "a headless-only cursor secondmate contract must pretrust its own home"
   assert_contains "$launch" "--workspace" \
     "a cursor secondmate must be pinned to its own home as the workspace"
   assert_contains "$launch" "FM_SUPERVISION_MODEL=autoarm" \

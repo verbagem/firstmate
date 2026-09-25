@@ -101,6 +101,8 @@ fm_cursor_bounded_output() {  # <path> <args...>
   (
     sleep "$FM_CURSOR_PROBE_TIMEOUT"
     kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$pid" 2>/dev/null || true
   ) &
   timer=$!
   wait "$pid"

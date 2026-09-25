@@ -111,13 +111,24 @@ for harness in claude codex opencode pi pi-signed grok kimi cursor muse; do
   [ -n "$version" ] || version="unknown"
 
   target="$SESSION:$harness"
-  # cursor blocks on a workspace-trust prompt in a directory it has never seen,
-  # which would hang this probe rather than classify anything; --trust is the
-  # same flag fm-spawn passes for the same reason.
-  launch_args=""
-  [ "$harness" = cursor ] && launch_args="--trust"
-  # shellcheck disable=SC2086  # deliberate: an empty value must add no argument
-  "$REAL_TMUX" -L "$SOCKET" new-window -d -t "$SESSION:" -n "$harness" -c "$LAB/wt" -- "$bin_path" $launch_args \
+  launch_args=()
+  if [ "$harness" = cursor ]; then
+    cursor_trust_contract=$(fm_cursor_trust_contract "$bin_path") \
+      || fail "cursor ($version): could not determine the workspace-trust contract"
+    case "$cursor_trust_contract" in
+      interactive)
+        launch_args=(--trust)
+        ;;
+      headless)
+        fm_cursor_trust_workspace_headless "$bin_path" "$LAB/wt" \
+          || fail "cursor ($version): could not pretrust the liveness workspace"
+        ;;
+      *)
+        fail "cursor ($version): unsupported workspace-trust contract '$cursor_trust_contract'"
+        ;;
+    esac
+  fi
+  "$REAL_TMUX" -L "$SOCKET" new-window -d -t "$SESSION:" -n "$harness" -c "$LAB/wt" -- "$bin_path" "${launch_args[@]}" \
     || fail "$harness ($version): could not launch a window for the liveness probe"
 
   state=
