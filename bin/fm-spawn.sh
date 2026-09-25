@@ -681,6 +681,9 @@ SPAWN_META_LOCK_HELD=0
 SPAWN_META_PUBLISH_STARTED=0
 SPAWN_TASK_SET_LOCK=
 SPAWN_TASK_SET_LOCK_HELD=0
+SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
+SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -749,6 +752,14 @@ spawn_abort_cleanup() {
   if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ]; then
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
+  fi
+  if [ "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP" = 1 ]; then
+    SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+    if [ -n "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND" ] \
+       && [ -n "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET" ]; then
+      fm_backend_kill "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND" \
+        "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET" || true
+    fi
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
@@ -2228,6 +2239,28 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 
+spawn_cursor_preflight_endpoint_cleanup_arm() {
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
+  [ "$RELAUNCH" -ne 1 ] || return 0
+  case "$BACKEND" in
+    orca) return 0 ;;
+    herdr)
+      [ "${HERDR_PROJECTED:-0}" -ne 1 ] || return 0
+      ;;
+  esac
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=$BACKEND
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=$T
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=1
+}
+
+spawn_cursor_preflight_endpoint_cleanup_disarm() {
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
+}
+
 kimi_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
@@ -2385,7 +2418,9 @@ case "$HARNESS" in
         LAUNCH=${LAUNCH//__CURSORTRUST__/--trust }
         ;;
       headless)
+        spawn_cursor_preflight_endpoint_cleanup_arm
         fm_cursor_trust_workspace_headless "$CURSOR_BIN" "$WT" || exit 1
+        spawn_cursor_preflight_endpoint_cleanup_disarm
         LAUNCH=${LAUNCH//__CURSORTRUST__/}
         ;;
       *)

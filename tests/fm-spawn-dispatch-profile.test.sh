@@ -33,16 +33,60 @@ SH
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/tmux" <<'SH'
+cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+windows_dir=${FM_FAKE_TMUX_WINDOW_DIR:-}
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  list-windows)
+    if [ -n "$windows_dir" ] && [ -d "$windows_dir" ]; then
+      for f in "$windows_dir"/*; do
+        [ -f "$f" ] || continue
+        basename -- "$f"
+      done
+    fi
+    exit 0
+    ;;
+  has-session|new-session) exit 0 ;;
+  new-window)
+    if [ -n "$windows_dir" ]; then
+      name=
+      prev=
+      for a in "$@"; do
+        if [ "$prev" = "-n" ]; then
+          name=$a
+          break
+        fi
+        prev=$a
+      done
+      [ -n "$name" ] || exit 1
+      mkdir -p "$windows_dir"
+      [ ! -e "$windows_dir/$name" ] || exit 1
+      : > "$windows_dir/$name"
+      printf '@%s\n' "$name"
+    fi
+    exit 0
+    ;;
+  kill-window)
+    if [ -n "$windows_dir" ]; then
+      target=
+      prev=
+      for a in "$@"; do
+        if [ "$prev" = "-t" ]; then
+          target=$a
+          break
+        fi
+        prev=$a
+      done
+      name=${target##*:=}
+      [ -n "$name" ] && rm -f "$windows_dir/$name"
+    fi
+    exit 0
+    ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -160,6 +204,7 @@ run_spawn() {
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
     FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_PI_VERSION="${FM_TEST_PI_VERSION:-0.84.0}" \
+    FM_FAKE_TMUX_WINDOW_DIR="${FM_TEST_TMUX_WINDOW_DIR:-}" \
     FM_FAKE_CURSOR_MODELS="${FM_TEST_CURSOR_MODELS:-}" \
     FM_FAKE_CURSOR_LIST_STATUS="${FM_TEST_CURSOR_LIST_STATUS:-0}" \
     FM_FAKE_CURSOR_HELP_MODE="${FM_TEST_CURSOR_HELP_MODE:-headless}" \
@@ -617,12 +662,14 @@ test_cursor_old_interactive_trust_contract_keeps_launch_flag() {
 }
 
 test_cursor_headless_trust_failure_refuses_launch() {
-  local rec id out status
+  local rec id out status retry_out retry_status window_dir
   id=profile-cursor-trust-fails-z6c3
   rec=$(make_spawn_case profile-cursor-trust-fails cursor "$id")
   read_case_record "$rec"
+  window_dir="$CASE_DIR/tmux-windows"
 
   out=$(FM_TEST_CURSOR_TRUST_STATUS=42 FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
       --model cursor-grok-4.5-high)
   status=$?
@@ -632,6 +679,13 @@ test_cursor_headless_trust_failure_refuses_launch() {
   [ ! -s "$LAUNCH_LOG" ] || fail "cursor trust refusal must happen before the interactive launch is typed"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "cursor trust refusal must happen before task metadata is published"
   [ ! -e "$HOME_DIR/state/$id.cursor-session" ] || fail "cursor trust refusal must happen before cursor transcript binding is published"
+  [ ! -e "$window_dir/fm-$id" ] || fail "cursor trust refusal must retract the unrecorded tmux endpoint"
+  retry_out=$(FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --model cursor-grok-4.5-high)
+  retry_status=$?
+  expect_code 0 "$retry_status" "cursor trust refusal must leave the same task id retryable"$'\n'"$retry_out"
   pass "cursor refuses unsafe trust states before launch"
 }
 
