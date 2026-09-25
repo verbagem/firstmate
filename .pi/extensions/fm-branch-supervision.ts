@@ -406,7 +406,6 @@ function collectMainDialog(sessionManager: ReadonlyEntries, collection: MirrorCo
 export default function (pi: ExtensionAPI) {
   let branch: AgentSession | null = null;
   let branchBroken = "";
-  let mainStreaming = false;
   let shuttingDown = false;
   // Bumps at every session replacement so a stale chain continuation from the
   // prior generation cannot act into the new one.
@@ -595,17 +594,30 @@ export default function (pi: ExtensionAPI) {
 
   // Pure delivery: send one outcome's note to main. No store interaction, so
   // it is safe to call more than once for the same row (at-least-once).
+  //
+  // Routine delivery never sets triggerTurn true, so Pi's own AgentSession -
+  // not an extension-side mirror of it - decides queue-versus-append. Reading
+  // that live is load-bearing: this extension used to track main's busy state
+  // itself (agent_start/agent_end/agent_settled), but agent_end fires on every
+  // intermediate step of a multi-step turn (a retry, a compaction pass, a
+  // queued-message continuation), not only at the turn's true end, so the
+  // mirror could read idle while Pi's real AgentSession.isStreaming was still
+  // true. sendCustomMessage's dispatch on `{}` (no explicit triggerTurn) in
+  // that gap is `this.agent.steer(appMessage)` - a live steer into the
+  // captain's active turn, exactly the preemption this guard exists to rule
+  // out (tests/fm-pi-branch-live-e2e.test.sh proves the dispatch against the
+  // real installed SDK). `triggerTurn: false` removes the ambiguity: while
+  // streaming, Pi defers the note to `_pendingCustomMessages` and appends it
+  // once the turn actually settles; while idle, it appends immediately with no
+  // new turn. Both cases are decided by Pi's own current state at the exact
+  // moment of the call, so there is no window to get out of sync.
   function deliverOutcomeMessage(task: string, verdict: Verdict, summary: string, silent: boolean): void {
     if (verdict === "captain") {
       const message = { customType: "fm-branch-merge", content: captainOutcomeInput(task, summary), display: false };
       pi.sendMessage(message, { triggerTurn: true, deliverAs: "followUp" });
     } else {
       const message = { customType: "fm-branch-merge", content: `${MERGE_NOTE_BOAT} ${task}: ${summary}`, display: !(task === "fleet" && silent) };
-      if (mainStreaming) {
-        pi.sendMessage(message, { deliverAs: "nextTurn" });
-      } else {
-        pi.sendMessage(message, {});
-      }
+      pi.sendMessage(message, { triggerTurn: false });
     }
   }
 
@@ -651,9 +663,11 @@ export default function (pi: ExtensionAPI) {
 
   // Append-only merge into main. The store row is already durable when this
   // runs; the note is a cache of it at main's tail. Delivery modes per the
-  // design: routine+idle appends now with no turn, routine+busy appends after
-  // the captain's next prompt, captain-relevant triggers exactly one turn
-  // (queued as a follow-up while main is busy) - that follow-up turn is
+  // design: routine+idle appends now with no turn, routine+busy defers to
+  // Pi's own pending-custom-message queue and appends once the active turn
+  // settles (deliverOutcomeMessage's comment owns why triggerTurn stays
+  // false), captain-relevant triggers exactly one turn (queued as a follow-up
+  // while main is busy) - that follow-up turn is
   // itself the captain-visible outcome, so the captain-facing note is
   // delivered silently (display: false) rather than printed or rendered a
   // second time; routine notes stay rendered except an explicitly silent
@@ -1099,16 +1113,6 @@ ${context.command}
     const index = mirrorCollection.collectAnchor?.index ?? currentMainSession.getEntries().length;
     pendingMirror.push({ tag: "captain", text: prompt });
     mirrorCollection.stagedCaptain = { file, index, text: prompt };
-  });
-
-  pi.on?.("agent_start", () => {
-    mainStreaming = true;
-  });
-  pi.on?.("agent_end", () => {
-    mainStreaming = false;
-  });
-  pi.on?.("agent_settled", () => {
-    mainStreaming = false;
   });
 
   // before_agent_start stages Pi's authoritative in-flight prompt before

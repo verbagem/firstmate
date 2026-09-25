@@ -990,6 +990,36 @@ The focused extension suite also exercised the installed Pi 0.84.4 picker and ou
 Scope of the earlier evidence: the installed signed `pi` CLI (0.82.0 at verification time) is a compiled binary whose bundled SDK is not importable from Node, so the importable npm package is the only surface the guard and the typecheck can pin.
 The extension executes inside the signed CLI's own runtime, so a CLI upgrade can drift ahead of the pinned npm surface; refresh this record after every Pi upgrade by re-running the live guard, picker regression, and strict typecheck above (point `FM_PI_PACKAGE_DIR` at a matching npm install when one exists) and by watching the branch's own fallback line - every branch failure degrades to the pre-branch wake-to-main path by construction, which `tests/fm-pi-branch-extension.test.sh` holds with a broken generator and the live guard holds with the real SDK.
 
+### 2026-09-25 captain-lane guard (firstmate-user-lane-guard-5248)
+
+The guard's operative invariant and SDK-dispatch rationale are owned by `.pi/extensions/fm-branch-supervision.ts` in `deliverOutcomeMessage`.
+This verification record pins the installed-SDK behavior and the affected-integration review for that invariant.
+
+Evidence produced 2026-09-25 on macOS 25.4.0 arm64, Node v24.14.0, against the installed `@earendil-works/pi-coding-agent` 0.85.1:
+
+```sh
+bin/fm-test-run.sh tests/fm-pi-primary-types.test.sh
+FM_PI_BRANCH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-pi-branch-live-e2e.test.sh
+bin/fm-test-run.sh tests/fm-pi-branch-extension.test.sh tests/fm-branch-supervision.test.sh
+```
+
+```text
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.85.1
+ok - real Pi SDK 0.85.1 accepts the branch session construction and preserves an unpromptable wake
+ok - real Pi SDK 0.85.1 applies an explicit branch model on create and over a reopened session's recorded model
+ok - real Pi SDK 0.85.1 reports its own supported effort levels and applies an explicit branch effort over a reopened session's recorded level
+ok - real Pi SDK 0.85.1 delivers a custom message to the provider as user text carrying only content, so the captain outcome's typed envelope is what reaches the model
+ok - real Pi SDK 0.85.1 steers a no-options custom message into a live turn but never does with triggerTurn:false, proving the captain-lane guard (firstmate-user-lane-guard-5248) against the installed SDK
+```
+
+The fifth live-guard case is the load-bearing proof for the installed SDK: it starts a real `AgentSession` against a never-contacted local fake provider, waits until `isStreaming` is genuinely true, spies on `session.agent.steer` and `session.agent.followUp`, then compares the pre-fix call shape (`{}`), the fixed routine call shape (`{ triggerTurn: false }`), and the unchanged captain call shape (`{ triggerTurn: true, deliverAs: "followUp" }`).
+It also confirms the deferred routine note reaches session state after the turn settles.
+`tests/fm-pi-branch-extension.test.sh` pins the extension-side regression portably by exercising an `agent_end`-without-`agent_settled` event sequence and requiring the routine merge to use `{ triggerTurn: false }`.
+
+Scope of this fix: `.pi/extensions/fm-branch-supervision.ts` is Pi-only by construction ([docs/pi-supervision-branch.md](../pi-supervision-branch.md)) - no other verified harness (`claude`, `codex`, `opencode`, `cursor`, `grok`, `kimi`, `muse`) loads a background actor that can deliver a message into the primary session's live turn, so this class of bug cannot occur there.
+Every harness's *other* path into an active primary session - the away-mode sub-supervisor's pane injection (`bin/fm-supervise-daemon.sh`'s `inject_msg`, backend-abstracted over tmux/herdr) and the ordinary watcher wake delivery (`pi.sendUserMessage`/each harness's equivalent, always `deliverAs: "followUp"` with Pi's own streaming-behavior validation) - was reviewed for the same preemption class and already gates on a live, non-mirrored signal (a fresh pane busy/composer-empty read, or Pi's own `isStreaming` check inside `prompt()`), so neither needed a change.
+`fm-control.sh`'s `interrupt`/`exit`/`relaunch` verbs and `fm-send.sh`'s steering inbox are unaffected: they target crewmate/secondmate tasks by their `state/<id>.meta` record and structurally cannot resolve to the primary session, which carries no such record.
+
 ## Pi task recap
 
 The captain-facing task recap for a Pi ship/scout crewmate (`.pi/extensions/fm-task-recap.ts`, loaded by `bin/fm-spawn.sh` via `-e` alongside the per-task busy-state extension, ship/scout only) is Pi's own native `ctx.ui.setWidget(key, lines, { placement: "belowEditor" })` extension API - the same mechanism the captain's personal `pai-bq-statusline` extension (`~/.pi/agent/extensions/pai-bq-statusline.ts`, a separate `local-only` project, never edited by Firstmate) already uses. No terminal-overlay machinery, no typed input, no Herdr-side rendering: Pi renders the widget itself, inside its own TUI, below the editor pane.

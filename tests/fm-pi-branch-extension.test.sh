@@ -619,23 +619,27 @@ const untouched = cacheHandler({ type: "before_provider_request", payload: { mod
 if (untouched !== undefined) throw new Error("cache-key hook rewrote a provider payload with no prompt_cache_key");
 console.log(`CACHE_KEY=${rewriteA.prompt_cache_key}`);
 
-// 4. Two-stage filter, stage 2: routine while main is idle appends with no
-// turn; routine while main is busy defers to after the captain's next prompt;
-// captain-relevant appends and triggers exactly one turn. Store rows are
-// written BEFORE the merge note and marked read after it.
+// 4. Two-stage filter, stage 2: routine uses deliverOutcomeMessage's
+// no-turn path, captain-relevant appends and triggers exactly one turn, and
+// store rows are written BEFORE the merge note and marked read after it.
 const report = session.options.customTools.find((tool) => tool.name === "fm_branch_report");
 const r1 = await report.execute("call-1", { task: "task-9", verdict: "routine", summary: "worker healthy, no action needed", wake: "signal: working" }, undefined, undefined, {});
 if (r1.isError) throw new Error(`routine report failed: ${JSON.stringify(r1)}`);
 if (sentToMain.length !== 1) throw new Error("routine report did not merge exactly one note");
 if (sentToMain[0].message.customType !== "fm-branch-merge") throw new Error("merge note has the wrong custom type");
-if (sentToMain[0].options.triggerTurn) throw new Error("routine idle merge must not trigger a turn");
-if (sentToMain[0].options.deliverAs) throw new Error("routine idle merge must append immediately");
+if (sentToMain[0].options.triggerTurn !== false) throw new Error(`routine idle merge must not trigger a turn: ${JSON.stringify(sentToMain[0].options)}`);
+if (sentToMain[0].options.deliverAs) throw new Error("routine idle merge must not force a delivery mode");
+
+// Captain-lane guard regression (firstmate-user-lane-guard-5248): the
+// deliverOutcomeMessage comment owns the invariant and SDK rationale. This
+// portable case exercises the event sequence that once made the old
+// extension-side busy mirror unsafe.
 fire("agent_start", {});
+fire("agent_end", {}); // no agent_settled yet
 await report.execute("call-2", { task: "task-9", verdict: "routine", summary: "still healthy" }, undefined, undefined, {});
-if (sentToMain[1].options.deliverAs !== "nextTurn" || sentToMain[1].options.triggerTurn) {
-  throw new Error(`routine busy merge must defer to nextTurn without a turn: ${JSON.stringify(sentToMain[1].options)}`);
+if (sentToMain[1].options.triggerTurn !== false || sentToMain[1].options.deliverAs) {
+  throw new Error(`routine merge in the agent_end-without-settle gap must request triggerTurn:false, never steer-eligible options: ${JSON.stringify(sentToMain[1].options)}`);
 }
-fire("agent_end", {});
 await report.execute("call-3", { task: "task-9", verdict: "captain", summary: "PR https://example.com/pr/9 checks green, ready for review" }, undefined, undefined, {});
 if (sentToMain[2].options.triggerTurn !== true || sentToMain[2].options.deliverAs !== "followUp") {
   throw new Error(`captain merge must trigger exactly one follow-up turn: ${JSON.stringify(sentToMain[2].options)}`);
