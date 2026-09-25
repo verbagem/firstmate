@@ -83,13 +83,13 @@ def normalized_unit_number(value: Any) -> float | None:
     return number
 
 
-def normalized_token_count(value: Any) -> int | float:
+def normalized_token_count(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
     number = float(value)
-    if not math.isfinite(number) or number < 0:
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
         return 0
-    return int(number) if number.is_integer() else number
+    return int(number)
 
 
 def load_json(path: Path) -> Any:

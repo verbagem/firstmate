@@ -17,8 +17,10 @@ OUT2="$TMP_ROOT/out2"
 OUT3="$TMP_ROOT/out3"
 OUT4="$TMP_ROOT/out4"
 OUT5="$TMP_ROOT/out5"
+OUT6="$TMP_ROOT/out6"
 BAD="$TMP_ROOT/bad.json"
 MALFORMED_PROPOSALS="$TMP_ROOT/malformed-proposals.json"
+FRACTIONAL_USAGE_PROPOSALS="$TMP_ROOT/fractional-usage-proposals.json"
 FAKE_TRANSPORT="$TMP_ROOT/fake-typesafe.py"
 BASE_PATH=$PATH
 
@@ -228,7 +230,7 @@ then
   fail "false-drop rate metrics cover zero and nonzero denominators"
 fi
 
-if ! python3 - "$FIXTURES" "$MALFORMED_PROPOSALS" <<'PY'
+if ! python3 - "$FIXTURES" "$MALFORMED_PROPOSALS" "$FRACTIONAL_USAGE_PROPOSALS" <<'PY'
 import json
 import sys
 
@@ -254,6 +256,14 @@ json.dump(
         "usage": {"input_tokens": True, "output_tokens": float("nan")},
     },
     open(sys.argv[2], "w"),
+)
+json.dump(
+    {
+        "model": "fractional-usage-fixture",
+        "answers": answers,
+        "usage": {"input_tokens": 12.5, "output_tokens": -1},
+    },
+    open(sys.argv[3], "w"),
 )
 PY
 then
@@ -298,6 +308,23 @@ if "Estimated TypeSafe cost USD: `0.0`" not in report:
 PY
 then
   fail "malformed proposal numbers are normalized through public output"
+fi
+
+PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network6.log" env -u TYPESAFE_API_KEY \
+  "$TOOL" --fixtures "$FIXTURES" --proposal-file "$FRACTIONAL_USAGE_PROPOSALS" --out-dir "$OUT6" > "$TMP_ROOT/run6.out"
+[ ! -e "$TMP_ROOT/network6.log" ] || fail "fractional usage proposal-file path did not call network"
+if ! python3 - "$OUT6/report.md" <<'PY'
+import sys
+from pathlib import Path
+
+report = Path(sys.argv[1]).read_text()
+if "Input tokens: `0`" not in report or "Output tokens: `0`" not in report:
+    raise SystemExit("fractional or negative usage token counts reached report")
+if "Estimated TypeSafe cost USD: `0.0`" not in report:
+    raise SystemExit("fractional or negative usage changed estimated cost")
+PY
+then
+  fail "fractional usage counts are normalized through public output"
 fi
 
 PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network2.log" env -u TYPESAFE_API_KEY \
