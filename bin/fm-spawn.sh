@@ -1940,21 +1940,28 @@ effort_flag_for_harness() {
 }
 
 resolve_spawn_launch_profile() {
-  local harness_src
+  local harness_src word
   case "$ARG3" in
     *' '*)
       LAUNCH=$ARG3
-      if [ "$SPAWN_RAW_PROFILE_READY" -ne 1 ]; then
-        spawn_raw_command_profile "$LAUNCH" || {
-          DISPATCH_FAILURE_REASON=adapter_unavailable
-          echo "error: raw launch command did not identify a worker command" >&2
-          exit 1
-        }
-        SPAWN_RAW_PROFILE_READY=1
+      if [ "$DISPATCH_PROFILE_ACTIVE" = 1 ]; then
+        if [ "$SPAWN_RAW_PROFILE_READY" -ne 1 ]; then
+          spawn_raw_command_profile "$LAUNCH" || {
+            DISPATCH_FAILURE_REASON=adapter_unavailable
+            echo "error: raw launch command did not identify a worker command" >&2
+            exit 1
+          }
+          SPAWN_RAW_PROFILE_READY=1
+        fi
+        HARNESS=$SPAWN_RAW_HARNESS
+        MODEL=${SPAWN_RAW_MODEL:-default}
+        EFFORT=${SPAWN_RAW_EFFORT:-default}
+      else
+        HARNESS=
+        for word in $LAUNCH; do
+          case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
+        done
       fi
-      HARNESS=$SPAWN_RAW_HARNESS
-      MODEL=${SPAWN_RAW_MODEL:-default}
-      EFFORT=${SPAWN_RAW_EFFORT:-default}
       ;;
     '')
       if [ "$KIND" = secondmate ]; then

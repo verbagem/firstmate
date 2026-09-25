@@ -1229,6 +1229,37 @@ test_active_dispatch_profile_allows_positional_harness() {
   pass "active crew-dispatch profile allows the legacy positional harness form"
 }
 
+test_no_profile_preserves_raw_launch_escape_hatch() {
+  local rec id out status launch
+  id=profile-raw-no-dispatch-z14b
+  rec=$(make_spawn_case profile-raw-no-dispatch claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "FOO=bar custom-agent --flag" --model gpt-5 --effort high)
+  status=$?
+  expect_code 0 "$status" "non-typed raw launch with a leading assignment should launch"
+  assert_contains "$out" "spawned $id harness=custom-agent" \
+    "non-typed raw launch did not preserve the legacy harness label"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent gpt-5 high
+  launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" = "FOO=bar custom-agent --flag" ] || fail "non-typed raw launch command changed"$'\n'"actual: $launch"
+
+  id=profile-raw-wrapper-no-dispatch-z14c
+  rec=$(make_spawn_case profile-raw-wrapper-no-dispatch claude "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "FOO=bar bash -lc 'custom-agent --flag'" --model gpt-5 --effort high)
+  status=$?
+  expect_code 0 "$status" "non-typed raw wrapper launch should launch literally"
+  assert_contains "$out" "spawned $id harness=bash" \
+    "non-typed raw wrapper did not preserve the legacy wrapper harness label"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" bash gpt-5 high
+  launch=$(cat "$LAUNCH_LOG")
+  [ "$launch" = "FOO=bar bash -lc 'custom-agent --flag'" ] || fail "non-typed raw wrapper command changed"$'\n'"actual: $launch"
+  pass "non-typed raw launch commands keep the legacy literal escape hatch"
+}
+
 test_active_dispatch_profile_allows_raw_launch_command() {
   local rec id out status launch receipt
   id=profile-raw-z15
@@ -1244,6 +1275,22 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(cat "$LAUNCH_LOG")
   [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+
+  id=profile-raw-assignment-z15a
+  rec=$(make_spawn_case profile-raw-assignment claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "FOO=bar custom-agent --flag")
+  status=$?
+  expect_code 1 "$status" "typed raw launch with a leading assignment should still fail closed"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "typed raw assignment refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "typed raw assignment receipt lost adapter_unavailable"
+  assert_absent "$HOME_DIR/state/$id.meta" "typed raw assignment wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "typed raw assignment reached the worker launch command"
 
   id=profile-raw-shell-wrapper-z15b
   rec=$(make_spawn_case profile-raw-shell-wrapper claude "$id")
@@ -1767,6 +1814,7 @@ test_kimi_adapter_refusals_record_adapter_unavailable
 test_active_dispatch_profile_requires_explicit_harness_for_scout
 test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness
+test_no_profile_preserves_raw_launch_escape_hatch
 test_active_dispatch_profile_allows_raw_launch_command
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
