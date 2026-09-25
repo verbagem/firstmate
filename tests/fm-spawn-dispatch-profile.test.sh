@@ -161,6 +161,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 cat >/dev/null
+[ -z "${FM_FAKE_DISPATCH_CURL_LOG:-}" ] || printf '%s\n' called >> "$FM_FAKE_DISPATCH_CURL_LOG"
 if [ -n "${FM_FAKE_DISPATCH_BODY:-}" ]; then
   printf '%s\n' "$FM_FAKE_DISPATCH_BODY" > "$out"
 else
@@ -299,6 +300,7 @@ run_spawn() {
     FM_FAKE_CURSOR_HELP_MODE="${FM_TEST_CURSOR_HELP_MODE:-headless}" \
     FM_FAKE_CURSOR_TRUST_STATUS="${FM_TEST_CURSOR_TRUST_STATUS:-0}" \
     FM_FAKE_CURSOR_TRUST_LOG="${FM_TEST_CURSOR_TRUST_LOG:-}" \
+    FM_FAKE_DISPATCH_CURL_LOG="${FM_TEST_DISPATCH_CURL_LOG:-}" \
     HOME="${FM_TEST_HOME:-${HOME:-}}" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -503,6 +505,24 @@ test_unresolvable_relative_overrides_fail_loudly() {
   pass "unresolvable relative spawn overrides fail with named diagnostics"
 }
 
+test_explicit_model_identifier_rejects_control_characters() {
+  local rec id out status bad_model
+  id=profile-explicit-model-control-z1e
+  rec=$(make_spawn_case profile-explicit-model-control claude "$id")
+  read_case_record "$rec"
+  bad_model=$'good\nbackend=orca'
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --model "$bad_model")
+  status=$?
+  expect_code 1 "$status" "explicit model identifiers with control characters should fail"
+  assert_contains "$out" "--model is not a valid model identifier" \
+    "invalid explicit model did not fail at the model boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "invalid explicit model must not reach metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "invalid explicit model reached the worker launch command"
+  pass "explicit model identifiers reject control characters before metadata"
+}
+
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   local rec id out status
   id=profile-required-ship-z11
@@ -521,6 +541,26 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = absent_key ] || fail "absent-key receipt did not explain fallback"
   [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "refused absent-key launch receipt claims a worker launched"
   pass "active crew-dispatch profile requires an explicit harness for ship spawns"
+}
+
+test_typed_dispatch_validates_project_before_resolver_call() {
+  local rec id out status curl_log
+  id=profile-typed-missing-project-z11a
+  rec=$(make_spawn_case profile-typed-missing-project claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id")
+  status=$?
+  expect_code 1 "$status" "typed dispatch with a missing project should fail before resolver call"
+  assert_contains "$out" "project directory required before typed dispatch" \
+    "missing-project refusal did not happen at the typed-dispatch project boundary"
+  assert_absent "$curl_log" "typed dispatch called the resolver before validating the project"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "missing-project refusal should happen before arming the typed-dispatch receipt"
+  pass "typed dispatch validates the project path before invoking the resolver"
 }
 
 test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
@@ -615,6 +655,38 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
     || fail "raw-command ineligible receipt lost the quota veto"
   [ ! -s "$LAUNCH_LOG" ] || fail "raw-command ineligible candidate reached the worker launch command"
+
+  id=profile-typed-raw-wrapper-veto-z11c4
+  rec=$(make_spawn_case profile-typed-raw-wrapper-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "env GROK_HOME=$CASE_DIR/grok-home grok --model grok-4 --reasoning-effort medium" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a wrapped raw command for an ineligible candidate must not launch"
+  assert_contains "$out" "profile is ineligible" "wrapped raw-command ineligible refusal did not explain the veto"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = quota_runway_veto ] \
+    || fail "wrapped raw-command ineligible receipt lost the quota veto"
+  [ ! -s "$LAUNCH_LOG" ] || fail "wrapped raw-command ineligible candidate reached the worker launch command"
+
+  id=profile-typed-raw-no-worker-z11c5
+  rec=$(make_spawn_case profile-typed-raw-no-worker claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "env GROK_HOME=$CASE_DIR/grok-home" \
+    --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a raw command with no identifiable worker must refuse before launch"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "unidentified raw-command refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "unidentified raw-command receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "unidentified raw command reached the worker launch command"
 
   id=profile-typed-override-z11c2
   rec=$(make_spawn_case profile-typed-override claude "$id")
@@ -1347,7 +1419,9 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
+test_explicit_model_identifier_rejects_control_characters
 test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_typed_dispatch_validates_project_before_resolver_call
 test_clear_typed_cursor_selection_reaches_launch_and_receipt
 test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused
 test_nonclear_and_launch_refusal_receipts_are_complete

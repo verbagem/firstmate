@@ -830,17 +830,44 @@ dispatch_model_id_ok() {
   [[ $model =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]
 }
 
+if [ "$MODEL_SET" -eq 1 ] && ! dispatch_model_id_ok "$MODEL"; then
+  echo "error: --model is not a valid model identifier" >&2
+  exit 1
+fi
+
 spawn_raw_command_profile() {
-  local raw=$1 word want=
+  local raw=$1 word want= env_wrapper=0 skip_next=0
   SPAWN_RAW_HARNESS=
   SPAWN_RAW_MODEL=
   SPAWN_RAW_EFFORT=
   for word in $raw; do
     if [ -z "$SPAWN_RAW_HARNESS" ]; then
+      if [ "$skip_next" -eq 1 ]; then
+        skip_next=0
+        continue
+      fi
       case "$word" in
         [A-Za-z_]*=*) continue ;;
-        *) SPAWN_RAW_HARNESS=$(basename "$word"); continue ;;
       esac
+      case "$word" in
+        command|exec|nohup) continue ;;
+        env) env_wrapper=1; continue ;;
+      esac
+      if [ "$env_wrapper" -eq 1 ]; then
+        case "$word" in
+          --) continue ;;
+          -i|-0|--ignore-environment|--null) continue ;;
+          -S|--split-string|--split-string=*) return 0 ;;
+          -u|--unset|-C|--chdir) skip_next=1; continue ;;
+          -u*|--unset=*|--chdir=*) continue ;;
+          -*) continue ;;
+        esac
+      fi
+      case "$word" in
+        -*) continue ;;
+      esac
+      SPAWN_RAW_HARNESS=$(basename "$word")
+      continue
     fi
     if [ -n "$want" ]; then
       case "$word" in
@@ -1030,6 +1057,14 @@ spawn_herdr_presentation_order_lock_release() {
   fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
 }
 
+resolve_project_dir_arg() {
+  local path=$1
+  case "$path" in
+    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
+    *) printf '%s\n' "$path" ;;
+  esac
+}
+
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
 # positional as one and spawn each by re-execing this script in single-task mode. We use
 # the FM_ROOT path (not $0) so it works whatever cwd or relative path invoked us, and reuse
@@ -1094,7 +1129,17 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
     echo "error: no brief at $DISPATCH_BRIEF" >&2
     exit 1
   }
-  DISPATCH_PROJECT=$(basename -- "${POS[1]:-unknown}")
+  DISPATCH_PROJECT_ARG=${POS[1]:-}
+  [ -n "$DISPATCH_PROJECT_ARG" ] || {
+    echo "error: project directory required before typed dispatch" >&2
+    exit 1
+  }
+  DISPATCH_PROJECT_PATH=$(resolve_project_dir_arg "$DISPATCH_PROJECT_ARG")
+  if ! DISPATCH_PROJECT_ABS=$(CDPATH='' cd -- "$DISPATCH_PROJECT_PATH" 2>/dev/null && pwd); then
+    echo "error: project directory cannot be resolved before typed dispatch: $DISPATCH_PROJECT_ARG" >&2
+    exit 1
+  fi
+  DISPATCH_PROJECT=$(basename -- "$DISPATCH_PROJECT_ABS")
   DISPATCH_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-dispatch-resolve.XXXXXX") || {
     echo "error: could not create typed-dispatch error capture" >&2
     exit 1
@@ -1134,6 +1179,11 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
       DISPATCH_REQUESTED_RAW_COMMAND=1
       spawn_raw_command_profile "$DISPATCH_REQUESTED_HARNESS"
       DISPATCH_REQUESTED_HARNESS=$SPAWN_RAW_HARNESS
+      if [ -z "$DISPATCH_REQUESTED_HARNESS" ]; then
+        DISPATCH_DIVERGENCE_REASON=adapter_unavailable
+        echo "error: raw launch command did not identify a worker command" >&2
+        exit 1
+      fi
       if [ "$MODEL_SET" -eq 0 ]; then
         DISPATCH_REQUESTED_MODEL_EXACT=0
         if [ -n "$SPAWN_RAW_MODEL" ] && dispatch_model_id_ok "$SPAWN_RAW_MODEL"; then
@@ -1560,6 +1610,11 @@ case "$ARG3" in
     LAUNCH=$ARG3
     spawn_raw_command_profile "$LAUNCH"
     HARNESS=$SPAWN_RAW_HARNESS
+    [ -n "$HARNESS" ] || {
+      DISPATCH_FAILURE_REASON=adapter_unavailable
+      echo "error: raw launch command did not identify a worker command" >&2
+      exit 1
+    }
     ;;
   '')
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
@@ -1655,7 +1710,13 @@ esac
 if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
   if [ "$MODEL_SET" -eq 0 ]; then
     SM_MODEL=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model)
-    [ -z "$SM_MODEL" ] || MODEL=$SM_MODEL
+    if [ -n "$SM_MODEL" ]; then
+      if ! dispatch_model_id_ok "$SM_MODEL"; then
+        echo "error: config/secondmate-harness model token is not a valid model identifier" >&2
+        exit 1
+      fi
+      MODEL=$SM_MODEL
+    fi
   fi
   if [ "$EFFORT_SET" -eq 0 ]; then
     SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
@@ -1858,14 +1919,6 @@ resolved_existing_dir() {
   local path=$1
   [ -d "$path" ] || { echo "error: firstmate home does not exist or is not a directory: $path" >&2; return 1; }
   cd "$path" && pwd -P
-}
-
-resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
 }
 
 path_is_ancestor_of() {
