@@ -15,6 +15,7 @@ FAKEBIN=$(fm_fakebin "$TMP_ROOT")
 OUT1="$TMP_ROOT/out1"
 OUT2="$TMP_ROOT/out2"
 OUT3="$TMP_ROOT/out3"
+OUT4="$TMP_ROOT/out4"
 BAD="$TMP_ROOT/bad.json"
 FAKE_TRANSPORT="$TMP_ROOT/fake-typesafe.py"
 BASE_PATH=$PATH
@@ -79,7 +80,26 @@ PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network.log" env -u TYPESAFE_A
 grep -Fq "Status: \`pass\`" "$OUT1/report.md" || fail "report passes despite model trying to drop protected rows"
 [ ! -e "$TMP_ROOT/network.log" ] || fail "fake network command was not invoked"
 
-python3 - "$FIXTURES" "$OUT1/ledger.jsonl" <<'PY'
+if ! python3 - "$OUT1/report.md" <<'PY'
+import sys
+from pathlib import Path
+
+report = Path(sys.argv[1]).read_text()
+if "False drop rate denominator: protected segment rows; zero protected rows reports `0`." not in report:
+    raise SystemExit("false-drop denominator is not documented")
+expected_header = "| Strategy | Answerable | Unanswerable | Missing constraints | Missing evidence | Retention ratio | False drop rate | False drops |"
+if expected_header not in report:
+    raise SystemExit("false-drop rate column missing")
+jev_line = next(line for line in report.splitlines() if line.startswith("| jev |"))
+cells = [cell.strip() for cell in jev_line.strip("|").split("|")]
+if cells[-2:] != ["0", "0"]:
+    raise SystemExit(f"expected zero false-drop rate and count, got {cells[-2:]}")
+PY
+then
+  fail "report includes zero false-drop rate and denominator"
+fi
+
+if ! python3 - "$FIXTURES" "$OUT1/ledger.jsonl" <<'PY'
 import json
 import sys
 
@@ -105,17 +125,123 @@ if truncated["final_action"] != "truncate":
 if truncated["retained"].get("original_segment_id") != "c025-s2" or "original_sha256" not in truncated["retained"]:
     raise SystemExit("truncation provenance missing")
 PY
+then
+  fail "ledger preserves protected context and provenance"
+fi
+
+if ! python3 - "$TOOL" "$TMP_ROOT/nonzero-metric-report" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("fm_jev_context_replay", sys.argv[1])
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load evaluator module")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+transcripts = [
+    {
+        "id": "case-metric",
+        "questions": [{"id": "q-metric", "required_segment_ids": ["p1"]}],
+    }
+]
+rows = [
+    {
+        "strategy": "jev",
+        "segment_id": "p1",
+        "segment_type": "captain_instruction",
+        "protected": True,
+        "final_action": "drop",
+        "source_chars": 10,
+        "retained_chars": 0,
+    },
+    {
+        "strategy": "jev",
+        "segment_id": "p2",
+        "segment_type": "evidence_tool_output",
+        "protected": True,
+        "final_action": "keep",
+        "source_chars": 10,
+        "retained_chars": 10,
+    },
+    {
+        "strategy": "jev",
+        "segment_id": "n1",
+        "segment_type": "noise",
+        "protected": False,
+        "final_action": "drop",
+        "source_chars": 10,
+        "retained_chars": 0,
+    },
+]
+metric = module.answerability_metrics("jev", rows, transcripts)
+if metric["false_drop_rate"] != 0.5:
+    raise SystemExit(f"expected nonzero false-drop rate, got {metric['false_drop_rate']}")
+if metric["false_drop_count"] != 1 or metric["false_drops"] != ["p1"]:
+    raise SystemExit("false-drop compatibility fields changed")
+
+zero_rows = [
+    {
+        "strategy": "jev",
+        "segment_id": "n1",
+        "segment_type": "noise",
+        "protected": False,
+        "final_action": "drop",
+        "source_chars": 10,
+        "retained_chars": 0,
+    }
+]
+zero = module.answerability_metrics(
+    "jev",
+    zero_rows,
+    [{"id": "case-zero", "questions": [{"id": "q-zero", "required_segment_ids": ["n1"]}]}],
+)
+if zero["false_drop_rate"] != 0:
+    raise SystemExit(f"expected zero-denominator false-drop rate of 0, got {zero['false_drop_rate']}")
+
+baseline = dict(zero, strategy="baseline")
+report_dir = Path(sys.argv[2])
+module.write_outputs(
+    report_dir,
+    [],
+    {
+        "status": "fail",
+        "fixture_count": 1,
+        "proposal_source": "synthetic-metric-contract",
+        "proposal_model": "none",
+        "latency_ms": 0,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+        "estimated_cost_usd": 0,
+        "metrics": {"baseline": baseline, "jev": metric},
+        "failures": ["jev: protected segment dropped"],
+    },
+)
+rendered = (report_dir / "report.md").read_text()
+expected_line = "| jev | 0 | 1 | 1 | 0 | 0.333333 | 0.5 | 1 |"
+if expected_line not in rendered:
+    raise SystemExit("report did not render nonzero false-drop rate and count")
+PY
+then
+  fail "false-drop rate metrics cover zero and nonzero denominators"
+fi
 
 PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network2.log" env -u TYPESAFE_API_KEY \
   "$TOOL" --fixtures "$FIXTURES" --out-dir "$OUT2" > "$TMP_ROOT/run2.out"
 [ ! -e "$TMP_ROOT/network2.log" ] || fail "absent-key fallback did not call network"
 grep -Fq "Status: \`pass\`" "$OUT2/report.md" || fail "absent-key fallback remains safe"
 
+PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network4.log" env -u TYPESAFE_API_KEY \
+  "$TOOL" --fixtures "$FIXTURES" --out-dir "$OUT4" > "$TMP_ROOT/run4.out"
+[ ! -e "$TMP_ROOT/network4.log" ] || fail "repeat absent-key fallback did not call network"
+cmp "$OUT2/ledger.jsonl" "$OUT4/ledger.jsonl" >/dev/null || fail "no-proposal ledger is reproducible"
+cmp "$OUT2/report.md" "$OUT4/report.md" >/dev/null || fail "no-proposal report is reproducible"
+
 PATH="$FAKEBIN:$BASE_PATH" NETWORK_LOG="$TMP_ROOT/network3.log" env -u TYPESAFE_API_KEY \
   "$TOOL" --fixtures "$FIXTURES" --transport "$FAKE_TRANSPORT" --out-dir "$OUT3" > "$TMP_ROOT/run3.out"
 cmp "$OUT1/ledger.jsonl" "$OUT3/ledger.jsonl" >/dev/null || fail "ledger is reproducible"
 
-python3 - "$FIXTURES" "$BAD" <<'PY'
+if ! python3 - "$FIXTURES" "$BAD" <<'PY'
 import json
 import sys
 
@@ -124,6 +250,9 @@ data["transcripts"] = data["transcripts"][:30]
 data["transcripts"][0]["questions"][0]["required_segment_ids"].append("missing-required-evidence")
 json.dump(data, open(sys.argv[2], "w"))
 PY
+then
+  fail "bad fixture setup"
+fi
 if "$TOOL" --fixtures "$BAD" --out-dir "$TMP_ROOT/bad-out" > "$TMP_ROOT/bad.out" 2> "$TMP_ROOT/bad.err"; then
   fail "missing required evidence must fail evaluation"
 fi

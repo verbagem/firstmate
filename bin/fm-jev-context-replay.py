@@ -313,12 +313,14 @@ def answerability_metrics(
                     missing_constraints.append(seg_id)
                 else:
                     missing_evidence.append(seg_id)
-    source_chars = sum(row["source_chars"] for row in rows if row["strategy"] == strategy)
-    retained_chars = sum(row["retained_chars"] for row in rows if row["strategy"] == strategy)
+    strategy_rows = [row for row in rows if row["strategy"] == strategy]
+    source_chars = sum(row["source_chars"] for row in strategy_rows)
+    retained_chars = sum(row["retained_chars"] for row in strategy_rows)
+    protected_count = sum(1 for row in strategy_rows if row["protected"])
     false_drops = [
         row["segment_id"]
-        for row in rows
-        if row["strategy"] == strategy and row["final_action"] == "drop" and row["protected"]
+        for row in strategy_rows
+        if row["final_action"] == "drop" and row["protected"]
     ]
     return {
         "strategy": strategy,
@@ -328,6 +330,7 @@ def answerability_metrics(
         "missing_constraints": sorted(set(missing_constraints)),
         "missing_evidence": sorted(set(missing_evidence)),
         "retention_ratio": round(retained_chars / source_chars, 6) if source_chars else 0,
+        "false_drop_rate": round(len(false_drops) / protected_count, 6) if false_drops and protected_count else 0,
         "false_drop_count": len(false_drops),
         "false_drops": false_drops,
     }
@@ -419,16 +422,17 @@ def write_outputs(out_dir: Path, rows: list[dict[str, Any]], report: dict[str, A
         f"Input tokens: `{report['usage']['input_tokens']}`",
         f"Output tokens: `{report['usage']['output_tokens']}`",
         f"Estimated TypeSafe cost USD: `{report['estimated_cost_usd']}`",
+        "False drop rate denominator: protected segment rows; zero protected rows reports `0`.",
         "",
-        "| Strategy | Answerable | Unanswerable | Missing constraints | Missing evidence | Retention ratio | False drops |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Strategy | Answerable | Unanswerable | Missing constraints | Missing evidence | Retention ratio | False drop rate | False drops |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name in ("baseline", "jev"):
         metric = report["metrics"][name]
         lines.append(
             f"| {name} | {metric['answerable']} | {metric['unanswerable']} | "
             f"{len(metric['missing_constraints'])} | {len(metric['missing_evidence'])} | "
-            f"{metric['retention_ratio']} | {metric['false_drop_count']} |"
+            f"{metric['retention_ratio']} | {metric['false_drop_rate']} | {metric['false_drop_count']} |"
         )
     lines.extend(["", "Failures:"])
     if report["failures"]:
