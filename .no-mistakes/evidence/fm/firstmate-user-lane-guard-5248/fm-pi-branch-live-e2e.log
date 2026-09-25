@@ -1,0 +1,5 @@
+ok - real Pi SDK 0.85.1 accepts the branch session construction and preserves an unpromptable wake
+ok - real Pi SDK 0.85.1 applies an explicit branch model on create and over a reopened session's recorded model
+ok - real Pi SDK 0.85.1 reports its own supported effort levels and applies an explicit branch effort over a reopened session's recorded level
+ok - real Pi SDK 0.85.1 delivers a custom message to the provider as user text carrying only content, so the captain outcome's typed envelope is what reaches the model
+ok - real Pi SDK 0.85.1 steers a no-options custom message into a live turn but never does with triggerTurn:false, proving the captain-lane guard (firstmate-user-lane-guard-5248) against the installed SDK
