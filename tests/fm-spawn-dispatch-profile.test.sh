@@ -1310,6 +1310,53 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
+test_dispatch_override_reason_requires_typed_intake_receipt() {
+  local rec id out status sm
+
+  id=profile-override-relaunch-z15c
+  rec=$(make_spawn_case profile-override-relaunch claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" --relaunch --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "relaunch should reject dispatch override reasons"
+  assert_contains "$out" "--dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" \
+    "relaunch rejection did not name the typed-dispatch intake boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "relaunch override refusal wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "relaunch override refusal reached the worker launch command"
+
+  id=profile-override-secondmate-z15d
+  rec=$(make_spawn_case profile-override-secondmate codex "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$sm" --secondmate --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "secondmate spawn should reject dispatch override reasons"
+  assert_contains "$out" "--dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" \
+    "secondmate rejection did not name the typed-dispatch intake boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "secondmate override refusal wrote task metadata"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" "secondmate override refusal wrote a dispatch receipt"
+  [ ! -s "$LAUNCH_LOG" ] || fail "secondmate override refusal reached the worker launch command"
+
+  id=profile-override-inactive-z15e
+  rec=$(make_spawn_case profile-override-inactive codex "$id")
+  read_case_record "$rec"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --harness codex --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "fresh spawn without active dispatch profile should reject dispatch override reasons"
+  assert_contains "$out" "--dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" \
+    "inactive-profile rejection did not name the typed-dispatch intake boundary"
+  assert_absent "$HOME_DIR/state/$id.meta" "inactive-profile override refusal wrote task metadata"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" "inactive-profile override refusal wrote a dispatch receipt"
+  [ ! -s "$LAUNCH_LOG" ] || fail "inactive-profile override refusal reached the worker launch command"
+
+  pass "dispatch override reasons are rejected outside receipted typed intakes"
+}
+
 test_claude_threads_model_and_effort() {
   local rec id out status launch
   id=profile-claude-z2
@@ -1816,6 +1863,7 @@ test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness
 test_no_profile_preserves_raw_launch_escape_hatch
 test_active_dispatch_profile_allows_raw_launch_command
+test_dispatch_override_reason_requires_typed_intake_receipt
 test_claude_threads_model_and_effort
 test_codex_threads_model_and_effort
 test_codex_omits_invalid_max_effort

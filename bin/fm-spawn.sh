@@ -394,7 +394,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
-  [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || { echo "error: --dispatch-override-reason applies only to fresh crewmate or scout spawns" >&2; exit 1; }
+  [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || { echo "error: --dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" >&2; exit 1; }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -1315,6 +1315,10 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
     echo "error: project directory required before typed dispatch" >&2
     exit 1
   }
+fi
+if [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 1 ] && [ "$DISPATCH_PROFILE_ACTIVE" != 1 ]; then
+  echo "error: --dispatch-override-reason applies only to fresh crewmate or scout typed-dispatch intake" >&2
+  exit 1
 fi
 
 typed_dispatch_resolve_and_apply() {
