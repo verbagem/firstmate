@@ -698,7 +698,7 @@ test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
 }
 
 test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
-  local rec id out status receipt curl_log
+  local rec id out status receipt curl_log raw_command
   id=profile-typed-divergence-z11c
   rec=$(make_spawn_case profile-typed-divergence claude "$id")
   read_case_record "$rec"
@@ -777,6 +777,27 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
     || fail "quoted-wrapper raw-command receipt lost adapter_unavailable"
   [ ! -s "$LAUNCH_LOG" ] || fail "quoted-wrapper raw command reached the worker launch command"
+
+  id=profile-typed-raw-newline-veto-z11c8
+  rec=$(make_spawn_case profile-typed-raw-newline-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  raw_command=$'true\ngrok --model grok-4 --reasoning-effort medium'
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "$raw_command" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a newline raw command must not hide a second worker command"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "newline raw-command refusal did not name the launch profile problem"
+  assert_absent "$curl_log" "newline raw command called the resolver before local rejection"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "newline raw-command receipt lost adapter_unavailable"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "newline raw-command receipt claims a launch"
+  [ ! -s "$LAUNCH_LOG" ] || fail "newline raw command reached the worker launch command"
 
   id=profile-typed-raw-no-worker-z11c5
   rec=$(make_spawn_case profile-typed-raw-no-worker claude "$id")
