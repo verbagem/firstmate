@@ -85,14 +85,35 @@ fm_cursor_path_is_cursor() {  # <path>
 # fail-closed: a timeout, a non-zero exit, or output without a Cursor-specific
 # marker is a refusal. Never called during a process scan.
 fm_cursor_bounded_output() {  # <path> <args...>
-  local path=$1 runner=
+  local path=$1 runner='' out_file pid timer status
   shift
   [ -n "$path" ] && [ -x "$path" ] || return 1
   if command -v timeout >/dev/null 2>&1; then runner=timeout
   elif command -v gtimeout >/dev/null 2>&1; then runner=gtimeout
   fi
-  [ -n "$runner" ] || return 1
-  "$runner" "$FM_CURSOR_PROBE_TIMEOUT" "$path" "$@" 2>/dev/null
+  if [ -n "$runner" ]; then
+    "$runner" "$FM_CURSOR_PROBE_TIMEOUT" "$path" "$@" 2>/dev/null
+    return $?
+  fi
+  out_file=$(mktemp "${TMPDIR:-/tmp}/fm-cursor-probe.XXXXXX") || return 1
+  "$path" "$@" > "$out_file" 2>/dev/null &
+  pid=$!
+  (
+    sleep "$FM_CURSOR_PROBE_TIMEOUT"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$pid" 2>/dev/null || true
+  ) &
+  timer=$!
+  wait "$pid"
+  status=$?
+  kill "$timer" 2>/dev/null || true
+  wait "$timer" 2>/dev/null || true
+  if [ "$status" -eq 0 ]; then
+    cat "$out_file"
+  fi
+  rm -f "$out_file"
+  return "$status"
 }
 
 fm_cursor_probe_is_cursor() {  # <path>
@@ -141,6 +162,43 @@ fm_cursor_catalog_has_model() {  # <model>
     }
     END { exit found ? 0 : 1 }
   '
+}
+
+fm_cursor_trust_contract() {  # <path> -> interactive|headless
+  local path=$1 help
+  help=$(fm_cursor_bounded_output "$path" --help) || {
+    echo "error: could not read '$path --help' to determine Cursor workspace-trust contract; refusing to launch without a verified trust path" >&2
+    return 1
+  }
+  case "$help" in
+    *"--trust"*"only works with --print/headless mode"*)
+      printf '%s\n' headless
+      return 0
+      ;;
+    *"--trust"*)
+      printf '%s\n' interactive
+      return 0
+      ;;
+  esac
+  echo "error: '$path --help' does not advertise Cursor's --trust workspace flag; refusing to launch without a verified trust path" >&2
+  return 1
+}
+
+fm_cursor_trust_workspace_headless() {  # <path> <workspace>
+  local path=$1 workspace=$2 out
+  [ -n "$workspace" ] && [ -d "$workspace" ] || {
+    echo "error: Cursor workspace trust preflight needs an existing workspace directory; got '${workspace:-none}'" >&2
+    return 1
+  }
+  out=$(fm_cursor_bounded_output "$path" --trust --workspace "$workspace" create-chat) || {
+    echo "error: Cursor workspace trust preflight failed for '$workspace' using '$path --trust --workspace <worktree> create-chat'; interactive --trust is unsupported by this Cursor build" >&2
+    return 1
+  }
+  [ -n "$out" ] || {
+    echo "error: Cursor workspace trust preflight for '$workspace' returned no chat id; refusing to launch an interactive worker without proof the repository trust boundary was granted" >&2
+    return 1
+  }
+  return 0
 }
 
 # Print the stable absolute launcher path for the Cursor executable, or return 1

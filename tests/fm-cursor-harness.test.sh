@@ -149,6 +149,52 @@ test_resolve_binary_prefers_stable_path() {
   pass "fm_cursor_resolve_binary: prints the stable launcher, not the versioned target"
 }
 
+test_bounded_output_hard_kills_term_ignoring_probe() {
+  local minimal probe pid_file rc_file out_file wrapper_pid bash_bin tool target i rc child
+  minimal="$TMP_ROOT/minimal-path"
+  mkdir -p "$minimal"
+  for tool in mktemp sleep cat rm; do
+    target=$(command -v "$tool") || fail "$tool is required for the bounded-output fallback test"
+    ln -sf "$target" "$minimal/$tool"
+  done
+  probe="$TMP_ROOT/term-ignoring-probe"
+  pid_file="$TMP_ROOT/term-ignoring.pid"
+  rc_file="$TMP_ROOT/term-ignoring.rc"
+  out_file="$TMP_ROOT/term-ignoring.out"
+  cat > "$probe" <<'SH'
+#!/bin/sh
+printf '%s\n' "$$" > "$FM_TEST_CURSOR_CHILD_PID"
+trap '' TERM
+while :; do
+  sleep 1
+done
+SH
+  chmod +x "$probe"
+  bash_bin=${BASH:-$(command -v bash)}
+  (
+    # shellcheck disable=SC2016 # Positional parameters expand inside the isolated child shell.
+    PATH="$minimal" FM_CURSOR_PROBE_TIMEOUT=1 FM_TEST_CURSOR_CHILD_PID="$pid_file" \
+      "$bash_bin" -c '. "$1"; fm_cursor_bounded_output "$2" --help > "$3"; printf "%s\n" "$?" > "$4"' \
+        _ "$ROOT/bin/fm-cursor-lib.sh" "$probe" "$out_file" "$rc_file"
+  ) &
+  wrapper_pid=$!
+  for i in $(seq 1 60); do
+    [ ! -f "$rc_file" ] || break
+    sleep 0.1
+  done
+  if [ ! -f "$rc_file" ]; then
+    kill -KILL "$wrapper_pid" 2>/dev/null || true
+    child=$(cat "$pid_file" 2>/dev/null || true)
+    [ -z "$child" ] || kill -KILL "$child" 2>/dev/null || true
+    fail "a probe that ignores TERM must still hit the hard timeout"
+  fi
+  wait "$wrapper_pid" 2>/dev/null || true
+  rc=$(cat "$rc_file")
+  [ "$rc" -ne 0 ] || fail "a hard-killed probe must not report success"
+  [ ! -s "$out_file" ] || fail "a hard-killed probe must not emit trusted output"
+  pass "fm_cursor_bounded_output: fallback hard-kills a TERM-ignoring probe"
+}
+
 # --- 2. tmux pane liveness ---------------------------------------------------
 
 test_tmux_classifies_cursor_pane_without_inferring_dead() {
@@ -393,6 +439,7 @@ test_identity_accepts_cursor_shapes_rejects_lookalikes
 test_identity_signals_diverge
 test_verify_executable_refuses_unrelated_agent
 test_resolve_binary_prefers_stable_path
+test_bounded_output_hard_kills_term_ignoring_probe
 test_tmux_classifies_cursor_pane_without_inferring_dead
 test_cursor_marker_outranks_inherited_claudecode
 test_harness_ancestry_rejects_cursor_named_node_script

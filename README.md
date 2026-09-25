@@ -74,7 +74,9 @@ Pick whichever one matches your subscription and workflow.
 
 Codex and OpenCode are also verified and supported as primary harnesses; Codex uses bounded foreground checkpoints, and OpenCode uses a TUI plugin, so both carry more harness-specific supervision tradeoffs than the three co-primaries.
 Cursor Agent CLI is verified as a primary too, using a tracked project-scope `.cursor/hooks.json` whose `stop` hook parks on the watcher between turns, closest in shape to Claude Code's.
-Launch it with `--trust`, or none of its project hooks load; it also has no turn-end hook in headless `cursor-agent -p`, so run the primary session interactively.
+Grant workspace trust first, or none of its project hooks load.
+When `cursor-agent --help` says `--trust` is print/headless-only, use `cursor-agent --trust --workspace "$PWD" create-chat` as the headless trust grant and then launch the primary interactively without `--trust`; otherwise launch the primary interactively with `--trust`.
+It also has no turn-end hook in headless `cursor-agent -p`, so run the primary session interactively.
 
 ### Install and launch
 

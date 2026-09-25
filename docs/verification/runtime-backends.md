@@ -785,13 +785,18 @@ App-server partial methods and raw socket experiments do not satisfy that bridge
 ## Cursor Agent CLI
 
 Cursor runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
-The evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
+The original identity, transcript, and launch evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
+The workspace trust contract was refreshed on 2026-09-25.
 
 - Binary: `~/.local/bin/cursor-agent`, canonicalizing into `~/.local/share/cursor-agent/versions/2026.08.11-e8db854/cursor-agent`.
 - Version: `cursor-agent --version` reported `2026.08.11-e8db854`, and `cursor-agent status` reported a logged-in account.
 - Both installed names, `cursor-agent` and the legacy alias `agent`, resolve into that same versioned install tree.
 
 Resolution prints the STABLE launcher rather than the canonical target, because the canonical path carries a version the CLI replaces on its own auto-update.
+The 2026-09-25 trust refresh observed two valid installed states during Cursor's own update window.
+The initiating launcher reported `cursor-agent --version` as `2026.07.09-a3815c0`, while the live interactive TUI banner already reported `v2026.09.23-86fc751` and rejected interactive `--trust` because help marked it print/headless-only.
+After the Cursor update completed, both `cursor-agent --version` and the TUI banner reported `2026.09.23-86fc751`, and help again advertised interactive `--trust`.
+Firstmate therefore gates Cursor workspace trust from `cursor-agent --help` and behavior, not from the version string alone.
 
 ### Process identity
 
@@ -801,7 +806,7 @@ Resolution prints the STABLE launcher rather than the canonical target, because 
 | --- | --- |
 | `#{pane_current_command}` | `node` |
 | `ps -o comm=` | `/Users/<user>/.local/bin/cursor-agent` |
-| child argv | `.../bin/cursor-agent --use-system-ca .../versions/2026.08.11-e8db854/index.js --trust --yolo` |
+| child argv, 2026-08-11 | `.../bin/cursor-agent --use-system-ca .../versions/2026.08.11-e8db854/index.js --trust --yolo` |
 
 `node` matches no harness name pattern, so a cursor pane is identified from Cursor's own name or install tree in the path or argv[0].
 An unrelated `node` or `agent` matches neither and classifies `other`, which the liveness callers fold into `ambiguous` rather than `dead`.
@@ -878,7 +883,7 @@ This row is a delivery guard for submit acknowledgement only; recorded worker st
 
 | Fact | Observed |
 | --- | --- |
-| Workspace trust | `--trust` suppressed the prompt; `--yolo` alone did NOT, and the prompt blocks a fresh worktree |
+| Workspace trust | Help-probed: builds whose help allows interactive trust launch with `--trust`; builds whose help says `--trust` is print/headless-only reject it in a TTY and accept `cursor-agent --trust --workspace <worktree> create-chat` as the no-prompt headless trust grant before an interactive no-`--trust` launch |
 | Autonomy | `--yolo` (alias of `--force`); the footer renders `Run Everything` |
 | Worktree | `-w/--worktree` allocates a SECOND worktree under `~/.cursor/worktrees` and is never passed |
 | Effort | no effort flag exists; requested effort stays in task metadata |
@@ -898,6 +903,38 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --backend tmux` o
 5. `bin/fm-control.sh <id> interrupt` cancelled a running turn;
 6. `bin/fm-control.sh <id> exit` stopped the agent;
 7. `bin/fm-teardown.sh` refused until the scout's report and decision gate were satisfied, then removed the session record.
+
+The 2026-09-25 refresh used these exact commands on the installed Cursor launcher:
+
+```bash
+cursor-agent --version
+# 2026.07.09-a3815c0
+
+cursor-agent --help
+# --trust ... (only works with --print/headless mode)
+
+cursor-agent --trust --yolo --workspace "$PWD" 'Firstmate trust contract smoke: say hi and stop'
+# Error: --trust can only be used with --print/headless mode
+
+cursor-agent --print --trust --workspace "$PWD" --mode ask 'Reply exactly: trust-headless-ok'
+# trust-headless-ok
+
+cursor-agent --trust --workspace "$TMP_WORKSPACE" create-chat
+# <chat-id>
+
+cursor-agent --version
+# 2026.09.23-86fc751
+
+cursor-agent --help
+# --trust ... Trust the current workspace without prompting
+
+cursor-agent --trust --yolo --workspace "$PWD" 'Firstmate trust contract smoke: say hi and stop'
+# entered the interactive TTY and processed the prompt
+```
+
+On the headless-only contract, after the headless trust grant, a tmux-hosted interactive launch without `--trust` entered the task workspace, displayed `Run Everything`, accepted the positional prompt, and began a turn without a workspace-trust prompt.
+On the interactive contract, a real `bin/fm-spawn.sh --scout --backend tmux --harness cursor` launch entered `/Users/temp/.treehouse/project-797f88/1/project`, displayed `Run Everything`, accepted the positional prompt, wrote `cursor-smoke-result.txt`, accepted a follow-up through `bin/fm-send.sh`, and the transcript source returned `idle cursor-transcript` after the follow-up.
+`tests/fm-spawn-dispatch-profile.test.sh` now pins both supported contracts through `bin/fm-spawn.sh`: interactive `--trust`, headless preflight plus interactive no-`--trust`, and fail-closed refusal when the preflight fails.
 
 ### Herdr backend
 
