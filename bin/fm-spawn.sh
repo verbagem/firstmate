@@ -705,6 +705,13 @@ SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
 SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
 SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
+SPAWN_FRESH_RESOURCE_CLEANUP=0
+SPAWN_FRESH_RESOURCE_BACKEND=
+SPAWN_FRESH_RESOURCE_TARGET=
+SPAWN_FRESH_RESOURCE_WORKTREE=
+SPAWN_FRESH_RESOURCE_PROJECT=
+SPAWN_FRESH_RESOURCE_WINDOW=
+SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -942,6 +949,66 @@ spawn_raw_command_profile() {
   [ -z "$want" ] || return 1
 }
 
+spawn_fresh_resource_cleanup_clear() {
+  SPAWN_FRESH_RESOURCE_CLEANUP=0
+  SPAWN_FRESH_RESOURCE_BACKEND=
+  SPAWN_FRESH_RESOURCE_TARGET=
+  SPAWN_FRESH_RESOURCE_WORKTREE=
+  SPAWN_FRESH_RESOURCE_PROJECT=
+  SPAWN_FRESH_RESOURCE_WINDOW=
+  SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=
+}
+
+spawn_fresh_resource_cleanup_arm() {
+  spawn_fresh_resource_cleanup_clear
+  [ "$DISPATCH_PROFILE_ACTIVE" = 1 ] || return 0
+  [ "$RELAUNCH" -eq 0 ] || return 0
+  [ "$KIND" != secondmate ] || return 0
+  [ "$BACKEND" != orca ] || return 0
+  [ -n "${BACKEND:-}" ] || return 0
+  [ -n "${T:-}" ] || return 0
+  [ -n "${WT:-}" ] || return 0
+  [ -n "${PROJ_ABS:-}" ] || return 0
+  SPAWN_FRESH_RESOURCE_BACKEND=$BACKEND
+  SPAWN_FRESH_RESOURCE_TARGET=$T
+  SPAWN_FRESH_RESOURCE_WORKTREE=$WT
+  SPAWN_FRESH_RESOURCE_PROJECT=$PROJ_ABS
+  SPAWN_FRESH_RESOURCE_WINDOW=${W:-}
+  SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=${ZELLIJ_TAB_ID:-}
+  SPAWN_FRESH_RESOURCE_CLEANUP=1
+}
+
+spawn_fresh_resource_cleanup_disarm() {
+  spawn_fresh_resource_cleanup_clear
+}
+
+spawn_fresh_resource_cleanup_run() {
+  local backend target worktree project window zellij_tab status=0
+  [ "$SPAWN_FRESH_RESOURCE_CLEANUP" = 1 ] || return 0
+  backend=$SPAWN_FRESH_RESOURCE_BACKEND
+  target=$SPAWN_FRESH_RESOURCE_TARGET
+  worktree=$SPAWN_FRESH_RESOURCE_WORKTREE
+  project=$SPAWN_FRESH_RESOURCE_PROJECT
+  window=$SPAWN_FRESH_RESOURCE_WINDOW
+  zellij_tab=$SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID
+  spawn_fresh_resource_cleanup_clear
+  if [ -n "$backend" ] && [ -n "$target" ]; then
+    case "$backend" in
+      zellij) fm_backend_kill "$backend" "$target" "$zellij_tab" "$window" || status=1 ;;
+      cmux) fm_backend_kill "$backend" "$target" "" "$window" || status=1 ;;
+      *) fm_backend_kill "$backend" "$target" || status=1 ;;
+    esac
+  fi
+  if [ -n "$worktree" ] && [ -d "$worktree" ]; then
+    if [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; then
+      ( cd "$project" && treehouse return --force "$worktree" ) >/dev/null 2>&1 || status=1
+    else
+      status=1
+    fi
+  fi
+  return "$status"
+}
+
 spawn_abort_cleanup() {
   local status=$?
   if ! dispatch_receipt_emit; then
@@ -997,6 +1064,10 @@ spawn_abort_cleanup() {
       fm_backend_kill "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND" \
         "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET" || true
     fi
+  fi
+  if ! spawn_fresh_resource_cleanup_run; then
+    echo "warning: could not fully clean fresh resources after aborted spawn of ${ID:-unknown}" >&2
+    status=1
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
@@ -2830,6 +2901,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
 fi
 if [ "$DISPATCH_PROFILE_ACTIVE" = 1 ]; then
+  spawn_fresh_resource_cleanup_arm
   typed_dispatch_resolve_and_apply
   [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
   resolve_spawn_launch_profile
@@ -3314,6 +3386,7 @@ elif ! mv -f "$SPAWN_META_TMP" "$SPAWN_META_FINAL"; then
 else
   SPAWN_META_TMP=
 fi
+spawn_fresh_resource_cleanup_disarm
 if [ "$SPAWN_TASK_SET_LOCK_HELD" = 1 ]; then
   # The record is published, so this task is now part of the set a teardown
   # enumerates and locks per task. The set lock is only needed across that

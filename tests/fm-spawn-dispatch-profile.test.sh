@@ -103,7 +103,19 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = return ] && [ "${2:-}" = --force ] && [ -n "${3:-}" ]; then
+  target=$3
+  case "$target" in ''|/) exit 1 ;; esac
+  if [ "${FM_FAKE_TREEHOUSE_RETURN_REMOVES:-0}" = 1 ]; then
+    git -C "$(pwd)" worktree remove --force "$target" >/dev/null 2>&1 || rm -rf "$target"
+  fi
+fi
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
 shift
@@ -316,6 +328,7 @@ run_spawn() {
     FM_FAKE_CURSOR_TRUST_STATUS="${FM_TEST_CURSOR_TRUST_STATUS:-0}" \
     FM_FAKE_CURSOR_TRUST_LOG="${FM_TEST_CURSOR_TRUST_LOG:-}" \
     FM_FAKE_DISPATCH_CURL_LOG="${FM_TEST_DISPATCH_CURL_LOG:-}" \
+    FM_FAKE_TREEHOUSE_RETURN_REMOVES="${FM_TEST_TREEHOUSE_RETURN_REMOVES:-0}" \
     HOME="${FM_TEST_HOME:-${HOME:-}}" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -539,18 +552,22 @@ test_explicit_model_identifier_rejects_control_characters() {
 }
 
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
-  local rec id out status
+  local rec id out status receipt window_dir
   id=profile-required-ship-z11
   rec=$(make_spawn_case profile-required-ship claude "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  out=$(FM_TEST_TMUX_WINDOW_DIR="$window_dir" FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active"
   assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules" \
     "spawn did not explain the dispatch-profile backstop"
   assert_absent "$HOME_DIR/state/$id.meta" "ship refusal should happen before meta is written"
+  assert_absent "$window_dir/fm-$id" "absent-key refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "absent-key refusal left the fresh worktree"
   receipt=$(last_dispatch_receipt "$HOME_DIR")
   [ "$(jq -r .resolver.status <<<"$receipt")" = off ] || fail "absent-key receipt did not record resolver status"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = absent_key ] || fail "absent-key receipt did not explain fallback"
@@ -667,18 +684,22 @@ test_typed_dispatch_validates_project_before_resolver_call() {
 }
 
 test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
-  local rec id out status launch receipt
+  local rec id out status launch receipt window_dir
   id=profile-typed-cursor-z11b
   rec=$(make_spawn_case profile-typed-cursor claude "$id")
   read_case_record "$rec"
   enable_cursor_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
 
   out=$(FM_TEST_CURSOR_MODELS=$'Available models\ncursor-grok-4.6-medium - Grok 4.6 Medium' \
     FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "clear typed Cursor selection should launch without repeated profile flags"
   assert_contains "$out" "spawned $id harness=cursor" "clear typed selection did not reach Cursor"
+  assert_present "$window_dir/fm-$id" "successful typed launch did not preserve the tmux endpoint"
+  assert_present "$WT_DIR" "successful typed launch did not preserve the worktree"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "--model 'cursor-grok-4.6-medium'" "typed Cursor model did not reach the worker command"
   receipt=$(last_dispatch_receipt "$HOME_DIR")
@@ -869,7 +890,7 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
 }
 
 test_nonclear_and_launch_refusal_receipts_are_complete() {
-  local rec id out status receipt
+  local rec id out status receipt window_dir
   id=profile-typed-nonclear-z11d
   rec=$(make_spawn_case profile-typed-nonclear claude "$id")
   read_case_record "$rec"
@@ -886,11 +907,34 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   [ "$(jq -r .resolver.status <<<"$receipt")" = ambiguous ] || fail "ambiguous receipt lost resolver status"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] || fail "ambiguous fallback was unexplained"
 
+  id=profile-typed-nonclear-refusal-z11d1
+  rec=$(make_spawn_case profile-typed-nonclear-refusal claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
+  out=$(FM_FAKE_DISPATCH_CONFIDENCE=0.4 \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
+    FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "ambiguous typed result without a launch profile should refuse"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .resolver.status <<<"$receipt")" = ambiguous ] || fail "ambiguous refusal receipt lost resolver status"
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = non_clear_result ] \
+    || fail "ambiguous refusal receipt lost non_clear_result"
+  [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "ambiguous refusal receipt claims a launch"
+  assert_absent "$HOME_DIR/state/$id.meta" "ambiguous refusal wrote task metadata"
+  assert_absent "$window_dir/fm-$id" "ambiguous refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "ambiguous refusal left the fresh worktree"
+  [ ! -s "$LAUNCH_LOG" ] || fail "ambiguous refusal reached the worker launch command"
+
   id=profile-typed-invalid-model-z11d2
   rec=$(make_spawn_case profile-typed-invalid-model claude "$id")
   read_case_record "$rec"
   enable_control_char_model_dispatch_profile "$HOME_DIR"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  window_dir="$CASE_DIR/tmux-windows"
+  out=$(FM_TEST_TMUX_WINDOW_DIR="$window_dir" FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 2 "$status" "dispatch profile model control characters should fail before launch"
   assert_contains "$out" "typed dispatch resolution failed configuration validation" \
@@ -900,6 +944,8 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
     || fail "invalid model receipt lost configuration-error reason"
   [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "invalid model receipt claims a worker launched"
   assert_absent "$HOME_DIR/state/$id.meta" "invalid model must not reach line-oriented metadata"
+  assert_absent "$window_dir/fm-$id" "invalid model refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "invalid model refusal left the fresh worktree"
   [ ! -s "$LAUNCH_LOG" ] || fail "invalid model reached the worker launch command"
 
   id=profile-typed-error-z11e
@@ -968,7 +1014,10 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   rec=$(make_spawn_case profile-typed-catalog claude "$id")
   read_case_record "$rec"
   enable_cursor_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
   out=$(FM_TEST_CURSOR_MODELS=$'Available models\nother-model - Other' \
+    FM_TEST_TMUX_WINDOW_DIR="$window_dir" \
+    FM_TEST_TREEHOUSE_RETURN_REMOVES=1 \
     run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 1 "$status" "clear selection rejected by the live catalog should refuse launch"
@@ -978,6 +1027,9 @@ test_nonclear_and_launch_refusal_receipts_are_complete() {
   [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "catalog-refusal receipt claims a worker launch"
   [ "$(jq -r .divergence_reason <<<"$receipt")" = catalog_rejection ] \
     || fail "catalog-refusal receipt lost deterministic reason"
+  assert_absent "$HOME_DIR/state/$id.meta" "catalog refusal wrote task metadata"
+  assert_absent "$window_dir/fm-$id" "catalog refusal left the fresh tmux endpoint"
+  assert_absent "$WT_DIR" "catalog refusal left the fresh worktree"
   pass "ambiguous, error, escalation, and launch-refusal paths each record one explained receipt"
 }
 
