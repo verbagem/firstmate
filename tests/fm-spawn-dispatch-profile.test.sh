@@ -165,8 +165,12 @@ cat >/dev/null
 if [ -n "${FM_FAKE_DISPATCH_BODY:-}" ]; then
   printf '%s\n' "$FM_FAKE_DISPATCH_BODY" > "$out"
 else
+  dispatch_choice=${FM_FAKE_DISPATCH_CHOICE:-default}
+  dispatch_confidence=${FM_FAKE_DISPATCH_CONFIDENCE:-0.97}
+  dispatch_rule_probability=${FM_FAKE_DISPATCH_RULE_PROBABILITY:-0.97}
+  dispatch_default_probability=${FM_FAKE_DISPATCH_DEFAULT_PROBABILITY:-0.03}
   cat > "$out" <<JSON
-{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"${FM_FAKE_DISPATCH_CHOICE:-default}","confidence":${FM_FAKE_DISPATCH_CONFIDENCE:-0.97},"probabilities":{"rule_1":${FM_FAKE_DISPATCH_RULE_PROBABILITY:-0.97},"default":${FM_FAKE_DISPATCH_DEFAULT_PROBABILITY:-0.03}}}},"usage":{"input_tokens":321,"output_tokens":42}}
+{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"$dispatch_choice","confidence":$dispatch_confidence,"probabilities":{"rule_1":$dispatch_rule_probability,"default":$dispatch_default_probability}}},"usage":{"input_tokens":321,"output_tokens":42}}
 JSON
 fi
 printf '%s' "${FM_FAKE_DISPATCH_HTTP:-200}"
@@ -543,6 +547,25 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   pass "active crew-dispatch profile requires an explicit harness for ship spawns"
 }
 
+test_fake_typesafe_response_fixture_is_valid_clear_json() {
+  local rec body status
+  rec=$(make_spawn_case profile-fake-typesafe-json claude profile-fake-typesafe-json-z11a0)
+  read_case_record "$rec"
+  body="$CASE_DIR/typesafe-response.json"
+
+  FM_FAKE_DISPATCH_CHOICE=default "$FAKEBIN_DIR/curl" -o "$body" https://typesafe.test/resolve >/dev/null <<<'{}'
+  status=$?
+  expect_code 0 "$status" "fake TypeSafe transport should produce a response"
+  jq -e '
+    .model == "jev-1.13.0"
+    and .answers.rule.type == "choice"
+    and .answers.rule.choice == "default"
+    and .usage.input_tokens == 321
+    and .usage.output_tokens == 42
+  ' "$body" >/dev/null || fail "fake TypeSafe response is not valid clear-result JSON with top-level usage"
+  pass "fake TypeSafe response fixture is valid clear-result JSON"
+}
+
 test_typed_dispatch_validates_project_before_resolver_call() {
   local rec id out status curl_log
   id=profile-typed-missing-project-z11a
@@ -560,7 +583,24 @@ test_typed_dispatch_validates_project_before_resolver_call() {
   assert_absent "$curl_log" "typed dispatch called the resolver before validating the project"
   assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
     "missing-project refusal should happen before arming the typed-dispatch receipt"
-  pass "typed dispatch validates the project path before invoking the resolver"
+
+  id=profile-typed-nonrepo-project-z11a1
+  rec=$(make_spawn_case profile-typed-nonrepo-project claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  curl_log="$CASE_DIR/dispatch-curl.log"
+  mkdir -p "$CASE_DIR/not-a-repo"
+
+  out=$(FM_TEST_DISPATCH_CURL_LOG="$curl_log" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$CASE_DIR/not-a-repo")
+  status=$?
+  expect_code 1 "$status" "typed dispatch with a non-git project should fail before resolver call"
+  assert_contains "$out" "project directory must be a git worktree before typed dispatch" \
+    "non-git project refusal did not happen at the typed-dispatch project boundary"
+  assert_absent "$curl_log" "typed dispatch called the resolver before validating the project worktree"
+  assert_absent "$HOME_DIR/state/dispatch-receipts.jsonl" \
+    "non-git project refusal should happen before arming the typed-dispatch receipt"
+  pass "typed dispatch validates project worktree preconditions before invoking the resolver"
 }
 
 test_clear_typed_cursor_selection_reaches_launch_and_receipt() {
@@ -687,6 +727,23 @@ test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
     || fail "unidentified raw-command receipt lost adapter_unavailable"
   [ ! -s "$LAUNCH_LOG" ] || fail "unidentified raw command reached the worker launch command"
+
+  id=profile-typed-raw-shell-wrapper-veto-z11c6
+  rec=$(make_spawn_case profile-typed-raw-shell-wrapper-veto claude "$id")
+  read_case_record "$rec"
+  enable_cursor_dispatch_profile "$HOME_DIR"
+  out=$(FM_FAKE_DISPATCH_CHOICE=rule_1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" "bash -lc 'grok --model grok-4 --reasoning-effort medium'" \
+      --dispatch-override-reason supported_manual_override)
+  status=$?
+  expect_code 1 "$status" "a shell-wrapped raw command must not hide an ineligible worker"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "shell-wrapped raw-command refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "shell-wrapped raw-command receipt lost adapter_unavailable"
+  [ ! -s "$LAUNCH_LOG" ] || fail "shell-wrapped raw command reached the worker launch command"
 
   id=profile-typed-override-z11c2
   rec=$(make_spawn_case profile-typed-override claude "$id")
@@ -909,7 +966,7 @@ test_active_dispatch_profile_allows_positional_harness() {
 }
 
 test_active_dispatch_profile_allows_raw_launch_command() {
-  local rec id out status launch
+  local rec id out status launch receipt
   id=profile-raw-z15
   rec=$(make_spawn_case profile-raw claude "$id")
   read_case_record "$rec"
@@ -923,6 +980,22 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(cat "$LAUNCH_LOG")
   [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+
+  id=profile-raw-shell-wrapper-z15b
+  rec=$(make_spawn_case profile-raw-shell-wrapper claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" "bash -lc 'custom-agent --flag'")
+  status=$?
+  expect_code 1 "$status" "a raw shell wrapper should not satisfy active dispatch-profile requirements"
+  assert_contains "$out" "raw launch command did not identify a worker command" \
+    "shell-wrapped raw-command refusal did not name the launch profile problem"
+  receipt=$(last_dispatch_receipt "$HOME_DIR")
+  [ "$(jq -r .divergence_reason <<<"$receipt")" = adapter_unavailable ] \
+    || fail "shell-wrapped raw-command receipt lost adapter_unavailable"
+  assert_absent "$HOME_DIR/state/$id.meta" "shell-wrapped raw command wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "shell-wrapped raw command reached the worker launch command"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -1421,6 +1494,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
 test_explicit_model_identifier_rejects_control_characters
 test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_fake_typesafe_response_fixture_is_valid_clear_json
 test_typed_dispatch_validates_project_before_resolver_call
 test_clear_typed_cursor_selection_reaches_launch_and_receipt
 test_clear_divergence_requires_reason_and_ineligible_candidate_is_refused

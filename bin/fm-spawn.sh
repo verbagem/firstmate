@@ -830,6 +830,22 @@ dispatch_model_id_ok() {
   [[ $model =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]
 }
 
+dispatch_project_preflight() {
+  local project_abs=$1 project_arg=$2 project_top project_top_real
+  project_top=$(git -C "$project_abs" rev-parse --show-toplevel 2>/dev/null) || {
+    echo "error: project directory must be a git worktree before typed dispatch: $project_arg" >&2
+    return 1
+  }
+  project_top_real=$(cd "$project_top" 2>/dev/null && pwd -P) || {
+    echo "error: project directory must resolve to a git worktree before typed dispatch: $project_arg" >&2
+    return 1
+  }
+  [ -n "$project_top_real" ] || {
+    echo "error: project directory must resolve to a git worktree before typed dispatch: $project_arg" >&2
+    return 1
+  }
+}
+
 if [ "$MODEL_SET" -eq 1 ] && ! dispatch_model_id_ok "$MODEL"; then
   echo "error: --model is not a valid model identifier" >&2
   exit 1
@@ -865,6 +881,9 @@ spawn_raw_command_profile() {
       fi
       case "$word" in
         -*) continue ;;
+      esac
+      case "$(basename "$word")" in
+        sh|bash|zsh|dash|ksh|fish) return 0 ;;
       esac
       SPAWN_RAW_HARNESS=$(basename "$word")
       continue
@@ -1139,6 +1158,7 @@ if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ -f "$CONFIG/crew-disp
     echo "error: project directory cannot be resolved before typed dispatch: $DISPATCH_PROJECT_ARG" >&2
     exit 1
   fi
+  dispatch_project_preflight "$DISPATCH_PROJECT_ABS" "$DISPATCH_PROJECT_ARG" || exit 1
   DISPATCH_PROJECT=$(basename -- "$DISPATCH_PROJECT_ABS")
   DISPATCH_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-dispatch-resolve.XXXXXX") || {
     echo "error: could not create typed-dispatch error capture" >&2
