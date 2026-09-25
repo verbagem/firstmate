@@ -19,7 +19,9 @@ Current safety contract:
 - Kept text remains verbatim.
 - Truncation is non-generative and preserves `original_segment_id`, `original_sha256`, and original length.
 - Missing, unknown-action, absent-confidence, or low-confidence per-segment proposals fall back to keep.
-- Malformed proposal response envelopes are rejected before a ledger is written.
+- Malformed proposal response envelopes are rejected before a ledger is written, while malformed per-segment numeric proposal fields normalize out before action selection.
+- Malformed usage token counts normalize to zero so the report and cost estimate stay deterministic.
+- The generated report states the false-drop rate denominator and zero-denominator behavior.
 
 The representative fixture set lives at `tests/fixtures/jev-context-replay/transcripts.json`.
 It contains 30 sanitized transcripts with held-out downstream questions covering contradictory updates, scope supersession, ask-user decisions, command-output noise, long evidence payloads, security boundaries, source receipts, absent-key behavior, unknown rows, and low-confidence proposals.
@@ -36,4 +38,4 @@ FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=1093 failed=0
 FM_TEST_SLOWEST rank=1 script=tests/fm-jev-context-replay.test.sh duration_ms=1093
 ```
 
-The test drives the public CLI with a fake TypeSafe transport, proves no network command is invoked when `TYPESAFE_API_KEY` is absent, checks protected-category rescue, provenance, verbatim retention, low-confidence keep behavior, missing-required-evidence failure, and reproducible ledgers.
+The test drives the public CLI with a fake TypeSafe transport, proves no network command is invoked when `TYPESAFE_API_KEY` is absent, checks protected-category rescue, provenance, verbatim retention, low-confidence keep behavior, false-drop rate rendering, malformed proposal-number normalization, malformed usage-count normalization, missing-required-evidence failure, and reproducible ledgers.
