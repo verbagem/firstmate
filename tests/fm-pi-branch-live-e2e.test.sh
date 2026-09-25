@@ -525,3 +525,110 @@ if "$ROOT/bin/fm-operational-input.sh" kind < "$TMP_ROOT/live-delivered-routine"
   fail "a routine note survived Pi conversion as typed operational input"
 fi
 pass "real Pi SDK $PI_VERSION delivers a custom message to the provider as user text carrying only content, so the captain outcome's typed envelope is what reaches the model"
+
+# Fifth probe: the captain-lane guard itself (firstmate-user-lane-guard-5248).
+# fm-branch-supervision.ts used to mirror main's busy state itself
+# (agent_start/agent_end/agent_settled) and, when that mirror read idle,
+# delivered a routine merge note with pi.sendMessage(message, {}) - no
+# triggerTurn, no deliverAs. The mirror could read idle while the real
+# AgentSession was still mid-turn (agent_end fires on an intermediate step,
+# not only at the true end), so that call shape was reachable while genuinely
+# streaming. This probe proves what the real SDK does with it: build a real
+# AgentSession against the same never-contacted local fake provider used
+# above, start a real prompt without awaiting it so the session is streaming
+# for real, then exercise the exact call shapes fm-branch-supervision.ts uses
+# today. No provider response is needed or awaited for the assertions below;
+# the doomed request against the unreachable provider only needs to leave the
+# session streaming long enough to observe, which is proven by polling rather
+# than assumed.
+lanedir="$TMP_ROOT/lane-agent-dir"
+mkdir -p "$lanedir" "$TMP_ROOT/lane-sessions"
+cat > "$lanedir/models.json" <<'JSON'
+{
+  "providers": {
+    "fm-live-fake": {
+      "baseUrl": "http://127.0.0.1:9/v1",
+      "api": "openai-completions",
+      "apiKey": "fm-live-placeholder",
+      "models": [
+        { "id": "fm-live-lane", "name": "fm live lane", "contextWindow": 8192, "maxTokens": 512 }
+      ]
+    }
+  }
+}
+JSON
+PI_PACKAGE_DIR="$PI_PACKAGE_DIR" PI_CODING_AGENT_DIR="$lanedir" FM_LIVE_SESSIONS="$TMP_ROOT/lane-sessions" \
+  node --input-type=module > "$TMP_ROOT/lane-output" 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+
+const pkg = pathToFileURL(`${process.env.PI_PACKAGE_DIR}/dist/index.js`).href;
+const { ModelRegistry, ModelRuntime, SessionManager, createAgentSession } = await import(pkg);
+const runtime = await ModelRuntime.create({
+  authPath: `${process.env.PI_CODING_AGENT_DIR}/auth.json`,
+  modelsPath: `${process.env.PI_CODING_AGENT_DIR}/models.json`,
+});
+const registry = new ModelRegistry(runtime);
+await registry.refresh();
+const model = registry.find("fm-live-fake", "fm-live-lane");
+if (!model) throw new Error("the real registry did not resolve the locally declared lane-probe model");
+
+const cwd = process.cwd();
+const sessions = process.env.FM_LIVE_SESSIONS;
+const creating = SessionManager.create(cwd, sessions);
+const { session } = await createAgentSession({ cwd, sessionManager: creating, modelRuntime: runtime, model, tools: [] });
+
+const steerCalls = [];
+const followUpCalls = [];
+const realSteer = session.agent.steer.bind(session.agent);
+const realFollowUp = session.agent.followUp.bind(session.agent);
+session.agent.steer = (msg) => { steerCalls.push(msg); return realSteer(msg); };
+session.agent.followUp = (msg) => { followUpCalls.push(msg); return realFollowUp(msg); };
+
+const inFlight = session.prompt("go", {}).catch(() => {});
+let waitedMs = 0;
+while (!session.isStreaming && waitedMs < 2000) {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  waitedMs += 5;
+}
+if (!session.isStreaming) {
+  throw new Error("never observed AgentSession.isStreaming true - the probe's timing assumption no longer holds against this Pi version");
+}
+
+// The bug this task fixes: no triggerTurn, no deliverAs, while streaming.
+// Pi's real dispatch resolves this to a live agent.steer() call.
+await session.sendCustomMessage({ customType: "probe-bug", content: "unsafe" }, {});
+if (steerCalls.length !== 1 || followUpCalls.length !== 0) {
+  throw new Error(`the unsafe call shape must steer into the live turn exactly once: steer=${steerCalls.length} followUp=${followUpCalls.length}`);
+}
+
+// The fix fm-branch-supervision.ts sends today for a routine note: never
+// steers, regardless of streaming state.
+await session.sendCustomMessage({ customType: "probe-fix", content: "safe" }, { triggerTurn: false });
+if (steerCalls.length !== 1 || followUpCalls.length !== 0) {
+  throw new Error(`triggerTurn:false must never steer or follow-up while streaming: steer=${steerCalls.length} followUp=${followUpCalls.length}`);
+}
+
+// The captain-relevant path is unaffected: triggerTurn:true plus
+// deliverAs:"followUp" while streaming must use followUp, never steer.
+await session.sendCustomMessage({ customType: "probe-captain", content: "urgent" }, { triggerTurn: true, deliverAs: "followUp" });
+if (followUpCalls.length !== 1 || steerCalls.length !== 1) {
+  throw new Error(`captain delivery must call agent.followUp exactly once and add no new steer: steer=${steerCalls.length} followUp=${followUpCalls.length}`);
+}
+
+// The deferred note is not lost: once the run settles, Pi flushes it.
+await inFlight;
+if (!session.isIdle) {
+  throw new Error("the probe's in-flight prompt never settled - cannot prove the deferred note flushes");
+}
+if (!session.state.messages.some((message) => message.customType === "probe-fix" && message.content === "safe")) {
+  throw new Error("triggerTurn:false must flush its deferred note once the turn settles, not lose it");
+}
+console.log("LANE_OK");
+process.exit(0);
+EOF
+status=$?
+out=$(cat "$TMP_ROOT/lane-output")
+if [ "$status" -ne 0 ] || [ "$out" != "LANE_OK" ]; then
+  fail "real-SDK captain-lane guard failed against pi-coding-agent $PI_VERSION: $out"
+fi
+pass "real Pi SDK $PI_VERSION steers a no-options custom message into a live turn but never does with triggerTurn:false, proving the captain-lane guard (firstmate-user-lane-guard-5248) against the installed SDK"
