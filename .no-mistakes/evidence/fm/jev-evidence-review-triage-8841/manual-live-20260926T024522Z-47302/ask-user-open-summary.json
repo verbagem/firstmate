@@ -1,0 +1,48 @@
+{
+  "schema": "fm-jev-evidence-summary.v1",
+  "created_at": "2026-09-26T02:45:29.242Z",
+  "packets": 1,
+  "metrics": {
+    "unsupported_claim_recall": null,
+    "unsupported_claim_recall_count": "0/0",
+    "false_safe_low_review_count": 0,
+    "false_escalation_rate": 1,
+    "false_escalation_count": "1/1",
+    "evidence_span_quality": 1,
+    "evidence_span_quality_count": "1/1",
+    "deterministic_disagreement_count": 1,
+    "latency_ms_total": 48,
+    "latency_ms_mean": 48,
+    "tokens_total": 120,
+    "cost_usd_total": 0.00012,
+    "abstention_rate": 0,
+    "abstention_count": "0/1",
+    "deterministic_failure_count": 1,
+    "qualified_low_risk_packets": 0,
+    "strong_model_review_time_reduction": null,
+    "repeated_test_selection_turn_reduction": null,
+    "savings_claim_qualified": false
+  },
+  "acceptance": {
+    "corpus_minimum_met": false,
+    "unsupported_claim_recall_met": false,
+    "false_safe_low_review_count": 0,
+    "deterministic_failure_preservation_met": true,
+    "required_test_preservation_met": true,
+    "captain_decision_preservation_met": true,
+    "authority_boundary_preservation_met": true,
+    "reproducibility_sha256": "6284f47ffc45622f7b900bb39997cdf9191dc9ff7ea04170f632b5609ce76c57",
+    "stop_reasons": [],
+    "initial_acceptance_met": false
+  },
+  "authority_boundary": {
+    "advisory_only": true,
+    "can_pass_ci": false,
+    "can_approve_merge": false,
+    "can_certify_completion": false,
+    "can_suppress_deterministic_failure": false,
+    "can_waive_required_tests": false,
+    "can_answer_ask_user": false,
+    "can_expand_authority": false
+  }
+}

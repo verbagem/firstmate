@@ -1,0 +1,82 @@
+{
+  "generated_from": "real fm-jev-evidence-screen.sh CLI receipts",
+  "corpus": {
+    "stdout": "jev-evidence-screen: packets=112 needs_review=70 ledger=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/corpus-ledger.jsonl\nsummary=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/corpus-summary.json",
+    "packets": 112,
+    "corpus_fixture_variants": 104,
+    "corpus_fixture_unique_shapes": 104,
+    "unsupported_claim_recall": 1,
+    "false_safe_low_review_count": 0,
+    "deterministic_failure_preservation_met": true,
+    "required_test_preservation_met": true,
+    "captain_decision_preservation_met": true,
+    "authority_boundary_preservation_met": true,
+    "initial_acceptance_met": true,
+    "qualified_low_risk_packets": 40,
+    "savings_claim_qualified": true,
+    "stop_reasons": []
+  },
+  "advisory_triage": {
+    "stdout": "jev-evidence-screen: packets=1 needs_review=0 ledger=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/strong-reviewer-ledger.jsonl\nsummary=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/strong-reviewer-summary.json",
+    "review_priority": "normal",
+    "review_depth": "strong_model",
+    "suggested_lane": "existing_stronger_reviewer",
+    "suggested_test_ids": [
+      "required-contract",
+      "focused-regression"
+    ],
+    "evidence_owner": "no-mistakes",
+    "proposal_owner": "bin/fm-proposal-card.sh",
+    "boundary": {
+      "can_pass_ci": false,
+      "can_approve_merge": false,
+      "can_certify_completion": false,
+      "can_suppress_deterministic_failure": false,
+      "can_waive_required_tests": false,
+      "can_answer_ask_user": false,
+      "can_expand_authority": false
+    },
+    "evidence_references": [
+      "receipt-proposal-card-pass"
+    ]
+  },
+  "deterministic_precedence": {
+    "stdout": "jev-evidence-screen: packets=1 needs_review=1 ledger=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/ask-user-open-ledger.jsonl\nsummary=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/ask-user-open-summary.json",
+    "deterministic_status": "needs_review",
+    "finding_codes": [
+      "open_captain_decision"
+    ],
+    "recommendation_reason": "deterministic-failure-precedence",
+    "review_priority": "needs_review",
+    "review_depth": "deep",
+    "can_answer_ask_user": false
+  },
+  "malformed_candidates": {
+    "stdout": "jev-evidence-screen: packets=2 needs_review=2 ledger=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/malformed-candidates-ledger.jsonl\nsummary=/Users/temp/.no-mistakes/evidence/01M3DP2G08K7WATK33GA822VPA/manual-live-20260926T024522Z-47302/malformed-candidates-summary.json",
+    "records": [
+      {
+        "packet_id": "object-test-candidates",
+        "reason": "malformed-packet",
+        "suggested_test_ids": [],
+        "required_test_ids": []
+      },
+      {
+        "packet_id": "bad-id-test-candidates",
+        "reason": "malformed-packet",
+        "suggested_test_ids": [],
+        "required_test_ids": []
+      }
+    ]
+  },
+  "reproducibility": {
+    "digest_a": "d8aa1be4158d0ffcab94e8478e176a2674fa6b6478db2597eb11a0f47fd6d4b0",
+    "digest_a2": "d8aa1be4158d0ffcab94e8478e176a2674fa6b6478db2597eb11a0f47fd6d4b0",
+    "digest_b": "6088bde1b04537037538e62ea9b17bb4b8adafa93950b1ca4c237d668106e9ad",
+    "same_stable_digest_equal": true,
+    "stable_usage_change_changes_digest": true,
+    "variant_total_tokens": 121
+  },
+  "privacy": {
+    "sentinel_leaked": false
+  }
+}

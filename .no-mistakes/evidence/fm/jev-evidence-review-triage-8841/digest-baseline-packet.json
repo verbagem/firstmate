@@ -1,0 +1,35 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "digest-baseline",
+  "claimed_outcome": "The proposal-card renderer preserves the supplied rejection reason verbatim.",
+  "acceptance_criteria": [
+    "A rejection reason is optional.",
+    "A supplied rejection reason is preserved verbatim."
+  ],
+  "changed_files": [
+    {
+      "path": "bin/fm-proposal-card.sh",
+      "summary": "The reject command records reason_supplied from the exact why-not file contents."
+    },
+    {
+      "path": "tests/fm-proposal-card.test.sh",
+      "summary": "The public-interface regression checks both empty and multi-line rejection reasons."
+    }
+  ],
+  "test_receipts": [
+    {
+      "name": "bin/fm-test-run.sh tests/fm-proposal-card.test.sh",
+      "status": "passed",
+      "kind": "public-interface"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "receipt-proposal-card-pass",
+      "text": "ok - rejection path preserves optional why-not words without requiring a reason"
+    }
+  ],
+  "truth_label": "proven",
+  "executable_contract": true,
+  "expected_evidence_span": "receipt-proposal-card-pass"
+}

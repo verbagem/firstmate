@@ -1,0 +1,56 @@
+{
+  "schema": "fm-jev-evidence-packet.v1",
+  "id": "strong-reviewer",
+  "claimed_outcome": "PRIVATE_PROMPT_SENTINEL advisory evidence is complete.",
+  "acceptance_criteria": [
+    "A rejection reason is optional.",
+    "A supplied rejection reason is preserved verbatim."
+  ],
+  "changed_files": [
+    {
+      "path": "bin/fm-proposal-card.sh",
+      "summary": "The reject command records reason_supplied from the exact why-not file contents."
+    },
+    {
+      "path": "tests/fm-proposal-card.test.sh",
+      "summary": "The public-interface regression checks both empty and multi-line rejection reasons."
+    }
+  ],
+  "test_receipts": [
+    {
+      "name": "bin/fm-test-run.sh tests/fm-proposal-card.test.sh",
+      "status": "passed",
+      "kind": "public-interface"
+    }
+  ],
+  "evidence_excerpts": [
+    {
+      "id": "receipt-proposal-card-pass",
+      "text": "PRIVATE_EVIDENCE_SENTINEL executable support."
+    }
+  ],
+  "truth_label": "proven",
+  "executable_contract": true,
+  "expected_evidence_span": "receipt-proposal-card-pass",
+  "test_candidates": [
+    {
+      "id": "required-contract",
+      "name": "required public contract",
+      "kind": "public-interface",
+      "required": true
+    },
+    {
+      "id": "focused-regression",
+      "name": "focused regression",
+      "kind": "behavior",
+      "required": false
+    }
+  ],
+  "benchmark": {
+    "strong_model_review_ms_without_triage": 100,
+    "strong_model_review_ms_with_triage": 70,
+    "test_selection_turns_without_triage": 5,
+    "test_selection_turns_with_triage": 3,
+    "private_note": "PRIVATE_BENCHMARK_SENTINEL"
+  }
+}

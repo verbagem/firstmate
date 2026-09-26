@@ -1,0 +1,25 @@
+ok - no-key path is report-only, needs_review, and no-network
+ok - fixture corpus produces append-only ledger and required metrics
+ok - triage suggests existing review depth and tests with privacy-safe receipts
+ok - open captain decisions retain their existing authority path
+ok - medium-risk evidence cannot be reduced to focused review
+ok - screen requires separate ledger and summary outputs
+ok - output aliases are rejected before receipts
+ok - output preflight rejects bad targets before transport
+ok - transport request omits packet extras
+ok - summary metrics score only expected spans and complete token totals
+ok - reproducibility digest covers stable advisory receipt fields
+ok - invalid usage values are filtered from receipts and metrics
+ok - empty changed-file summaries route to needs_review
+ok - empty fixture directory is rejected before receipts
+ok - mode-specific inputs are rejected before receipts
+ok - authority boundary exposes no approval or merge control
+ok - json stdout surface is not part of the public contract
+ok - malformed packet metadata is sanitized in receipts
+ok - malformed test candidates are sanitized in receipts
+ok - evidence span choices are validated as a bounded set
+ok - low-confidence and malformed responses route to needs_review
+ok - confidence floor is fixed inside the advisory pilot
+ok - malformed confidence and fabricated span route to needs_review
+ok - model id is the local requested model, not transport echo
+ok - deterministic-failure precedence cannot be suppressed by Jev
