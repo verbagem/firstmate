@@ -13,11 +13,15 @@ const SUPPORT_CHOICES = new Set(['supported', 'unsupported', 'ambiguous', 'out_o
 const CONTRADICTION_CHOICES = new Set(['yes', 'no', 'ambiguous']);
 const MISSING_CHOICES = new Set(['none', 'direct_support', 'acceptance_criteria', 'test_receipts', 'changed_files', 'unknown']);
 const RISK_CHOICES = new Set(['low', 'medium', 'high', 'out_of_scope']);
+const REVIEW_DEPTH_CHOICES = new Set(['focused', 'standard', 'deep', 'strong_model']);
 const REQUESTED_JEV_MODEL = 'jev-latest';
 const MODEL_ID_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
 const CONFIDENCE_FLOOR = 0.6;
 const USAGE_FIELDS = ['input_tokens', 'output_tokens', 'total_tokens', 'cost_usd'];
 const TOKEN_USAGE_FIELDS = new Set(['input_tokens', 'output_tokens', 'total_tokens']);
+const MAX_STRING_LENGTH = 4000;
+const MAX_COLLECTION_LENGTH = 32;
+const TEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,80}$/;
 
 function usage() {
   process.stdout.write(`fm-jev-evidence-screen.sh - advisory-only Jev evidence/completion screening pilot
@@ -28,6 +32,7 @@ Usage:
 
 The result is report-only.
 Missing keys, low confidence, malformed responses, and transport errors route to needs_review.
+Suggested tests never omit packet-declared required tests.
 `);
 }
 
@@ -183,6 +188,11 @@ function safePacketString(packet, key) {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function safeReferenceId(packet, key) {
+  const value = safePacketString(packet, key);
+  return value && TEST_ID_PATTERN.test(value) ? value : null;
+}
+
 function safeTruthLabel(packet) {
   const label = safePacketString(packet, 'truth_label');
   return TRUTH_LABELS.has(label) ? label : null;
@@ -190,9 +200,10 @@ function safeTruthLabel(packet) {
 
 function validEvidenceSpanChoices(packet) {
   if (!isPlainObject(packet) || !Array.isArray(packet.evidence_excerpts)) return null;
+  if (packet.evidence_excerpts.length > MAX_COLLECTION_LENGTH) return null;
   const choices = new Set();
   for (const excerpt of packet.evidence_excerpts) {
-    if (!isPlainObject(excerpt) || typeof excerpt.id !== 'string' || excerpt.id.length === 0 || excerpt.id === 'none' || choices.has(excerpt.id)) {
+    if (!isPlainObject(excerpt) || typeof excerpt.id !== 'string' || !TEST_ID_PATTERN.test(excerpt.id) || excerpt.id === 'none' || choices.has(excerpt.id)) {
       return null;
     }
     choices.add(excerpt.id);
@@ -202,7 +213,7 @@ function validEvidenceSpanChoices(packet) {
 
 function safeExpectedEvidenceSpan(packet) {
   const expected = safePacketString(packet, 'expected_evidence_span');
-  if (!expected) return null;
+  if (!expected || !TEST_ID_PATTERN.test(expected)) return null;
   const choices = validEvidenceSpanChoices(packet);
   if (!choices) return null;
   return expected === 'none' || choices.has(expected) ? expected : null;
@@ -220,35 +231,101 @@ function sanitizedTestReceipts(packet) {
   }));
 }
 
-function requireString(obj, key, at, errors) {
-  if (typeof obj[key] !== 'string' || obj[key].length === 0) {
+function safeTestCandidates(packet) {
+  if (!isPlainObject(packet) || !Array.isArray(packet.test_candidates) || packet.test_candidates.length > MAX_COLLECTION_LENGTH) return [];
+  const seen = new Set();
+  const candidates = [];
+  for (const candidate of packet.test_candidates) {
+    if (!isPlainObject(candidate)) continue;
+    if (typeof candidate.id !== 'string' || !TEST_ID_PATTERN.test(candidate.id) || candidate.id === 'none' || seen.has(candidate.id)) continue;
+    if (typeof candidate.name !== 'string' || candidate.name.length === 0 || candidate.name.length > MAX_STRING_LENGTH) continue;
+    if (candidate.kind !== undefined && (typeof candidate.kind !== 'string' || candidate.kind.length === 0 || candidate.kind.length > 80)) continue;
+    seen.add(candidate.id);
+    candidates.push({
+      id: candidate.id,
+      name: candidate.name,
+      ...(candidate.kind === undefined ? {} : { kind: candidate.kind }),
+      required: candidate.required === true,
+    });
+  }
+  return candidates;
+}
+
+function requiredTestIds(packet) {
+  return safeTestCandidates(packet).filter((candidate) => candidate.required).map((candidate) => candidate.id);
+}
+
+function requireString(obj, key, at, errors, maxLength = MAX_STRING_LENGTH) {
+  if (typeof obj[key] !== 'string' || obj[key].length === 0 || obj[key].length > maxLength) {
     errors.push(`${at}.${key}: required non-empty string`);
   }
 }
 
-function optionalString(obj, key, at, errors) {
-  if (obj[key] !== undefined && (typeof obj[key] !== 'string' || obj[key].length === 0)) {
+function optionalString(obj, key, at, errors, maxLength = MAX_STRING_LENGTH) {
+  if (obj[key] !== undefined && (typeof obj[key] !== 'string' || obj[key].length === 0 || obj[key].length > maxLength)) {
     errors.push(`${at}.${key}: required non-empty string when present`);
   }
+}
+
+function validateBoundedArray(value, at, errors, { required = false } = {}) {
+  if (!Array.isArray(value) || (required && value.length === 0)) {
+    errors.push(`${at}: required ${required ? 'non-empty ' : ''}array`);
+    return false;
+  }
+  if (value.length > MAX_COLLECTION_LENGTH) {
+    errors.push(`${at}: exceeds ${MAX_COLLECTION_LENGTH} items`);
+    return false;
+  }
+  return true;
+}
+
+function validateBenchmark(benchmark, errors) {
+  if (benchmark === undefined) return;
+  if (!isPlainObject(benchmark)) {
+    errors.push('packet.benchmark: required object when present');
+    return;
+  }
+  const fields = {
+    strong_model_review_ms_without_triage: 86400000,
+    strong_model_review_ms_with_triage: 86400000,
+    test_selection_turns_without_triage: 10000,
+    test_selection_turns_with_triage: 10000,
+  };
+  for (const [key, maximum] of Object.entries(fields)) {
+    if (!Number.isSafeInteger(benchmark[key]) || benchmark[key] < 0 || benchmark[key] > maximum) {
+      errors.push(`packet.benchmark.${key}: required bounded non-negative integer`);
+    }
+  }
+}
+
+function sanitizedBenchmark(benchmark) {
+  if (!isPlainObject(benchmark)) return null;
+  return {
+    strong_model_review_ms_without_triage: benchmark.strong_model_review_ms_without_triage,
+    strong_model_review_ms_with_triage: benchmark.strong_model_review_ms_with_triage,
+    test_selection_turns_without_triage: benchmark.test_selection_turns_without_triage,
+    test_selection_turns_with_triage: benchmark.test_selection_turns_with_triage,
+  };
 }
 
 function validatePacket(packet) {
   const errors = [];
   if (!isPlainObject(packet)) return ['packet: required object'];
   if (packet.schema !== PACKET_SCHEMA) errors.push(`schema: expected ${PACKET_SCHEMA}`);
-  requireString(packet, 'id', 'packet', errors);
+  requireString(packet, 'id', 'packet', errors, 80);
+  if (typeof packet.id === 'string' && !TEST_ID_PATTERN.test(packet.id)) {
+    errors.push('packet.id: required bounded reference id');
+  }
   requireString(packet, 'claimed_outcome', 'packet', errors);
   if (!TRUTH_LABELS.has(packet.truth_label)) errors.push('packet.truth_label: unsupported label');
-  if (!Array.isArray(packet.acceptance_criteria) || packet.acceptance_criteria.length === 0) {
-    errors.push('packet.acceptance_criteria: required non-empty array');
-  } else {
+  if (validateBoundedArray(packet.acceptance_criteria, 'packet.acceptance_criteria', errors, { required: true })) {
     packet.acceptance_criteria.forEach((criterion, index) => {
-      if (typeof criterion !== 'string' || criterion.length === 0) errors.push(`packet.acceptance_criteria[${index}]: required non-empty string`);
+      if (typeof criterion !== 'string' || criterion.length === 0 || criterion.length > MAX_STRING_LENGTH) {
+        errors.push(`packet.acceptance_criteria[${index}]: required non-empty string`);
+      }
     });
   }
-  if (!Array.isArray(packet.changed_files)) {
-    errors.push('packet.changed_files: required array');
-  } else {
+  if (validateBoundedArray(packet.changed_files, 'packet.changed_files', errors)) {
     packet.changed_files.forEach((file, index) => {
       const at = `packet.changed_files[${index}]`;
       if (!isPlainObject(file)) {
@@ -259,9 +336,7 @@ function validatePacket(packet) {
       requireString(file, 'summary', at, errors);
     });
   }
-  if (!Array.isArray(packet.test_receipts)) {
-    errors.push('packet.test_receipts: required array');
-  } else {
+  if (validateBoundedArray(packet.test_receipts, 'packet.test_receipts', errors)) {
     packet.test_receipts.forEach((receipt, index) => {
       const at = `packet.test_receipts[${index}]`;
       if (!isPlainObject(receipt)) {
@@ -275,9 +350,7 @@ function validatePacket(packet) {
       optionalString(receipt, 'kind', at, errors);
     });
   }
-  if (!Array.isArray(packet.evidence_excerpts) || packet.evidence_excerpts.length === 0) {
-    errors.push('packet.evidence_excerpts: required non-empty array');
-  } else {
+  if (validateBoundedArray(packet.evidence_excerpts, 'packet.evidence_excerpts', errors, { required: true })) {
     const excerptIds = new Set();
     packet.evidence_excerpts.forEach((excerpt, index) => {
       const at = `packet.evidence_excerpts[${index}]`;
@@ -285,7 +358,7 @@ function validatePacket(packet) {
         errors.push(`${at}: required object`);
         return;
       }
-      if (typeof excerpt.id !== 'string' || excerpt.id.length === 0) {
+      if (typeof excerpt.id !== 'string' || excerpt.id.length === 0 || !TEST_ID_PATTERN.test(excerpt.id)) {
         errors.push(`${at}.id: required non-empty string`);
       } else if (excerpt.id === 'none') {
         errors.push(`${at}.id: reserved evidence span choice`);
@@ -304,6 +377,30 @@ function validatePacket(packet) {
   if (packet.executable_contract !== undefined && typeof packet.executable_contract !== 'boolean') {
     errors.push('packet.executable_contract: required boolean when present');
   }
+  if (packet.ask_user_open !== undefined && typeof packet.ask_user_open !== 'boolean') {
+    errors.push('packet.ask_user_open: required boolean when present');
+  }
+  if (packet.test_candidates !== undefined && validateBoundedArray(packet.test_candidates, 'packet.test_candidates', errors)) {
+    const testIds = new Set();
+    packet.test_candidates.forEach((candidate, index) => {
+      const at = `packet.test_candidates[${index}]`;
+      if (!isPlainObject(candidate)) {
+        errors.push(`${at}: required object`);
+        return;
+      }
+      requireString(candidate, 'id', at, errors, 80);
+      requireString(candidate, 'name', at, errors);
+      optionalString(candidate, 'kind', at, errors, 80);
+      if (typeof candidate.id === 'string' && (!TEST_ID_PATTERN.test(candidate.id) || candidate.id === 'none' || testIds.has(candidate.id))) {
+        errors.push(`${at}.id: required unique bounded choice id`);
+      } else if (typeof candidate.id === 'string') {
+        testIds.add(candidate.id);
+      }
+      if (candidate.required !== undefined && typeof candidate.required !== 'boolean') {
+        errors.push(`${at}.required: required boolean when present`);
+      }
+    });
+  }
   if (packet.scope !== undefined) {
     if (!isPlainObject(packet.scope)) {
       errors.push('packet.scope: required object when present');
@@ -320,6 +417,7 @@ function validatePacket(packet) {
     }
   }
   optionalString(packet, 'expected_evidence_span', 'packet', errors);
+  validateBenchmark(packet.benchmark, errors);
   return errors;
 }
 
@@ -332,12 +430,12 @@ function deterministicChecks(packet) {
   if (Array.isArray(allowed) && allowed.length > 0) {
     for (const file of packet.changed_files) {
       if (!allowed.some((prefix) => file.path === prefix || file.path.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`))) {
-        findings.push({ code: 'out_of_scope_diff', severity: 'high', detail: `${file.path} is outside the allowed evidence scope` });
+        findings.push({ code: 'out_of_scope_diff', severity: 'high', detail: 'a changed-file reference is outside the allowed evidence scope' });
       }
     }
   }
   if (packet.head?.expected && packet.head?.observed && packet.head.expected !== packet.head.observed) {
-    findings.push({ code: 'stale_head', severity: 'high', detail: `expected ${packet.head.expected}, observed ${packet.head.observed}` });
+    findings.push({ code: 'stale_head', severity: 'high', detail: 'the observed head does not match the expected head' });
   }
   if (packet.executable_contract !== false) {
     const passedReceipts = packet.test_receipts.filter((receipt) => receipt.status === 'passed');
@@ -348,6 +446,9 @@ function deterministicChecks(packet) {
   if (packet.test_receipts.some((receipt) => receipt.status === 'failed')) {
     findings.push({ code: 'failed_test_receipt', severity: 'high', detail: 'a test/check receipt is failed' });
   }
+  if (packet.ask_user_open === true) {
+    findings.push({ code: 'open_captain_decision', severity: 'high', detail: 'an existing captain decision remains open' });
+  }
   return {
     status: findings.length > 0 ? 'needs_review' : 'passed',
     findings,
@@ -357,6 +458,11 @@ function deterministicChecks(packet) {
 
 function makeJevRequest(packet) {
   const criteria = Object.fromEntries(packet.evidence_excerpts.map((excerpt) => [excerpt.id, excerpt.text]));
+  const testCandidates = safeTestCandidates(packet);
+  const testCriteria = Object.fromEntries(testCandidates.map((candidate) => [
+    candidate.id,
+    `${candidate.name}${candidate.kind ? ` (${candidate.kind})` : ''}`,
+  ]));
   return {
     model: localJevModelId(),
     state: {
@@ -367,8 +473,10 @@ function makeJevRequest(packet) {
         changed_files: sanitizedChangedFiles(packet),
         test_receipts: sanitizedTestReceipts(packet),
         evidence_excerpts: packet.evidence_excerpts.map(({ id, text }) => ({ id, text })),
+        test_candidates: testCandidates,
+        ask_user_open: packet.ask_user_open === true,
       },
-      authority_boundary: 'advisory only; cannot pass/fail CI, approve merge, certify completion, suppress deterministic failure, or answer ask-user findings',
+      authority_boundary: 'advisory only; cannot pass/fail CI, approve merge, certify completion, suppress deterministic failure, waive required tests, or answer ask-user findings',
     },
     questions: {
       direct_support: {
@@ -411,6 +519,22 @@ function makeJevRequest(packet) {
       evidence_span: {
         type: 'choice',
         criteria: { none: 'No evidence span is useful.', ...criteria },
+      },
+      review_depth: {
+        type: 'choice',
+        criteria: {
+          focused: 'A focused review of the cited evidence is appropriate.',
+          standard: 'The existing standard no-mistakes review depth is appropriate.',
+          deep: 'Deep review is appropriate because evidence is incomplete, risky, or contradicted.',
+          strong_model: 'Route the packet to an existing stronger reviewer.',
+        },
+      },
+      selected_test: {
+        type: 'choice',
+        criteria: {
+          none: 'No optional test can be suggested from this packet.',
+          ...testCriteria,
+        },
       },
     },
   };
@@ -484,9 +608,12 @@ function parseJevResponse(response, packet) {
   const contradiction = answer('contradiction', CONTRADICTION_CHOICES);
   const missingEvidence = answer('missing_evidence', MISSING_CHOICES);
   const riskCategory = answer('risk_category', RISK_CHOICES);
+  const reviewDepth = answer('review_depth', REVIEW_DEPTH_CHOICES);
+  const selectedTestChoices = new Set(['none', ...safeTestCandidates(packet).map((candidate) => candidate.id)]);
+  const selectedTest = answer('selected_test', selectedTestChoices);
   const span = response.answers.evidence_span;
-  if (!directSupport.ok || !contradiction.ok || !missingEvidence.ok || !riskCategory.ok) {
-    const failed = [directSupport, contradiction, missingEvidence, riskCategory].find((item) => !item.ok);
+  if (!directSupport.ok || !contradiction.ok || !missingEvidence.ok || !riskCategory.ok || !reviewDepth.ok || !selectedTest.ok) {
+    const failed = [directSupport, contradiction, missingEvidence, riskCategory, reviewDepth, selectedTest].find((item) => !item.ok);
     return {
       status: 'needs_review',
       abstained: true,
@@ -515,43 +642,69 @@ function parseJevResponse(response, packet) {
     missing_evidence: missingEvidence,
     risk_category: riskCategory,
     evidence_span: { choice: span.choice, confidence: span.confidence },
+    review_depth: reviewDepth,
+    selected_test: selectedTest,
     usage,
   };
 }
 
-function recommendation(deterministic, jev) {
+function recommendation(packet, deterministic, jev) {
+  const requiredTests = requiredTestIds(packet);
+  const selectedTest = jev.selected_test?.choice;
+  const suggestedTests = [...new Set([
+    ...requiredTests,
+    ...(selectedTest && selectedTest !== 'none' ? [selectedTest] : []),
+  ])];
   const boundary = {
     can_pass_ci: false,
     can_approve_merge: false,
     can_certify_completion: false,
     can_suppress_deterministic_failure: false,
+    can_waive_required_tests: false,
     can_answer_ask_user: false,
+    can_expand_authority: false,
   };
   if (deterministic.status !== 'passed') {
     return {
       review_priority: 'needs_review',
-      suggested_lane: 'human_or_no_mistakes_review',
+      review_depth: 'deep',
+      suggested_lane: 'existing_no_mistakes_review',
+      suggested_test_ids: requiredTests,
       reason: 'deterministic-failure-precedence',
+      evidence_owner: 'no-mistakes',
+      proposal_owner: 'bin/fm-proposal-card.sh',
       boundary,
     };
   }
   if (jev.status === 'needs_review') {
     return {
       review_priority: 'needs_review',
-      suggested_lane: 'human_or_no_mistakes_review',
+      review_depth: 'deep',
+      suggested_lane: 'existing_no_mistakes_review',
+      suggested_test_ids: requiredTests,
       reason: jev.reason,
+      evidence_owner: 'no-mistakes',
+      proposal_owner: 'bin/fm-proposal-card.sh',
       boundary,
     };
   }
+  const requestedDepth = jev.review_depth?.choice || 'standard';
+  const reviewDepth = requestedDepth === 'focused' && jev.risk_category?.choice !== 'low'
+    ? 'standard'
+    : requestedDepth;
   return {
     review_priority: 'normal',
-    suggested_lane: 'existing_review_path',
+    review_depth: reviewDepth,
+    suggested_lane: reviewDepth === 'strong_model' ? 'existing_stronger_reviewer' : 'existing_no_mistakes_review',
+    suggested_test_ids: suggestedTests,
     reason: 'report-only-advisory-support',
+    evidence_owner: 'no-mistakes',
+    proposal_owner: 'bin/fm-proposal-card.sh',
     boundary,
   };
 }
 
-function makeRecord(packetPath, packetText, packet, opts) {
+function makeRecord(packetText, packet, opts) {
   const schemaErrors = validatePacket(packet);
   let deterministic;
   let jev;
@@ -565,14 +718,17 @@ function makeRecord(packetPath, packetText, packet, opts) {
   const record = {
     schema: LEDGER_SCHEMA,
     created_at: new Date().toISOString(),
-    packet_path: packetPath,
     packet_sha256: crypto.createHash('sha256').update(packetText).digest('hex'),
-    packet_id: safePacketString(packet, 'id'),
+    packet_id: safeReferenceId(packet, 'id'),
     truth_label: safeTruthLabel(packet),
-    claimed_outcome: safePacketString(packet, 'claimed_outcome'),
+    claim_sha256: typeof packet?.claimed_outcome === 'string'
+      ? crypto.createHash('sha256').update(packet.claimed_outcome).digest('hex')
+      : null,
+    evidence_references: validEvidenceSpanChoices(packet) ? [...validEvidenceSpanChoices(packet)] : [],
+    benchmark: schemaErrors.length === 0 ? sanitizedBenchmark(packet.benchmark) : null,
     deterministic_checks: deterministic,
     jev_advisory: jev,
-    recommendation: recommendation(deterministic, jev),
+    recommendation: recommendation(isPlainObject(packet) ? packet : {}, deterministic, jev),
   };
   return record;
 }
@@ -643,6 +799,11 @@ function ratio(numerator, denominator) {
   return Number((numerator / denominator).toFixed(4));
 }
 
+function reductionRatio(withoutTriage, withTriage) {
+  if (withoutTriage <= 0) return null;
+  return Number(((withoutTriage - withTriage) / withoutTriage).toFixed(4));
+}
+
 function usageTokenTotal(usage) {
   if (typeof usage?.total_tokens === 'number' && Number.isFinite(usage.total_tokens)) return usage.total_tokens;
   const input = typeof usage?.input_tokens === 'number' && Number.isFinite(usage.input_tokens) ? usage.input_tokens : 0;
@@ -650,9 +811,22 @@ function usageTokenTotal(usage) {
   return input + output;
 }
 
+function reproducibleRecord(record) {
+  const { created_at, jev_advisory: advisory, ...rest } = record;
+  const { latency_ms, ...stableAdvisory } = advisory || {};
+  return {
+    ...rest,
+    jev_advisory: stableAdvisory,
+  };
+}
+
 function summarize(records) {
   const unsupportedTruth = records.filter((record) => ['unsupported', 'contradicted'].includes(record.truth_label));
   const unsupportedCaught = unsupportedTruth.filter((record) => record.recommendation.review_priority === 'needs_review');
+  const falseSafeLowReview = unsupportedTruth.filter((record) => (
+    record.recommendation.review_priority !== 'needs_review'
+    || record.recommendation.review_depth === 'focused'
+  ));
   const provenTruth = records.filter((record) => record.truth_label === 'proven');
   const falseEscalations = provenTruth.filter((record) => record.recommendation.review_priority === 'needs_review');
   const spanEligible = records.filter((record) => record.jev_advisory.abstained === false && record.expected_evidence_span);
@@ -670,6 +844,66 @@ function summarize(records) {
   const totalTokens = records.reduce((sum, record) => sum + usageTokenTotal(record.jev_advisory.usage), 0);
   const totalCost = records.reduce((sum, record) => sum + (Number(record.jev_advisory.usage?.cost_usd) || 0), 0);
   const abstentions = records.filter((record) => record.jev_advisory.abstained).length;
+  const deterministicFailures = records.filter((record) => record.deterministic_checks.status !== 'passed');
+  const downgradedDeterministicFailures = deterministicFailures.filter((record) => (
+    record.recommendation.review_priority !== 'needs_review'
+    || record.recommendation.review_depth !== 'deep'
+    || record.recommendation.reason !== 'deterministic-failure-precedence'
+  ));
+  const requiredTestWaivers = records.filter((record) => {
+    const packetRequired = record.required_test_ids || [];
+    const suggested = new Set(record.recommendation.suggested_test_ids || []);
+    return packetRequired.some((id) => !suggested.has(id));
+  });
+  const askUserBypasses = records.filter((record) => (
+    record.deterministic_checks.findings.some((finding) => finding.code === 'open_captain_decision')
+    && record.recommendation.review_priority !== 'needs_review'
+  ));
+  const authorityExpansions = records.filter((record) => (
+    Object.values(record.recommendation.boundary || {}).some((value) => value !== false)
+  ));
+  const qualifiedLowRisk = records.filter((record) => (
+    record.truth_label === 'proven'
+    && record.deterministic_checks.status === 'passed'
+    && record.recommendation.review_depth === 'focused'
+    && record.benchmark
+  ));
+  const reviewWithout = qualifiedLowRisk.reduce((sum, record) => sum + record.benchmark.strong_model_review_ms_without_triage, 0);
+  const reviewWith = qualifiedLowRisk.reduce((sum, record) => sum + record.benchmark.strong_model_review_ms_with_triage, 0);
+  const turnsWithout = qualifiedLowRisk.reduce((sum, record) => sum + record.benchmark.test_selection_turns_without_triage, 0);
+  const turnsWith = qualifiedLowRisk.reduce((sum, record) => sum + record.benchmark.test_selection_turns_with_triage, 0);
+  const reviewReduction = reductionRatio(reviewWithout, reviewWith);
+  const turnReduction = reductionRatio(turnsWithout, turnsWith);
+  const reproducibleShape = records.map(reproducibleRecord);
+  const stopReasons = [];
+  if (downgradedDeterministicFailures.length > 0) stopReasons.push('deterministic-failure-hidden-or-downgraded');
+  if (falseSafeLowReview.length > 0) stopReasons.push('false-safe-or-low-review-classification');
+  if (requiredTestWaivers.length > 0) stopReasons.push('required-test-waived');
+  if (askUserBypasses.length > 0) stopReasons.push('captain-decision-bypassed');
+  if (authorityExpansions.length > 0) stopReasons.push('authority-expanded');
+  const acceptance = {
+    corpus_minimum_met: records.length >= 100,
+    unsupported_claim_recall_met: unsupportedTruth.length > 0 && unsupportedCaught.length / unsupportedTruth.length >= 0.95,
+    false_safe_low_review_count: falseSafeLowReview.length,
+    deterministic_failure_preservation_met: downgradedDeterministicFailures.length === 0,
+    required_test_preservation_met: requiredTestWaivers.length === 0,
+    captain_decision_preservation_met: askUserBypasses.length === 0,
+    authority_boundary_preservation_met: authorityExpansions.length === 0,
+    reproducibility_sha256: crypto.createHash('sha256').update(JSON.stringify(reproducibleShape)).digest('hex'),
+    stop_reasons: stopReasons,
+  };
+  acceptance.initial_acceptance_met = acceptance.corpus_minimum_met
+    && acceptance.unsupported_claim_recall_met
+    && acceptance.false_safe_low_review_count === 0
+    && acceptance.deterministic_failure_preservation_met
+    && acceptance.required_test_preservation_met
+    && acceptance.captain_decision_preservation_met
+    && acceptance.authority_boundary_preservation_met
+    && acceptance.stop_reasons.length === 0;
+  const savingsQualified = qualifiedLowRisk.length > 0
+    && reviewReduction !== null && reviewReduction >= 0.2
+    && turnReduction !== null && turnReduction >= 0.2
+    && acceptance.initial_acceptance_met;
   return {
     schema: SUMMARY_SCHEMA,
     created_at: new Date().toISOString(),
@@ -677,6 +911,7 @@ function summarize(records) {
     metrics: {
       unsupported_claim_recall: ratio(unsupportedCaught.length, unsupportedTruth.length),
       unsupported_claim_recall_count: `${unsupportedCaught.length}/${unsupportedTruth.length}`,
+      false_safe_low_review_count: falseSafeLowReview.length,
       false_escalation_rate: ratio(falseEscalations.length, provenTruth.length),
       false_escalation_count: `${falseEscalations.length}/${provenTruth.length}`,
       evidence_span_quality: ratio(spanExact.length, spanEligible.length),
@@ -688,14 +923,22 @@ function summarize(records) {
       cost_usd_total: Number(totalCost.toFixed(6)),
       abstention_rate: ratio(abstentions, records.length),
       abstention_count: `${abstentions}/${records.length}`,
+      deterministic_failure_count: deterministicFailures.length,
+      qualified_low_risk_packets: qualifiedLowRisk.length,
+      strong_model_review_time_reduction: reviewReduction,
+      repeated_test_selection_turn_reduction: turnReduction,
+      savings_claim_qualified: savingsQualified,
     },
+    acceptance,
     authority_boundary: {
       advisory_only: true,
       can_pass_ci: false,
       can_approve_merge: false,
       can_certify_completion: false,
       can_suppress_deterministic_failure: false,
+      can_waive_required_tests: false,
       can_answer_ask_user: false,
+      can_expand_authority: false,
     },
   };
 }
@@ -704,6 +947,7 @@ function attachExpectedSpan(records, packets) {
   return records.map((record, index) => ({
     ...record,
     expected_evidence_span: safeExpectedEvidenceSpan(packets[index]),
+    required_test_ids: requiredTestIds(packets[index]),
   }));
 }
 
@@ -716,8 +960,12 @@ function run() {
   const records = [];
   for (const packetPath of packetPaths) {
     const { value, text } = readJsonFile(packetPath, `packet ${packetPath}`);
-    packets.push(value);
-    records.push(makeRecord(packetPath, text, value, opts));
+    const values = command === 'evaluate' && Array.isArray(value) ? value : [value];
+    for (const packet of values) {
+      const packetText = values.length === 1 ? text : JSON.stringify(packet);
+      packets.push(packet);
+      records.push(makeRecord(packetText, packet, opts));
+    }
   }
   const enriched = attachExpectedSpan(records, packets);
   appendLedger(opts.ledger, enriched);

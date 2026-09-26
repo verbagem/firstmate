@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# fm-jev-evidence-screen.sh - advisory-only Jev evidence/completion screening pilot.
+# fm-jev-evidence-screen.sh - advisory-only Jev evidence and test-selection triage.
 #
 # This tool evaluates synthetic or captured evidence packets and appends report-only
-# receipts.
+# receipts with bounded review-depth and relevant-test suggestions.
 # It never passes or fails CI, approves a merge, certifies completion, suppresses a
-# deterministic failure, answers an ask-user finding, starts a daemon, or writes to
-# Firstmate runtime state.
+# deterministic failure, waives a required test, answers an ask-user finding,
+# starts a daemon, or writes to Firstmate runtime state.
 #
 # Usage:
 #   fm-jev-evidence-screen.sh screen --packet <packet.json> --ledger <ledger.jsonl> --summary <summary.json> [--typesafe-command <path>]
