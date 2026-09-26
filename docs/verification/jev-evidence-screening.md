@@ -51,12 +51,12 @@ It also proves low-confidence and malformed responses route to `needs_review`, m
 The corpus result records 100 percent unsupported-claim recall, zero false safe or focused-review classifications, preserved deterministic failures and required tests, and matching normalized digests across repeated runs.
 The digest regression proves a stable advisory receipt field change changes the reproducibility digest while volatile latency remains excluded.
 Qualified low-risk fixtures record a strong-model review-time reduction above 20 percent and a repeated test-selection-turn reduction above 20 percent, so only those synthetic measurements set the savings claim as qualified.
-The privacy regression places unique private sentinels in raw claim and evidence text, then proves neither the ledger nor summary contains either sentinel.
+The privacy regression places unique private sentinels in raw claim, evidence, and benchmark text, then proves neither the ledger nor summary contains any sentinel.
 
 Observed on 2026-09-25:
 
 ```text
-FM_TEST_BEGIN 2026-09-26T02:00:32Z tests/fm-jev-evidence-screen.test.sh family=unclassified expected_gate_skip=none
+FM_TEST_BEGIN 2026-09-26T02:13:41Z tests/fm-jev-evidence-screen.test.sh family=unclassified expected_gate_skip=none
 ok - no-key path is report-only, needs_review, and no-network
 ok - fixture corpus produces append-only ledger and required metrics
 ok - triage suggests existing review depth and tests with privacy-safe receipts
@@ -82,8 +82,8 @@ ok - confidence floor is fixed inside the advisory pilot
 ok - malformed confidence and fabricated span route to needs_review
 ok - model id is the local requested model, not transport echo
 ok - deterministic-failure precedence cannot be suppressed by Jev
-FM_TEST_END 2026-09-26T02:02:52Z tests/fm-jev-evidence-screen.test.sh exit=0 duration_ms=139509 gate_skip=false
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=139895
-FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=139509 failed=0
-FM_TEST_SLOWEST rank=1 script=tests/fm-jev-evidence-screen.test.sh duration_ms=139509
+FM_TEST_END 2026-09-26T02:15:31Z tests/fm-jev-evidence-screen.test.sh exit=0 duration_ms=109064 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=111458
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=109064 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-jev-evidence-screen.test.sh duration_ms=109064
 ```

@@ -267,8 +267,12 @@ test_triage_suggests_existing_review_and_tests_without_authority() {
     .claimed_outcome == null and
     .evidence_references == ["receipt-proposal-card-pass"]
   ' "$triage_ledger" >/dev/null || fail "advisory triage did not preserve existing owners, required tests, and authority"
-  assert_no_grep "PRIVATE_PROMPT_SENTINEL|PRIVATE_EVIDENCE_SENTINEL|PRIVATE_BENCHMARK_SENTINEL" "$triage_ledger" "receipt leaked raw private packet text"
-  assert_no_grep "PRIVATE_PROMPT_SENTINEL|PRIVATE_EVIDENCE_SENTINEL|PRIVATE_BENCHMARK_SENTINEL" "$triage_summary" "summary leaked raw private packet text"
+  assert_no_grep "PRIVATE_PROMPT_SENTINEL" "$triage_ledger" "receipt leaked raw private claim text"
+  assert_no_grep "PRIVATE_EVIDENCE_SENTINEL" "$triage_ledger" "receipt leaked raw private evidence text"
+  assert_no_grep "PRIVATE_BENCHMARK_SENTINEL" "$triage_ledger" "receipt leaked raw private benchmark text"
+  assert_no_grep "PRIVATE_PROMPT_SENTINEL" "$triage_summary" "summary leaked raw private claim text"
+  assert_no_grep "PRIVATE_EVIDENCE_SENTINEL" "$triage_summary" "summary leaked raw private evidence text"
+  assert_no_grep "PRIVATE_BENCHMARK_SENTINEL" "$triage_summary" "summary leaked raw private benchmark text"
   pass "triage suggests existing review depth and tests with privacy-safe receipts"
 }
 
