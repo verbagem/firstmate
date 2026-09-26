@@ -190,14 +190,18 @@ make_run_primary() {
 run_hook() {  # <root> [args...]
   local root=$1
   shift
+  # Cursor markers outrank later markers and ancestry. Clear them or an ambient
+  # Cursor agent classifies the simulated harness as Cursor.
   env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
     FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE="$root" FM_HOME="$root" PATH="$RUN_PATH" "$RUN" "$@"
 }
 
 run_hook_pi() {  # <root> [args...]
   local root=$1
   shift
-  env -u CLAUDECODE -u GROK_AGENT PI_CODING_AGENT=true FM_PI_HARNESS=pi \
+  env -u CLAUDECODE -u GROK_AGENT -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+    PI_CODING_AGENT=true FM_PI_HARNESS=pi \
     FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE="$root" FM_HOME="$root" PATH="$RUN_PATH" "$RUN" "$@"
 }
 
@@ -264,6 +268,36 @@ test_run_rebuild_forwards_source_to_drifted_instruction_refresh() {
     || fail "an already-owned resume should preserve context without re-running the digest"
 
   pass "run wrapper forwards only stale-cache rebuild sources to immutable-baseline instruction refresh"
+}
+
+# Parent Cursor markers must not hide this Pi compact. detect_own tests them
+# before PI_CODING_AGENT, and a Cursor-hosted run of this suite carries both.
+test_run_pi_compact_refresh_survives_ambient_cursor_markers() {
+  local root="$TMP_ROOT/run-instruction-refresh-cursor" baseline compact_out clear_out
+  make_run_primary "$root"
+  printf '%s\n' 'RUN_TIER_AGENTS=original' > "$root/AGENTS.md"
+  CURSOR_AGENT=1 CURSOR_INVOKED_AS=cursor-agent \
+    run_hook_pi "$root" --source startup </dev/null >/dev/null
+  assert_present "$root/state/.session-start-agents-baseline" \
+    "ambient Cursor markers kept Pi startup from recording an instruction baseline"
+  baseline=$(cat "$root/state/.session-start-agents-baseline")
+
+  printf '%s\n' 'RUN_TIER_AGENTS=updated' > "$root/AGENTS.md"
+  compact_out=$(CURSOR_AGENT=1 CURSOR_INVOKED_AS=cursor-agent \
+    run_hook_pi "$root" --source compact </dev/null)
+  clear_out=$(CURSOR_AGENT=1 CURSOR_INVOKED_AS=cursor-agent \
+    run_hook_pi "$root" --source clear </dev/null)
+
+  assert_contains "$compact_out" "primary harness: pi" \
+    "ambient Cursor markers made the Pi compact wrapper identify Cursor"
+  assert_contains "$compact_out" "RUN_TIER_AGENTS=updated" \
+    "ambient Cursor markers suppressed the drifted Pi compact instruction refresh"
+  assert_not_contains "$clear_out" "CURRENT AGENTS.md - INSTRUCTION REFRESH" \
+    "ambient Cursor markers made a Pi clear emit a replacement contract"
+  [ "$baseline" = "$(cat "$root/state/.session-start-agents-baseline")" ] \
+    || fail "ambient Cursor markers let a Pi rebuild rewrite the true-start instruction baseline"
+
+  pass "Pi compact refresh ignores ambient Cursor markers and keeps the immutable baseline"
 }
 
 test_run_compact_without_completion_refreshes_before_finishing_startup() {
@@ -1230,6 +1264,7 @@ test_opencode_plugin_delivers_exact_nudge_once
 test_run_startup_runs_the_full_digest
 test_run_clear_and_compact_reemit
 test_run_rebuild_forwards_source_to_drifted_instruction_refresh
+test_run_pi_compact_refresh_survives_ambient_cursor_markers
 test_run_compact_without_completion_refreshes_before_finishing_startup
 test_run_clear_without_completion_finishes_startup
 test_run_clear_rejects_previous_owner_completion
