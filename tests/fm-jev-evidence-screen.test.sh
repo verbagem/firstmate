@@ -45,7 +45,11 @@ if (id === 'malformed-response') {
 
 const low = id === 'low-confidence';
 const malformedConfidence = id === 'malformed-confidence';
-const supported = new Set([
+const corpusProven = id.startsWith('corpus-proven-');
+const corpusUnsupported = id.startsWith('corpus-unsupported-') || id.startsWith('corpus-incomplete-');
+const corpusContradicted = id.startsWith('corpus-contradicted-');
+const corpusOpenDecision = id.startsWith('corpus-open-decision-');
+const supported = corpusProven || new Set([
   'truthful',
   'valid-no-executable-contract',
   'stale-head',
@@ -57,17 +61,26 @@ const supported = new Set([
   'empty-changed-files',
   'extra-field-sanitization',
   'model-echo',
-  'bad-usage'
+  'bad-usage',
+  'strong-reviewer',
+  'ask-user-open',
+  'medium-risk-supported'
 ]).has(id);
-const unsupported = new Set(['unsupported', 'missing-test']).has(id);
-const contradicted = new Set(['contradictory', 'deceptive-summary', 'unrelated-diff']).has(id);
+const unsupported = corpusUnsupported || new Set(['unsupported', 'missing-test']).has(id);
+const contradicted = corpusContradicted || new Set(['contradictory', 'deceptive-summary', 'unrelated-diff']).has(id);
 const outOfScope = id === 'unrelated-diff';
 
-const direct = outOfScope ? 'out_of_scope' : supported ? 'supported' : unsupported ? 'unsupported' : contradicted ? 'unsupported' : 'ambiguous';
+const direct = outOfScope ? 'out_of_scope' : supported ? 'supported' : unsupported || contradicted ? 'unsupported' : 'ambiguous';
 const contradiction = contradicted ? 'yes' : 'no';
-const missing = unsupported ? 'direct_support' : 'none';
-const risk = contradicted || outOfScope ? 'high' : unsupported ? 'medium' : 'low';
-const span = {
+const missing = unsupported ? 'direct_support' : corpusOpenDecision ? 'unknown' : 'none';
+const risk = contradicted || outOfScope || corpusOpenDecision ? 'high' : unsupported || id === 'medium-risk-supported' ? 'medium' : 'low';
+const reviewDepth = id === 'strong-reviewer' ? 'strong_model' : supported && !outOfScope ? 'focused' : 'deep';
+const selectedTest = request.state.packet.test_candidates.find((candidate) => !candidate.required)?.id
+  || request.state.packet.test_candidates[0]?.id
+  || 'none';
+const span = id.startsWith('corpus-')
+  ? request.state.packet.evidence_excerpts[0].id
+  : ({
   truthful: 'receipt-proposal-card-pass',
   unsupported: 'doc-only',
   contradictory: 'failed-gate',
@@ -86,7 +99,7 @@ const span = {
   'model-echo': 'receipt-proposal-card-pass',
   'bad-usage': 'receipt-proposal-card-pass',
   'malformed-response': 'malformed-span'
-}[id] || 'none';
+}[id] || 'none');
 
 const confidence = malformedConfidence ? 1.01 : low ? 0.41 : 0.92;
 const usage = {
@@ -113,7 +126,9 @@ process.stdout.write(JSON.stringify({
     contradiction: { type: 'choice', choice: contradiction, confidence: 0.91 },
     missing_evidence: { type: 'choice', choice: missing, confidence: 0.9 },
     risk_category: { type: 'choice', choice: risk, confidence: 0.9 },
-    evidence_span: { type: 'choice', choice: span, confidence: 0.9 }
+    evidence_span: { type: 'choice', choice: span, confidence: 0.9 },
+    review_depth: { type: 'choice', choice: reviewDepth, confidence: 0.9 },
+    selected_test: { type: 'choice', choice: selectedTest, confidence: 0.9 }
   },
   usage
 }));
@@ -159,21 +174,148 @@ test_fixture_corpus_metrics_and_append_only_receipts() {
     --typesafe-command "$FAKE" \
     > "$TMP_ROOT/evaluate-2.out" \
     || fail "second fixture corpus evaluation failed"
-  assert_equals "16" "$(wc -l < "$LEDGER" | tr -d ' ')" "ledger must append, not replace"
+  assert_equals "224" "$(wc -l < "$LEDGER" | tr -d ' ')" "ledger must append the 112-packet corpus, not replace it"
   jq -e '
+    .packets == 112 and
     .metrics.unsupported_claim_recall == 1 and
+    .metrics.false_safe_low_review_count == 0 and
     .metrics.false_escalation_rate == 0 and
     .metrics.evidence_span_quality == 1 and
     .metrics.deterministic_disagreement_count >= 1 and
+    .metrics.qualified_low_risk_packets == 40 and
+    .metrics.strong_model_review_time_reduction >= 0.2 and
+    .metrics.repeated_test_selection_turn_reduction >= 0.2 and
+    .metrics.savings_claim_qualified == true and
     .metrics.latency_ms_total >= 0 and
     .metrics.cost_usd_total > 0 and
-    .metrics.abstention_rate == 0
+    .metrics.abstention_rate == 0 and
+    .acceptance.corpus_minimum_met == true and
+    .acceptance.unsupported_claim_recall_met == true and
+    .acceptance.deterministic_failure_preservation_met == true and
+    .acceptance.required_test_preservation_met == true and
+    .acceptance.captain_decision_preservation_met == true and
+    .acceptance.authority_boundary_preservation_met == true and
+    .acceptance.initial_acceptance_met == true and
+    .acceptance.stop_reasons == []
   ' "$SUMMARY" >/dev/null || fail "summary metrics missing required advisory evaluation measures"
+  assert_equals \
+    "$(jq -r .acceptance.reproducibility_sha256 "$SUMMARY")" \
+    "$(jq -r .acceptance.reproducibility_sha256 "$TMP_ROOT/summary-2.json")" \
+    "equivalent corpus runs did not produce the same normalized result digest"
   jq -e 'select(.packet_id == "valid-no-executable-contract") | .deterministic_checks.status == "passed" and .recommendation.review_priority == "normal"' \
     "$LEDGER" >/dev/null || fail "valid no-executable-contract packet should not require a missing-test failure"
+  jq -e 'select(.packet_id == "corpus-proven-001") | .recommendation.review_depth == "focused"' \
+    "$LEDGER" >/dev/null || fail "supported corpus packet did not receive focused advisory review"
+  jq -e 'select(.packet_id == "corpus-unsupported-001") | .recommendation.review_priority == "needs_review" and .recommendation.review_depth == "deep"' \
+    "$LEDGER" >/dev/null || fail "unsupported corpus packet received a safe or reduced review classification"
+  jq -e 'select(.packet_id == "corpus-contradicted-001") | .recommendation.reason == "deterministic-failure-precedence"' \
+    "$LEDGER" >/dev/null || fail "contradicted corpus packet did not preserve deterministic failure precedence"
+  jq -e 'select(.packet_id == "corpus-incomplete-001") | any(.deterministic_checks.findings[]; .code == "missing_test_receipt")' \
+    "$LEDGER" >/dev/null || fail "incomplete corpus packet did not preserve its missing receipt"
   jq -e 'select(.packet_id == "truthful") | .jev_advisory.usage == {"input_tokens":100,"output_tokens":20,"total_tokens":120,"cost_usd":0.00012}' \
     "$LEDGER" >/dev/null || fail "ledger persisted usage fields outside the numeric allowlist"
   pass "fixture corpus produces append-only ledger and required metrics"
+}
+
+test_triage_suggests_existing_review_and_tests_without_authority() {
+  local packet triage_ledger triage_summary
+  packet="$TMP_ROOT/strong-reviewer.json"
+  triage_ledger="$TMP_ROOT/strong-reviewer.jsonl"
+  triage_summary="$TMP_ROOT/strong-reviewer-summary.json"
+  jq '
+    .id = "strong-reviewer" |
+    .claimed_outcome = "PRIVATE_PROMPT_SENTINEL advisory evidence is complete." |
+    .evidence_excerpts[0].text = "PRIVATE_EVIDENCE_SENTINEL executable support." |
+    .test_candidates = [
+      {id: "required-contract", name: "required public contract", kind: "public-interface", required: true},
+      {id: "focused-regression", name: "focused regression", kind: "behavior", required: false}
+    ] |
+    .benchmark = {
+      strong_model_review_ms_without_triage: 100,
+      strong_model_review_ms_with_triage: 70,
+      test_selection_turns_without_triage: 5,
+      test_selection_turns_with_triage: 3,
+      private_note: "PRIVATE_BENCHMARK_SENTINEL"
+    }
+  ' "$FIXTURE_DIR/01-truthful.json" > "$packet"
+  rm -f "$triage_ledger" "$triage_summary"
+
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$packet" \
+    --ledger "$triage_ledger" \
+    --summary "$triage_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/strong-reviewer.out" \
+    || fail "strong-reviewer advisory packet failed"
+
+  jq -e '
+    .recommendation.review_priority == "normal" and
+    .recommendation.review_depth == "strong_model" and
+    .recommendation.suggested_lane == "existing_stronger_reviewer" and
+    .recommendation.suggested_test_ids == ["required-contract", "focused-regression"] and
+    .recommendation.evidence_owner == "no-mistakes" and
+    .recommendation.proposal_owner == "bin/fm-proposal-card.sh" and
+    .recommendation.boundary.can_waive_required_tests == false and
+    .recommendation.boundary.can_expand_authority == false and
+    .claimed_outcome == null and
+    .evidence_references == ["receipt-proposal-card-pass"]
+  ' "$triage_ledger" >/dev/null || fail "advisory triage did not preserve existing owners, required tests, and authority"
+  assert_no_grep "PRIVATE_PROMPT_SENTINEL|PRIVATE_EVIDENCE_SENTINEL|PRIVATE_BENCHMARK_SENTINEL" "$triage_ledger" "receipt leaked raw private packet text"
+  assert_no_grep "PRIVATE_PROMPT_SENTINEL|PRIVATE_EVIDENCE_SENTINEL|PRIVATE_BENCHMARK_SENTINEL" "$triage_summary" "summary leaked raw private packet text"
+  pass "triage suggests existing review depth and tests with privacy-safe receipts"
+}
+
+test_open_captain_decision_cannot_be_bypassed() {
+  local packet decision_ledger decision_summary
+  packet="$TMP_ROOT/ask-user-open.json"
+  decision_ledger="$TMP_ROOT/ask-user-open.jsonl"
+  decision_summary="$TMP_ROOT/ask-user-open-summary.json"
+  jq '
+    .id = "ask-user-open" |
+    .ask_user_open = true |
+    .test_candidates = [{id: "required-contract", name: "required public contract", required: true}]
+  ' "$FIXTURE_DIR/01-truthful.json" > "$packet"
+  rm -f "$decision_ledger" "$decision_summary"
+
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$packet" \
+    --ledger "$decision_ledger" \
+    --summary "$decision_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/ask-user-open.out" \
+    || fail "open-decision packet failed"
+
+  jq -e '
+    .deterministic_checks.status == "needs_review" and
+    any(.deterministic_checks.findings[]; .code == "open_captain_decision") and
+    .recommendation.review_depth == "deep" and
+    .recommendation.reason == "deterministic-failure-precedence" and
+    .recommendation.boundary.can_answer_ask_user == false
+  ' "$decision_ledger" >/dev/null || fail "open captain decision was bypassed by advisory support"
+  pass "open captain decisions retain their existing authority path"
+}
+
+test_medium_risk_cannot_receive_focused_review() {
+  local packet risk_ledger risk_summary
+  packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" medium-risk-supported)
+  risk_ledger="$TMP_ROOT/medium-risk-supported.jsonl"
+  risk_summary="$TMP_ROOT/medium-risk-supported-summary.json"
+  rm -f "$risk_ledger" "$risk_summary"
+
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$packet" \
+    --ledger "$risk_ledger" \
+    --summary "$risk_summary" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/medium-risk-supported.out" \
+    || fail "medium-risk advisory packet failed"
+
+  jq -e '
+    .jev_advisory.review_depth.choice == "focused" and
+    .jev_advisory.risk_category.choice == "medium" and
+    .recommendation.review_depth == "standard"
+  ' "$risk_ledger" >/dev/null || fail "medium-risk evidence received focused review"
+  pass "medium-risk evidence cannot be reduced to focused review"
 }
 
 test_screen_requires_summary_and_distinct_outputs() {
@@ -663,6 +805,9 @@ test_deterministic_failure_takes_precedence_over_jev_support() {
 
 test_no_key_is_report_only_and_makes_no_transport_call
 test_fixture_corpus_metrics_and_append_only_receipts
+test_triage_suggests_existing_review_and_tests_without_authority
+test_open_captain_decision_cannot_be_bypassed
+test_medium_risk_cannot_receive_focused_review
 test_screen_requires_summary_and_distinct_outputs
 test_output_aliases_are_rejected_without_receipts
 test_output_preflight_rejects_unwritable_targets_before_transport

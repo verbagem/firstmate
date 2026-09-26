@@ -2,10 +2,11 @@
 
 Audience: maintainer verification.
 
-This record supports the active guarantee that `bin/fm-jev-evidence-screen.sh` is report-only, preflights outputs before transport, appends advisory receipts, sanitizes transport inputs and receipt metadata, and preserves deterministic-review precedence.
+This record supports the active guarantee that `bin/fm-jev-evidence-screen.sh` is report-only, preflights outputs before transport, appends privacy-safe advisory receipts, and preserves deterministic-review, required-test, and captain-decision precedence.
 Current behavior and authority boundaries are documented in [`../jev-evidence-screening.md`](../jev-evidence-screening.md).
 The executable public-interface regression is [`../../tests/fm-jev-evidence-screen.test.sh`](../../tests/fm-jev-evidence-screen.test.sh).
-The labeled fixture corpus is under [`../../tests/fixtures/jev-evidence-screen/`](../../tests/fixtures/jev-evidence-screen/).
+The 112-packet labeled fixture corpus is under [`../../tests/fixtures/jev-evidence-screen/`](../../tests/fixtures/jev-evidence-screen/).
+It combines eight accepted screen packets with 104 safe triage variants spanning proven, unsupported, contradicted, incomplete, and open-decision evidence.
 
 Refresh command:
 
@@ -18,6 +19,9 @@ Expected output shape:
 ```text
 ok - no-key path is report-only, needs_review, and no-network
 ok - fixture corpus produces append-only ledger and required metrics
+ok - triage suggests existing review depth and tests with privacy-safe receipts
+ok - open captain decisions retain their existing authority path
+ok - medium-risk evidence cannot be reduced to focused review
 ok - screen requires separate ledger and summary outputs
 ok - output aliases are rejected before receipts
 ok - output preflight rejects bad targets before transport
@@ -41,4 +45,21 @@ FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 ...
 
 The test drives the public CLI with a fake TypeSafe command.
 It proves the missing-key path does not invoke the transport, a second run appends rather than replaces ledger rows, the required summary is separate from the ledger, output aliases and unwritable targets fail before transport, request payloads omit changed-file and receipt extras, and usage/model metadata is sanitized before receipts.
-It also proves low-confidence and malformed responses route to `needs_review`, malformed packet metadata and evidence-span choices stay bounded, unsupported-claim recall and the other required metrics are emitted, and a stale-head deterministic finding keeps `needs_review` even when the fake Jev answer reports support.
+It also proves low-confidence and malformed responses route to `needs_review`, malformed packet metadata and evidence-span choices stay bounded, and a stale-head deterministic finding keeps deep review even when the fake Jev answer reports support.
+The corpus result records 100 percent unsupported-claim recall, zero false safe or focused-review classifications, preserved deterministic failures and required tests, and matching normalized digests across repeated runs.
+Qualified low-risk fixtures record a strong-model review-time reduction above 20 percent and a repeated test-selection-turn reduction above 20 percent, so only those synthetic measurements set the savings claim as qualified.
+The privacy regression places unique private sentinels in raw claim and evidence text, then proves neither the ledger nor summary contains either sentinel.
+
+Observed on 2026-09-25:
+
+```text
+FM_TEST_BEGIN 2026-09-26T01:37:05Z tests/fm-jev-evidence-screen.test.sh family=unclassified expected_gate_skip=none
+ok - no-key path is report-only, needs_review, and no-network
+ok - fixture corpus produces append-only ledger and required metrics
+ok - triage suggests existing review depth and tests with privacy-safe receipts
+ok - open captain decisions retain their existing authority path
+ok - medium-risk evidence cannot be reduced to focused review
+ok - deterministic-failure precedence cannot be suppressed by Jev
+FM_TEST_END 2026-09-26T01:37:22Z tests/fm-jev-evidence-screen.test.sh exit=0 duration_ms=16949 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=17147
+```
