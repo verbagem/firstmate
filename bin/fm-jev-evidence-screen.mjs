@@ -200,6 +200,7 @@ function safeTruthLabel(packet) {
 
 function validEvidenceSpanChoices(packet) {
   if (!isPlainObject(packet) || !Array.isArray(packet.evidence_excerpts)) return null;
+  if (packet.evidence_excerpts.length > MAX_COLLECTION_LENGTH) return null;
   const choices = new Set();
   for (const excerpt of packet.evidence_excerpts) {
     if (!isPlainObject(excerpt) || typeof excerpt.id !== 'string' || !TEST_ID_PATTERN.test(excerpt.id) || excerpt.id === 'none' || choices.has(excerpt.id)) {
@@ -228,6 +229,30 @@ function sanitizedTestReceipts(packet) {
     status: receipt.status,
     ...(receipt.kind === undefined ? {} : { kind: receipt.kind }),
   }));
+}
+
+function safeTestCandidates(packet) {
+  if (!isPlainObject(packet) || !Array.isArray(packet.test_candidates) || packet.test_candidates.length > MAX_COLLECTION_LENGTH) return [];
+  const seen = new Set();
+  const candidates = [];
+  for (const candidate of packet.test_candidates) {
+    if (!isPlainObject(candidate)) continue;
+    if (typeof candidate.id !== 'string' || !TEST_ID_PATTERN.test(candidate.id) || candidate.id === 'none' || seen.has(candidate.id)) continue;
+    if (typeof candidate.name !== 'string' || candidate.name.length === 0 || candidate.name.length > MAX_STRING_LENGTH) continue;
+    if (candidate.kind !== undefined && (typeof candidate.kind !== 'string' || candidate.kind.length === 0 || candidate.kind.length > 80)) continue;
+    seen.add(candidate.id);
+    candidates.push({
+      id: candidate.id,
+      name: candidate.name,
+      ...(candidate.kind === undefined ? {} : { kind: candidate.kind }),
+      required: candidate.required === true,
+    });
+  }
+  return candidates;
+}
+
+function requiredTestIds(packet) {
+  return safeTestCandidates(packet).filter((candidate) => candidate.required).map((candidate) => candidate.id);
 }
 
 function requireString(obj, key, at, errors, maxLength = MAX_STRING_LENGTH) {
@@ -433,7 +458,8 @@ function deterministicChecks(packet) {
 
 function makeJevRequest(packet) {
   const criteria = Object.fromEntries(packet.evidence_excerpts.map((excerpt) => [excerpt.id, excerpt.text]));
-  const testCriteria = Object.fromEntries((packet.test_candidates || []).map((candidate) => [
+  const testCandidates = safeTestCandidates(packet);
+  const testCriteria = Object.fromEntries(testCandidates.map((candidate) => [
     candidate.id,
     `${candidate.name}${candidate.kind ? ` (${candidate.kind})` : ''}`,
   ]));
@@ -447,12 +473,7 @@ function makeJevRequest(packet) {
         changed_files: sanitizedChangedFiles(packet),
         test_receipts: sanitizedTestReceipts(packet),
         evidence_excerpts: packet.evidence_excerpts.map(({ id, text }) => ({ id, text })),
-        test_candidates: (packet.test_candidates || []).map(({ id, name, kind, required }) => ({
-          id,
-          name,
-          ...(kind === undefined ? {} : { kind }),
-          required: required === true,
-        })),
+        test_candidates: testCandidates,
         ask_user_open: packet.ask_user_open === true,
       },
       authority_boundary: 'advisory only; cannot pass/fail CI, approve merge, certify completion, suppress deterministic failure, waive required tests, or answer ask-user findings',
@@ -588,7 +609,7 @@ function parseJevResponse(response, packet) {
   const missingEvidence = answer('missing_evidence', MISSING_CHOICES);
   const riskCategory = answer('risk_category', RISK_CHOICES);
   const reviewDepth = answer('review_depth', REVIEW_DEPTH_CHOICES);
-  const selectedTestChoices = new Set(['none', ...(packet.test_candidates || []).map((candidate) => candidate.id)]);
+  const selectedTestChoices = new Set(['none', ...safeTestCandidates(packet).map((candidate) => candidate.id)]);
   const selectedTest = answer('selected_test', selectedTestChoices);
   const span = response.answers.evidence_span;
   if (!directSupport.ok || !contradiction.ok || !missingEvidence.ok || !riskCategory.ok || !reviewDepth.ok || !selectedTest.ok) {
@@ -628,7 +649,7 @@ function parseJevResponse(response, packet) {
 }
 
 function recommendation(packet, deterministic, jev) {
-  const requiredTests = (packet.test_candidates || []).filter((candidate) => candidate.required === true).map((candidate) => candidate.id);
+  const requiredTests = requiredTestIds(packet);
   const selectedTest = jev.selected_test?.choice;
   const suggestedTests = [...new Set([
     ...requiredTests,
@@ -790,6 +811,15 @@ function usageTokenTotal(usage) {
   return input + output;
 }
 
+function reproducibleRecord(record) {
+  const { created_at, jev_advisory: advisory, ...rest } = record;
+  const { latency_ms, ...stableAdvisory } = advisory || {};
+  return {
+    ...rest,
+    jev_advisory: stableAdvisory,
+  };
+}
+
 function summarize(records) {
   const unsupportedTruth = records.filter((record) => ['unsupported', 'contradicted'].includes(record.truth_label));
   const unsupportedCaught = unsupportedTruth.filter((record) => record.recommendation.review_priority === 'needs_review');
@@ -844,15 +874,7 @@ function summarize(records) {
   const turnsWith = qualifiedLowRisk.reduce((sum, record) => sum + record.benchmark.test_selection_turns_with_triage, 0);
   const reviewReduction = reductionRatio(reviewWithout, reviewWith);
   const turnReduction = reductionRatio(turnsWithout, turnsWith);
-  const reproducibleShape = records.map((record) => ({
-    packet_id: record.packet_id,
-    packet_sha256: record.packet_sha256,
-    deterministic_status: record.deterministic_checks.status,
-    deterministic_codes: record.deterministic_checks.findings.map((finding) => finding.code),
-    advisory_status: record.jev_advisory.status,
-    advisory_reason: record.jev_advisory.reason,
-    recommendation: record.recommendation,
-  }));
+  const reproducibleShape = records.map(reproducibleRecord);
   const stopReasons = [];
   if (downgradedDeterministicFailures.length > 0) stopReasons.push('deterministic-failure-hidden-or-downgraded');
   if (falseSafeLowReview.length > 0) stopReasons.push('false-safe-or-low-review-classification');
@@ -925,9 +947,7 @@ function attachExpectedSpan(records, packets) {
   return records.map((record, index) => ({
     ...record,
     expected_evidence_span: safeExpectedEvidenceSpan(packets[index]),
-    required_test_ids: isPlainObject(packets[index]) && Array.isArray(packets[index].test_candidates)
-      ? packets[index].test_candidates.filter((candidate) => candidate?.required === true).map((candidate) => candidate.id)
-      : [],
+    required_test_ids: requiredTestIds(packets[index]),
   }));
 }
 

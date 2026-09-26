@@ -6,7 +6,7 @@ This record supports the active guarantee that `bin/fm-jev-evidence-screen.sh` i
 Current behavior and authority boundaries are documented in [`../jev-evidence-screening.md`](../jev-evidence-screening.md).
 The executable public-interface regression is [`../../tests/fm-jev-evidence-screen.test.sh`](../../tests/fm-jev-evidence-screen.test.sh).
 The 112-packet labeled fixture corpus is under [`../../tests/fixtures/jev-evidence-screen/`](../../tests/fixtures/jev-evidence-screen/).
-It combines eight accepted screen packets with 104 safe triage variants spanning proven, unsupported, contradicted, incomplete, and open-decision evidence.
+It combines eight accepted screen packets with 104 distinct safe triage variants grounded in maintained fixtures and accepted task evidence, spanning proven, unsupported, contradicted, incomplete, and open-decision evidence.
 
 Refresh command:
 
@@ -27,6 +27,7 @@ ok - output aliases are rejected before receipts
 ok - output preflight rejects bad targets before transport
 ok - transport request omits packet extras
 ok - summary metrics score only expected spans and complete token totals
+ok - reproducibility digest covers stable advisory receipt fields
 ok - invalid usage values are filtered from receipts and metrics
 ok - empty changed-file summaries route to needs_review
 ok - empty fixture directory is rejected before receipts
@@ -34,6 +35,7 @@ ok - mode-specific inputs are rejected before receipts
 ok - authority boundary exposes no approval or merge control
 ok - json stdout surface is not part of the public contract
 ok - malformed packet metadata is sanitized in receipts
+ok - malformed test candidates are sanitized in receipts
 ok - evidence span choices are validated as a bounded set
 ok - low-confidence and malformed responses route to needs_review
 ok - confidence floor is fixed inside the advisory pilot
@@ -45,21 +47,43 @@ FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 ...
 
 The test drives the public CLI with a fake TypeSafe command.
 It proves the missing-key path does not invoke the transport, a second run appends rather than replaces ledger rows, the required summary is separate from the ledger, output aliases and unwritable targets fail before transport, request payloads omit changed-file and receipt extras, and usage/model metadata is sanitized before receipts.
-It also proves low-confidence and malformed responses route to `needs_review`, malformed packet metadata and evidence-span choices stay bounded, and a stale-head deterministic finding keeps deep review even when the fake Jev answer reports support.
+It also proves low-confidence and malformed responses route to `needs_review`, malformed packet metadata, malformed test candidates, and evidence-span choices stay bounded, and a stale-head deterministic finding keeps deep review even when the fake Jev answer reports support.
 The corpus result records 100 percent unsupported-claim recall, zero false safe or focused-review classifications, preserved deterministic failures and required tests, and matching normalized digests across repeated runs.
+The digest regression proves a stable advisory receipt field change changes the reproducibility digest while volatile latency remains excluded.
 Qualified low-risk fixtures record a strong-model review-time reduction above 20 percent and a repeated test-selection-turn reduction above 20 percent, so only those synthetic measurements set the savings claim as qualified.
 The privacy regression places unique private sentinels in raw claim and evidence text, then proves neither the ledger nor summary contains either sentinel.
 
 Observed on 2026-09-25:
 
 ```text
-FM_TEST_BEGIN 2026-09-26T01:37:05Z tests/fm-jev-evidence-screen.test.sh family=unclassified expected_gate_skip=none
+FM_TEST_BEGIN 2026-09-26T02:00:32Z tests/fm-jev-evidence-screen.test.sh family=unclassified expected_gate_skip=none
 ok - no-key path is report-only, needs_review, and no-network
 ok - fixture corpus produces append-only ledger and required metrics
 ok - triage suggests existing review depth and tests with privacy-safe receipts
 ok - open captain decisions retain their existing authority path
 ok - medium-risk evidence cannot be reduced to focused review
+ok - screen requires separate ledger and summary outputs
+ok - output aliases are rejected before receipts
+ok - output preflight rejects bad targets before transport
+ok - transport request omits packet extras
+ok - summary metrics score only expected spans and complete token totals
+ok - reproducibility digest covers stable advisory receipt fields
+ok - invalid usage values are filtered from receipts and metrics
+ok - empty changed-file summaries route to needs_review
+ok - empty fixture directory is rejected before receipts
+ok - mode-specific inputs are rejected before receipts
+ok - authority boundary exposes no approval or merge control
+ok - json stdout surface is not part of the public contract
+ok - malformed packet metadata is sanitized in receipts
+ok - malformed test candidates are sanitized in receipts
+ok - evidence span choices are validated as a bounded set
+ok - low-confidence and malformed responses route to needs_review
+ok - confidence floor is fixed inside the advisory pilot
+ok - malformed confidence and fabricated span route to needs_review
+ok - model id is the local requested model, not transport echo
 ok - deterministic-failure precedence cannot be suppressed by Jev
-FM_TEST_END 2026-09-26T01:37:22Z tests/fm-jev-evidence-screen.test.sh exit=0 duration_ms=16949 gate_skip=false
-FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=17147
+FM_TEST_END 2026-09-26T02:02:52Z tests/fm-jev-evidence-screen.test.sh exit=0 duration_ms=139509 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=139895
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=139509 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-jev-evidence-screen.test.sh duration_ms=139509
 ```

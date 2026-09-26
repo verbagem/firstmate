@@ -47,7 +47,7 @@ TypeSafe live API assumptions remain owned by the typed dispatch resolver eviden
 
 ## Acceptance And Stop Conditions
 
-The checked-in safe corpus contains 112 packets, including 104 parameterized triage cases and the eight accepted evidence-screen cases.
+The checked-in safe corpus contains 112 packets, including 104 distinct triage variants grounded in safe fixtures and accepted task evidence plus the eight accepted evidence-screen cases.
 Initial acceptance requires at least 100 packets, unsupported-claim recall of at least 95 percent, zero false safe or focused-review classifications for unsupported or contradicted claims, deterministic-failure preservation, required-test preservation, and a stable normalized output digest.
 The public regression covers supported, unsupported, contradicted, incomplete, malformed, absent-key, low-confidence, open-decision, and deterministic-failure cases.
 Evaluation stops on a hidden or downgraded deterministic failure, a false safe classification, a required-test waiver, a captain-decision bypass, private prompt leakage, or any authority expansion.

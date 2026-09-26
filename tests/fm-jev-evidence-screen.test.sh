@@ -111,6 +111,10 @@ const usage = {
   cost: { total: 999 },
   cache_read_tokens: 7
 };
+if (process.env.FAKE_TYPESAFE_DIGEST_VARIANT === 'usage') {
+  usage.input_tokens += 1;
+  usage.total_tokens += 1;
+}
 if (id === 'input-output-only-usage') delete usage.total_tokens;
 if (id === 'bad-usage') {
   usage.input_tokens = -100;
@@ -159,6 +163,9 @@ test_no_key_is_report_only_and_makes_no_transport_call() {
 }
 
 test_fixture_corpus_metrics_and_append_only_receipts() {
+  local normalized_shapes
+  normalized_shapes=$(jq '[.[] | del(.id) | del(.benchmark)] | unique | length' "$FIXTURE_DIR/corpus.json")
+  [ "$normalized_shapes" -ge 100 ] || fail "corpus must contain at least 100 distinct representative packet variants"
   rm -f "$CALL_LOG" "$LEDGER" "$SUMMARY"
   TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" evaluate \
     --fixtures "$FIXTURE_DIR" \
@@ -507,6 +514,34 @@ test_summary_metric_edges_are_scored_from_public_outputs() {
   pass "summary metrics score only expected spans and complete token totals"
 }
 
+test_reproducibility_digest_covers_stable_receipts() {
+  local digest_ledger_a digest_summary_a digest_ledger_b digest_summary_b
+  digest_ledger_a="$TMP_ROOT/digest-a.jsonl"
+  digest_summary_a="$TMP_ROOT/digest-a-summary.json"
+  digest_ledger_b="$TMP_ROOT/digest-b.jsonl"
+  digest_summary_b="$TMP_ROOT/digest-b-summary.json"
+  rm -f "$digest_ledger_a" "$digest_summary_a" "$digest_ledger_b" "$digest_summary_b"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$digest_ledger_a" \
+    --summary "$digest_summary_a" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/digest-a.out" \
+    || fail "baseline digest packet should screen"
+  TYPESAFE_API_KEY=test-key FAKE_TYPESAFE_LOG="$CALL_LOG" FAKE_TYPESAFE_DIGEST_VARIANT=usage "$TOOL" screen \
+    --packet "$FIXTURE_DIR/01-truthful.json" \
+    --ledger "$digest_ledger_b" \
+    --summary "$digest_summary_b" \
+    --typesafe-command "$FAKE" \
+    > "$TMP_ROOT/digest-b.out" \
+    || fail "usage-variant digest packet should screen"
+  [ "$(jq -r .acceptance.reproducibility_sha256 "$digest_summary_a")" != "$(jq -r .acceptance.reproducibility_sha256 "$digest_summary_b")" ] \
+    || fail "stable advisory receipt changes did not affect reproducibility digest"
+  jq -e '.jev_advisory.usage.total_tokens == 121' "$digest_ledger_b" >/dev/null \
+    || fail "usage-variant receipt did not record the changed stable field"
+  pass "reproducibility digest covers stable advisory receipt fields"
+}
+
 test_invalid_usage_values_are_filtered() {
   local usage_packet
   usage_packet=$(write_packet_variant "$FIXTURE_DIR/01-truthful.json" bad-usage)
@@ -676,6 +711,35 @@ test_malformed_packet_metadata_is_sanitized() {
   pass "malformed packet metadata is sanitized in receipts"
 }
 
+test_malformed_test_candidates_are_sanitized() {
+  local object_candidates bad_id_candidates candidates_ledger candidates_summary
+  object_candidates="$TMP_ROOT/object-test-candidates.json"
+  bad_id_candidates="$TMP_ROOT/bad-id-test-candidates.json"
+  candidates_ledger="$TMP_ROOT/malformed-test-candidates.jsonl"
+  candidates_summary="$TMP_ROOT/malformed-test-candidates-summary.json"
+  jq '.id = "object-test-candidates" | .test_candidates = {secret: "PRIVATE_TEST_SENTINEL"}' \
+    "$FIXTURE_DIR/01-truthful.json" > "$object_candidates"
+  jq '.id = "bad-id-test-candidates" | .test_candidates = [{id: {secret: "PRIVATE_TEST_SENTINEL"}, name: "bad candidate", required: true}]' \
+    "$FIXTURE_DIR/01-truthful.json" > "$bad_id_candidates"
+  rm -f "$candidates_ledger" "$candidates_summary"
+
+  env -u TYPESAFE_API_KEY "$TOOL" screen \
+    --packet "$object_candidates" \
+    --packet "$bad_id_candidates" \
+    --ledger "$candidates_ledger" \
+    --summary "$candidates_summary" \
+    > "$TMP_ROOT/malformed-test-candidates.out" \
+    || fail "malformed test candidates should produce report-only records"
+
+  jq -s -e '
+    length == 2 and
+    all(.[]; .jev_advisory.reason == "malformed-packet" and .recommendation.suggested_test_ids == [] and .required_test_ids == [])
+  ' "$candidates_ledger" >/dev/null || fail "malformed test candidates leaked into receipt recommendations"
+  assert_no_grep "PRIVATE_TEST_SENTINEL" "$candidates_ledger" "malformed test candidate id leaked into ledger"
+  assert_no_grep "PRIVATE_TEST_SENTINEL" "$candidates_summary" "malformed test candidate id leaked into summary"
+  pass "malformed test candidates are sanitized in receipts"
+}
+
 test_evidence_span_choice_set_is_validated() {
   local duplicate_packet reserved_packet bad_expected_packet span_ledger span_summary
   duplicate_packet="$TMP_ROOT/duplicate-span-id.json"
@@ -813,6 +877,7 @@ test_output_aliases_are_rejected_without_receipts
 test_output_preflight_rejects_unwritable_targets_before_transport
 test_transport_request_omits_packet_extra_fields
 test_summary_metric_edges_are_scored_from_public_outputs
+test_reproducibility_digest_covers_stable_receipts
 test_invalid_usage_values_are_filtered
 test_empty_changed_files_route_to_review
 test_empty_fixture_directory_is_rejected_without_receipts
@@ -820,6 +885,7 @@ test_mode_specific_inputs_are_rejected_without_receipts
 test_authority_boundaries_reject_control_flags
 test_json_stdout_surface_is_rejected
 test_malformed_packet_metadata_is_sanitized
+test_malformed_test_candidates_are_sanitized
 test_evidence_span_choice_set_is_validated
 test_low_confidence_and_malformed_response_route_to_review
 test_confidence_floor_option_is_not_public
