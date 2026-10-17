@@ -1,0 +1,2 @@
+error: project beta origin is not an accepted clone URL: ext::git-upload-pack
+exit_code=1

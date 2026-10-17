@@ -1,0 +1,24 @@
+ok - overlapping remote home provisioning serializes through publication and rollback
+ok - remote seed rollback preserves serialized competing routes
+ok - unknown readiness preserves its route and brief for reconciliation
+ok - remote seeding checks, repairs, and re-checks readiness, then stops on a remaining gap
+ok - remote seeding proceeds once the repair closes every gap
+scenario=no-projects bash=3.2.57(1)-release
+project_count=0
+project_records=0
+remote_identity=seed-repair
+route_registered=1
+scenario=unsafe-origin bash=3.2.57(1)-release
+error: project beta origin is not an accepted clone URL: ext::git-upload-pack
+remote_home=absent
+ok - remote seeding provisions a supplied origin without touching the primary project tree
+ok - remote provisioning re-validates a supplied origin at the receiving host
+ok - seeding carries bitbucket, self-hosted, and scp-like origins through to the remote clone
+ok - remote seed registers the route and provisions the whole home and project clone on that host
+scenario=one-project bash=3.2.57(1)-release
+project_count=1
+project_records=1
+remote_identity=ios
+remote_project_clone=present
+cli_output=provisioned: /private/var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/fm-remote-secondmate-e2e.gOyRRA/remote-home projects=1
+home=remote-mac:/private/var/folders/85/0xf5ctz126717j1k2wfdc_4w0000gn/T/fm-remote-secondmate-e2e.gOyRRA/remote-home
