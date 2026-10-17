@@ -153,7 +153,10 @@
 #   reset anything. Every same-project ship/scout meta record must name one
 #   unique Treehouse slot; an unleased legacy slot is leased in place under
 #   `firstmate:<task-id>` without touching its files or git state, and ambiguous
-#   or unprotectable records stop allocation with the task and path named. The
+#   or unprotectable records stop allocation with the task and path named. A
+#   record whose recorded lease Treehouse no longer lists is never leased again
+#   automatically; it stops allocation until an operator confirms the copy and
+#   removes the record's treehouse_lease_id/treehouse_lease_holder lines. The
 #   newly acquired slot is likewise leased in place before its base is refreshed,
 #   with treehouse_lease_id/treehouse_lease_holder recorded in task metadata.
 #   Each legacy record is leased only while its own control lock is free, so
