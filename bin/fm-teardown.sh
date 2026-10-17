@@ -2580,8 +2580,15 @@ cleanup_firstmate_home_children() {
           if [ "$child_return_rc" -eq "$TEARDOWN_TREEHOUSE_LOCK_REFUSED" ]; then
             return "$child_return_rc"
           fi
+          if [ -n "$child_treehouse_lease_id" ] || [ -n "$child_treehouse_lease_holder" ]; then
+            echo "error: child $child_id worktree '$child_wt' is bound to Treehouse lease '${child_treehouse_lease_id:-none}' (holder '${child_treehouse_lease_holder:-none}'), and its conditional 'treehouse return --force' in '$child_proj' failed; the copy, its lease, its work and record '$child_meta' were left untouched. Inspect '$child_meta' against 'treehouse status --json' in '$child_proj', then rerun teardown once the lease is confirmed to be the child's own" >&2
+            return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+          fi
           safe_rm_rf_child_worktree "$child_wt" "$child_proj"
         fi
+      elif [ -n "$child_treehouse_lease_id" ] || [ -n "$child_treehouse_lease_holder" ]; then
+        echo "error: child $child_id worktree '$child_wt' is bound to Treehouse lease '${child_treehouse_lease_id:-none}' (holder '${child_treehouse_lease_holder:-none}'), but its project '${child_proj:-none}' or treehouse is unavailable for a conditional return; the copy, its lease, its work and record '$child_meta' were left untouched. Restore the project and treehouse, then rerun teardown" >&2
+        return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
       else
         safe_rm_rf_child_worktree "$child_wt" "$child_proj"
       fi

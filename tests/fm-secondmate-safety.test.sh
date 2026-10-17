@@ -1936,8 +1936,8 @@ EOF
   pass "secondmate force teardown discards child work"
 }
 
-run_secondmate_child_unrecorded_lease_teardown() {  # <case> <status-json-template>
-  local name=$1 status_template=$2 home subhome childproj childwt fakebin log err rc
+run_secondmate_child_unrecorded_lease_teardown() {  # <case> <status-json-template> [recorded-lease-meta]
+  local name=$1 status_template=$2 recorded_lease=${3:-} home subhome childproj childwt fakebin log err rc
   home="$TMP_ROOT/$name-home"
   subhome="$TMP_ROOT/$name-subhome"
   childproj="$subhome/projects/alpha"
@@ -1968,16 +1968,32 @@ kind=ship
 mode=no-mistakes
 yolo=off
 EOF
+  [ -z "$recorded_lease" ] || printf '%s\n' "$recorded_lease" >> "$subhome/state/child.meta"
+  printf 'firstmate:child\n' > "$TMP_ROOT/$name.lease"
   fakebin=$(make_fake_tmux "$TMP_ROOT/$name-fake")
   log="$TMP_ROOT/$name-fake/tmux.log"
   set +e
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/$name-fake/pane.txt" \
-    FM_FAKE_TREEHOUSE_STATUS_JSON="${status_template//@WT@/$childwt}" \
+    FM_FAKE_TREEHOUSE_STATUS_JSON="${status_template//@WT@/$childwt}" FM_FAKE_TREEHOUSE_LEASE_FILE="$TMP_ROOT/$name.lease" \
     "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>"$err"
   rc=$?
   set -e
   CHILD_LEASE_RC=$rc CHILD_LEASE_WT=$childwt CHILD_LEASE_LOG=$log CHILD_LEASE_ERR=$err
-  CHILD_LEASE_META="$subhome/state/child.meta" CHILD_LEASE_SUBHOME=$subhome
+  CHILD_LEASE_META="$subhome/state/child.meta" CHILD_LEASE_SUBHOME=$subhome CHILD_LEASE_FILE="$TMP_ROOT/$name.lease"
+}
+
+assert_secondmate_child_guarded_return_failure_preserves_copy() {  # <case> <status-json-template>
+  FM_FAKE_TREEHOUSE_GUARDED_RETURN_FAIL=1 run_secondmate_child_unrecorded_lease_teardown "$1" "$2" \
+    "$(printf '%s\n%s' treehouse_lease_id=lease-child treehouse_lease_holder=firstmate:child)"
+  [ "$CHILD_LEASE_RC" -ne 0 ] || fail "$1: force teardown succeeded after its lease-guarded child return failed"
+  grep -F "treehouse return --force" "$CHILD_LEASE_LOG" | grep -F -- "--if-lease-id lease-child" >/dev/null \
+    || fail "$1: force teardown did not attempt the lease-guarded child return"
+  [ "$(cat "$CHILD_LEASE_WT/work.txt" 2>/dev/null)" = 'child work' ] || fail "$1: force teardown deleted the leased child copy"
+  [ -e "$CHILD_LEASE_FILE" ] || fail "$1: force teardown released the child lease"
+  [ -e "$CHILD_LEASE_META" ] || fail "$1: force teardown cleared the child record"
+  [ -d "$CHILD_LEASE_SUBHOME" ] || fail "$1: force teardown removed the secondmate home"
+  grep -F "child child worktree '$CHILD_LEASE_WT' is bound to Treehouse lease 'lease-child'" "$CHILD_LEASE_ERR" >/dev/null \
+    || fail "$1: refusal did not name the child, worktree and lease of the failed conditional return"
 }
 
 assert_secondmate_child_unrecorded_lease_refused() {  # <case> <status-json-template> <expected-error>
@@ -2002,6 +2018,14 @@ test_secondmate_force_teardown_guards_unrecorded_child_leases() {
   assert_secondmate_child_unrecorded_lease_refused child-unparseable-lease \
     'not json' "did not return a parseable pool list"
   pass "secondmate force teardown adopts a child's own lease and refuses foreign or unreadable lease state"
+}
+
+test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails() {
+  assert_secondmate_child_guarded_return_failure_preserves_copy child-stale-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:other-task"}]'
+  assert_secondmate_child_guarded_return_failure_preserves_copy child-ambiguous-lease-inventory \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"},{"name":"2","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"}]'
+  pass "secondmate force teardown keeps a lease-bound child copy, lease and work when its guarded return fails"
 }
 
 test_secondmate_force_teardown_refuses_child_quarantine_symlink() {
@@ -3082,6 +3106,7 @@ test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return
 test_secondmate_force_teardown_discards_child_work
 test_secondmate_force_teardown_guards_unrecorded_child_leases
+test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails
 test_secondmate_force_teardown_refuses_child_quarantine_symlink
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_non_state_operational_dir_symlinks_inside_home

@@ -84,15 +84,20 @@ case "${1:-}" in
   return)
     shift
     target=
+    guarded=
     while [ $# -gt 0 ]; do
       case "$1" in
         --force) ;;
-        --if-lease-id|--if-lease-holder) shift ;;
+        --if-lease-id|--if-lease-holder) guarded=1; shift ;;
         *) target=$1 ;;
       esac
       shift
     done
     [ -z "${FM_FAKE_TREEHOUSE_RETURN_FAIL:-}" ] || exit 17
+    if [ -n "${FM_FAKE_TREEHOUSE_GUARDED_RETURN_FAIL:-}" ] && [ -n "$guarded" ]; then
+      echo "failed to return worktree: lease precondition failed" >&2
+      exit 1
+    fi
     [ -n "${FM_FAKE_TREEHOUSE_LEASE_FILE:-}" ] && rm -f "$FM_FAKE_TREEHOUSE_LEASE_FILE"
     [ -n "$target" ] && rm -rf -- "$target"
     exit 0
