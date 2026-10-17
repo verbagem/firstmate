@@ -11,6 +11,7 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
+TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
 
 make_spawn_pi_probe() {
@@ -38,7 +39,16 @@ cat > "$fakebin/tmux" <<'SH'
 set -u
 windows_dir=${FM_FAKE_TMUX_WINDOW_DIR:-}
 case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *"#{pane_current_path}"*)
+    if [ -n "${FM_FAKE_SECOND_TASK_ID:-}" ] \
+      && [ -n "${FM_FAKE_PANE_PATH_2:-}" ] \
+      && [[ "$*" == *"fm-$FM_FAKE_SECOND_TASK_ID"* ]]; then
+      printf '%s\n' "$FM_FAKE_PANE_PATH_2"
+    else
+      printf '%s\n' "${FM_FAKE_PANE_PATH:-}"
+    fi
+    exit 0
+    ;;
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
@@ -106,18 +116,41 @@ SH
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 set -u
+lease_state="$0.leases"
+treehouse_row() {
+  local name=$1 path=$2 lease_id= lease_holder=
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    path=$(cd "$path" && pwd -P)
+  fi
+  if [ -f "$lease_state" ]; then
+    lease_id=$(awk -F '\t' -v path="$path" '$1 == path { print $2; exit }' "$lease_state")
+    lease_holder=$(awk -F '\t' -v path="$path" '$1 == path { print $3; exit }' "$lease_state")
+  fi
+  if [ -n "$lease_id" ]; then
+    jq -cn --arg name "$name" --arg path "$path" --arg lease_id "$lease_id" --arg holder "$lease_holder" \
+      '{name:$name,path:$path,status:"leased",lease_id:$lease_id,lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z",processes:[]}'
+  else
+    jq -cn --arg name "$name" --arg path "$path" \
+      '{name:$name,path:$path,status:"in-use",lease_id:"",lease_holder:"",leased_at:null,processes:[]}'
+  fi
+}
 case "${1:-}:${2:-}" in
   lease:--help)
     printf '%s\n' 'Usage: treehouse lease <name> [--lease-holder <holder>] [--json]'
     exit 0
     ;;
   status:--json)
-    jq -cn --arg path "${FM_FAKE_PANE_PATH:-}" \
-      '[{name:"1",path:$path,status:"in-use",lease_id:"",lease_holder:"",leased_at:null,processes:[]}]'
+    path=${FM_FAKE_PANE_PATH:-}
+    path2=${FM_FAKE_PANE_PATH_2:-}
+    {
+      treehouse_row 1 "$path"
+      [ -z "$path2" ] || treehouse_row 2 "$path2"
+    } | jq -s '.'
     exit 0
     ;;
 esac
 if [ "${1:-}" = lease ]; then
+  slot=${2:-}
   holder=
   shift 2
   while [ $# -gt 0 ]; do
@@ -128,14 +161,56 @@ if [ "${1:-}" = lease ]; then
       *) shift ;;
     esac
   done
-  jq -cn --arg path "${FM_FAKE_PANE_PATH:-}" --arg holder "$holder" \
-    '{path:$path,lease_id:("fake-" + $holder),lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z"}'
+  if [ "$slot" = 2 ] && [ -n "${FM_FAKE_PANE_PATH_2:-}" ]; then
+    path=$FM_FAKE_PANE_PATH_2
+  else
+    path=${FM_FAKE_PANE_PATH:-}
+  fi
+  if [ -n "$path" ] && [ -d "$path" ]; then
+    path=$(cd "$path" && pwd -P)
+  fi
+  lease_id="fake-$holder"
+  lease_tmp="$lease_state.tmp.$$"
+  {
+    if [ -f "$lease_state" ]; then
+      awk -F '\t' -v path="$path" '$1 != path' "$lease_state"
+    fi
+    printf '%s\t%s\t%s\n' "$path" "$lease_id" "$holder"
+  } > "$lease_tmp"
+  mv -f "$lease_tmp" "$lease_state"
+  jq -cn --arg path "$path" --arg lease_id "$lease_id" --arg holder "$holder" \
+    '{path:$path,lease_id:$lease_id,lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z"}'
   exit 0
 fi
-if [ "${1:-}" = return ] && [ "${2:-}" = --force ] && [ -n "${3:-}" ]; then
-  target=$3
+if [ "${1:-}" = return ]; then
+  target=
+  guard_id=
+  guard_holder=
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) shift ;;
+      --if-lease-id) guard_id=${2:-}; shift 2 ;;
+      --if-lease-holder) guard_holder=${2:-}; shift 2 ;;
+      --if-lease-id=*) guard_id=${1#--if-lease-id=}; shift ;;
+      --if-lease-holder=*) guard_holder=${1#--if-lease-holder=}; shift ;;
+      *) target=$1; shift ;;
+    esac
+  done
   case "$target" in ''|/) exit 1 ;; esac
   [ "${FM_FAKE_TREEHOUSE_RETURN_FAIL:-0}" != 1 ] || exit 1
+  if [ -d "$target" ]; then
+    target=$(cd "$target" && pwd -P)
+  fi
+  if [ -f "$lease_state" ]; then
+    recorded_id=$(awk -F '\t' -v path="$target" '$1 == path { print $2; exit }' "$lease_state")
+    recorded_holder=$(awk -F '\t' -v path="$target" '$1 == path { print $3; exit }' "$lease_state")
+    [ -z "$guard_id" ] || [ "$guard_id" = "$recorded_id" ] || exit 1
+    [ -z "$guard_holder" ] || [ "$guard_holder" = "$recorded_holder" ] || exit 1
+    lease_tmp="$lease_state.tmp.$$"
+    awk -F '\t' -v path="$target" '$1 != path' "$lease_state" > "$lease_tmp"
+    mv -f "$lease_tmp" "$lease_state"
+  fi
   if [ "${FM_FAKE_TREEHOUSE_RETURN_REMOVES:-0}" = 1 ]; then
     git -C "$(pwd)" worktree remove --force "$target" >/dev/null 2>&1 || rm -rf "$target"
   fi
@@ -364,6 +439,8 @@ run_spawn() {
     CLAUDE_CONFIG_DIR="${FM_TEST_CLAUDE_CONFIG_DIR:-}" \
     FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_PI_VERSION="${FM_TEST_PI_VERSION:-0.84.0}" \
     FM_FAKE_TMUX_WINDOW_DIR="${FM_TEST_TMUX_WINDOW_DIR:-}" \
+    FM_FAKE_PANE_PATH_2="${FM_TEST_PANE_PATH_2:-}" \
+    FM_FAKE_SECOND_TASK_ID="${FM_TEST_SECOND_TASK_ID:-}" \
     FM_FAKE_CURSOR_MODELS="${FM_TEST_CURSOR_MODELS:-}" \
     FM_FAKE_CURSOR_LIST_STATUS="${FM_TEST_CURSOR_LIST_STATUS:-0}" \
     FM_FAKE_CURSOR_HELP_MODE="${FM_TEST_CURSOR_HELP_MODE:-headless}" \
@@ -484,6 +561,15 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
     "relative FM_HOME leaked into Pi's default cross-process extension path"
   assert_contains "$launch" "< '$home_real/data/$relative_id/brief.md'" \
     "relative FM_HOME leaked into the default cross-process brief path"
+
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_FAKE_PANE_PATH="$WT_DIR" PATH="$FAKEBIN_DIR:$PATH" \
+    "$TEARDOWN" "$relative_id" --force 2>&1)
+  status=$?
+  expect_code 0 "$status" \
+    "the relative-home task should release its lease before the pool is reused: $out"
 
   linked_home="$CASE_DIR/home-link"
   ln -s "$HOME_DIR" "$linked_home"
@@ -1812,15 +1898,18 @@ test_pi_ship_launch_wires_task_recap_widget_but_secondmate_does_not() {
 }
 
 test_batch_forwards_shared_profile_flags() {
-  local rec id1 id2 out status
+  local rec id1 id2 out status wt2
   id1=profile-batch-a-z9
   id2=profile-batch-b-z10
   rec=$(make_spawn_case profile-batch claude "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  wt2="$CASE_DIR/wt-2"
+  git -C "$PROJ_DIR" worktree add --quiet -b wt-profile-batch-2 "$wt2"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
+  out=$(FM_TEST_PANE_PATH_2="$wt2" FM_TEST_SECOND_TASK_ID="$id2" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
   status=$?
   expect_code 0 "$status" "batch spawn with shared profile flags should succeed"
   assert_contains "$out" "spawned $id1 harness=codex" "first batch task did not use shared harness"
