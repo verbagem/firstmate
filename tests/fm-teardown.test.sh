@@ -82,6 +82,7 @@ make_case() {
   # run; the ALLOW cases need them so the script can complete cleanly.
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 # `treehouse return --force <wt>`: succeed silently.
 exit 0
 SH
@@ -341,6 +342,7 @@ add_lock_aware_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -375,6 +377,7 @@ add_transient_lock_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -420,6 +423,7 @@ add_persistent_lock_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -554,7 +558,7 @@ run_teardown() {
 make_path_without_lsof() {  # <case-dir>
   local case_dir=$1 path_dir="$1/path-without-lsof" cmd resolved
   mkdir -p "$path_dir"
-  for cmd in awk bash basename cat chmod cp cut date dirname env find git grep head hostname id ln \
+  for cmd in awk bash basename cat chmod cp cut date dirname env find git grep head hostname id jq ln \
     mkdir mktemp mv perl ps readlink realpath rm sed sh sleep sort stat tail timeout tr uname wc xargs; do
     resolved=$(command -v "$cmd" 2>/dev/null) || continue
     case "$resolved" in /*) ln -sf "$resolved" "$path_dir/$cmd" ;; esac
@@ -1442,6 +1446,7 @@ test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes() {
   thlog="$case_dir/treehouse.log"; : > "$thlog"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
@@ -1538,6 +1543,7 @@ assert_herdr_teardown_preflight_refuses_before_changes() {
   thlog="$case_dir/treehouse.log"; : > "$thlog"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
@@ -1652,6 +1658,7 @@ test_forced_secondmate_herdr_child_preflight_refuses_before_changes() {
   : > "$log"; : > "$thlog"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
@@ -1706,6 +1713,7 @@ exit 0
 SH
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
 exit 0
 SH
@@ -2142,6 +2150,7 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
 
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 [ "\${1:-}" = return ] || exit 0
 printf 'return\n' >> "$case_dir/treehouse.log"
 EOF
@@ -2313,6 +2322,7 @@ exit 1
 SH
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 [ "\${1:-}" = return ] || exit 0
 printf 'return\n' >> "$case_dir/treehouse.log"
 EOF
@@ -2540,6 +2550,7 @@ exec "$REAL_PS_FOR_TEST" "$@"
 SH
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 [ "\${1:-}" = return ] || exit 0
 printf 'returned\n' > "$case_dir/treehouse.log"
 EOF
@@ -2577,6 +2588,7 @@ test_run_abort_precedes_process_reap_precedes_worktree_removal() {
   # real observed state, not a source-text or line-number correlation.
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ -s "$abort_log" ]; then echo "abort-already-happened" >> "$case_dir/order.log"; fi
 if ! kill -0 $pid 2>/dev/null; then echo "reap-already-happened" >> "$case_dir/order.log"; fi
 exit 0
@@ -2610,6 +2622,7 @@ test_treehouse_return_is_bound_to_recorded_lease_identity() {
   : > "$case_dir/treehouse.log"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
 exit 0
 SH
@@ -2697,6 +2710,64 @@ SH
   pass "teardown of an unleased record leaves another owner's leased copy, lease and work untouched"
 }
 
+write_status_treehouse() {  # <case-dir> <status-script>
+  local case_dir=$1
+  : > "$case_dir/treehouse.log"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+if [ "\${1:-}:\${2:-}" = status:--json ]; then
+$2
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+test_unleased_record_adopts_its_own_firstmate_lease() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-own-lease)
+  write_meta "$case_dir" local-only ship
+  write_status_treehouse "$case_dir" "  printf '%s\\n' '[{\"name\":\"1\",\"path\":\"$case_dir/wt\",\"status\":\"leased\",\"lease_id\":\"lease-own\",\"lease_holder\":\"firstmate:task-x1\"}]'; exit 0"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "teardown of an unleased record must adopt a lease held by its own firstmate holder"
+  assert_grep "return --force $case_dir/wt --if-lease-id lease-own" "$case_dir/treehouse.log" \
+    "teardown did not guard the return with the adopted same-owner lease id"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "teardown left the record after returning its own leased copy"
+  pass "teardown of an unleased record adopts its own firstmate lease as the return guard"
+}
+
+assert_unverifiable_lease_state_refuses() {  # <case> <status-script> <expected-error>
+  local case_dir rc
+  case_dir=$(make_case "$1")
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'uncommitted work' > "$case_dir/wt/work.txt"
+  write_status_treehouse "$case_dir" "$2"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "$1: teardown must refuse when the copy's lease state cannot be verified"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "$1: teardown returned a copy whose lease state it could not verify"
+  fi
+  assert_grep "$3" "$case_dir/stderr" "$1: refusal did not name why lease state is unverifiable"
+  [ -f "$case_dir/wt/work.txt" ] || fail "$1: teardown discarded uncommitted work"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] || fail "$1: teardown dropped the task branch"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "$1: teardown removed the record"
+}
+
+test_unleased_record_refuses_teardown_when_lease_state_unverifiable() {
+  assert_unverifiable_lease_state_refuses treehouse-status-fails "  exit 1" \
+    "'treehouse status --json' failed"
+  assert_unverifiable_lease_state_refuses treehouse-status-unparseable "  printf '%s\\n' 'not json'; exit 0" \
+    "did not return a parseable pool list"
+  assert_unverifiable_lease_state_refuses treehouse-status-not-a-list "  printf '%s\\n' '{\"path\":\"x\"}'; exit 0" \
+    "did not return a parseable pool list"
+  pass "teardown of an unleased record refuses before any destructive step when lease state is unverifiable"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2758,3 +2829,5 @@ test_run_abort_precedes_process_reap_precedes_worktree_removal
 test_treehouse_return_is_bound_to_recorded_lease_identity
 test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root
 test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner
+test_unleased_record_adopts_its_own_firstmate_lease
+test_unleased_record_refuses_teardown_when_lease_state_unverifiable
