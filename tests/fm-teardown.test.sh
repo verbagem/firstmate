@@ -2661,6 +2661,39 @@ SH
   pass "teardown returns a leased worktree by Treehouse's listed path under a symlinked pool root"
 }
 
+test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-foreign-lease)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'other owner work' > "$case_dir/wt/other.txt"
+  : > "$case_dir/treehouse.log"
+  # The stale local record owns no lease, while Treehouse reports the same copy
+  # durably leased to a task in another Firstmate home.
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+case "\${1:-}:\${2:-}" in
+  status:--json)
+    printf '%s\n' '[{"name":"1","path":"$case_dir/wt","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:secondmate-task"}]'
+    exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "teardown of an unleased record must refuse a copy leased to another owner"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "teardown returned a copy that Treehouse reports leased to another owner"
+  fi
+  assert_grep "lease 'lease-other', holder 'firstmate:secondmate-task'" "$case_dir/stderr" \
+    "teardown refusal did not name the conflicting Treehouse lease"
+  [ -f "$case_dir/wt/other.txt" ] || fail "teardown discarded the other owner's uncommitted work"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "teardown removed the stale record instead of leaving it for reconciliation"
+  pass "teardown of an unleased record leaves another owner's leased copy, lease and work untouched"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2721,3 +2754,4 @@ test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
 test_treehouse_return_is_bound_to_recorded_lease_identity
 test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root
+test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner
