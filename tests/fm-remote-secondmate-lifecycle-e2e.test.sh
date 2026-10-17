@@ -234,6 +234,12 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
     while [ ! -f "$FM_FAKE_LAUNCH_RELEASE" ]; do sleep 0.02; done
     ;;
 esac
+if [ "$command_name" = fm-remote-home-provision.sh ] \
+  && [ -n "${FM_FAKE_MANIFEST_CAPTURE:-}" ]; then
+  cat > "$FM_FAKE_MANIFEST_CAPTURE"
+  "$FM_FAKE_REMOTE_ENTRYPOINT" "$@" < "$FM_FAKE_MANIFEST_CAPTURE"
+  exit $?
+fi
 case "${FM_FAKE_SSH_MODE:-normal}" in
   unreachable) exit 255 ;;
   ambiguous) "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"; exit 255 ;;
@@ -270,6 +276,7 @@ remote_env() {
   FM_FAKE_SEED_RELEASE="$TMP_ROOT/seed.release" \
   FM_FAKE_DOCTOR_LOG="$DOCTOR_LOG" \
   FM_FAKE_DOCTOR_REPAIRED="$TMP_ROOT/doctor.repaired" \
+  FM_FAKE_MANIFEST_CAPTURE="${FM_FAKE_MANIFEST_CAPTURE:-}" \
   FM_FAKE_INHERIT_ENTERED="$TMP_ROOT/inherit.entered" \
   FM_FAKE_INHERIT_RELEASE="$TMP_ROOT/inherit.release" \
   FM_FAKE_INHERIT_PAYLOAD="$TMP_ROOT/inherit.payload" \
@@ -307,6 +314,7 @@ seed_env() {
   FM_FAKE_SEED_RELEASE="$TMP_ROOT/seed.release" \
   FM_FAKE_DOCTOR_LOG="$DOCTOR_LOG" \
   FM_FAKE_DOCTOR_REPAIRED="$TMP_ROOT/doctor.repaired" \
+  FM_FAKE_MANIFEST_CAPTURE="${FM_FAKE_MANIFEST_CAPTURE:-}" \
   "$@"
 }
 
@@ -436,11 +444,16 @@ pass "remote seeding checks, repairs, and re-checks readiness, then stops on a r
 : > "$DOCTOR_LOG"
 rm -f "$TMP_ROOT/doctor.repaired"
 out=$(FM_SECONDMATE_CHARTER='Repairable host charter.' FM_SECONDMATE_SCOPE='repairable host' \
-  FM_FAKE_SSH_MODE=doctor-fixable seed_env "$ROOT/bin/fm-remote-home-seed.sh" \
+  FM_FAKE_SSH_MODE=doctor-fixable FM_FAKE_MANIFEST_CAPTURE="$TMP_ROOT/no-projects.manifest" \
+  seed_env /bin/bash "$ROOT/bin/fm-remote-home-seed.sh" \
   seed-repair remote-mac "$REMOTE_ROOT" "$TMP_ROOT/seed-repair-home" --no-projects 2>&1) \
   || fail "seeding refused a host whose gaps the repair closed"$'\n'"$out"
 assert_present "$TMP_ROOT/seed-repair-home/.fm-secondmate-home" "the repaired host was never provisioned"
 assert_grep '- seed-repair ' "$TMP_ROOT/seed-parent/data/secondmates.md" "the repaired route was not registered"
+assert_grep 'project_count=0' "$TMP_ROOT/no-projects.manifest" \
+  "the Bash 3.2 projectless seed emitted the wrong project count"
+[ "$(grep -c '^project=' "$TMP_ROOT/no-projects.manifest" || true)" -eq 0 ] \
+  || fail "the Bash 3.2 projectless seed emitted a project record"
 [ "$(cat "$DOCTOR_LOG")" = 'doctor-fixable -
 doctor-fixable --fix
 doctor-fixable -' ] || fail "the repaired seed did not re-check after its repair"$'\n'"$(cat "$DOCTOR_LOG")"
@@ -486,7 +499,7 @@ assert_grep 'pass beta=<origin-url>' "$TMP_ROOT/seed-noorigin.out" \
 assert_absent "$TMP_ROOT/seed-noorigin-home" "the unresolvable origin still provisioned a remote home"
 
 if FM_SECONDMATE_CHARTER='Unsafe origin charter.' FM_SECONDMATE_SCOPE='unsafe origin' \
-  seed_env "$ROOT/bin/fm-remote-home-seed.sh" seed-unsafe remote-mac "$REMOTE_ROOT" \
+  seed_env /bin/bash "$ROOT/bin/fm-remote-home-seed.sh" seed-unsafe remote-mac "$REMOTE_ROOT" \
   "$TMP_ROOT/seed-unsafe-home" 'beta=ext::git-upload-pack' \
   > "$TMP_ROOT/seed-unsafe.out" 2>&1; then
   fail "seeding accepted a remote-helper origin the remote host would execute"
@@ -647,11 +660,17 @@ pass "seeding carries bitbucket, self-hosted, and scp-like origins through to th
 # Provision and register the remote route from the captain-facing primary.
 out=$(FM_SECONDMATE_CHARTER='Own iOS delivery on the build Mac.' \
   FM_SECONDMATE_SCOPE='iOS implementation and Xcode validation' \
-  remote_env "$ROOT/bin/fm-remote-home-seed.sh" ios remote-mac "$REMOTE_ROOT" "$REMOTE_HOME" alpha)
+  FM_FAKE_MANIFEST_CAPTURE="$TMP_ROOT/project.manifest" \
+  remote_env /bin/bash "$ROOT/bin/fm-remote-home-seed.sh" \
+  ios remote-mac "$REMOTE_ROOT" "$REMOTE_HOME" alpha)
 assert_contains "$out" "home=remote-mac:$REMOTE_HOME" "remote seed did not report the host-qualified home"
 assert_grep 'host: remote-mac; root:' "$PARENT/data/secondmates.md" "registry did not record the remote host dimension"
 assert_present "$REMOTE_HOME/.fm-secondmate-home" "remote provisioning did not publish the identity marker"
 assert_present "$REMOTE_HOME/projects/alpha/.git" "remote provisioning did not clone the project on that host"
+assert_grep 'project_count=1' "$TMP_ROOT/project.manifest" \
+  "the Bash 3.2 project seed emitted the wrong project count"
+[ "$(grep -c '^project=' "$TMP_ROOT/project.manifest" || true)" -eq 1 ] \
+  || fail "the Bash 3.2 project seed did not emit exactly one project record"
 assert_grep "$REMOTE_HOME/state/parent-replies.status" "$REMOTE_HOME/data/charter.md" "remote charter did not use its append-only reply log"
 assert_no_grep "$PARENT/state/ios.status" "$REMOTE_HOME/data/charter.md" "remote charter retained the inaccessible local status path"
 if FM_SECONDMATE_CHARTER='Own iOS delivery on the build Mac.' \
