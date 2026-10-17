@@ -2587,6 +2587,10 @@ treehouse_ensure_record_lease() {  # <meta> <task-id> <canonical-worktree>
 treehouse_protect_recorded_worktrees() {
   local meta task_id kind backend meta_project meta_project_real worktree worktree_real records='[]'
   local duplicate_count i duplicate_worktree duplicate_tasks record_count record_status
+  command -v jq >/dev/null 2>&1 || {
+    echo "error: jq is required to reserve preserved task worktrees with Treehouse leases; install jq and retry" >&2
+    return 1
+  }
   treehouse_require_task_lease_support || return 1
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || [ -L "$meta" ] || continue

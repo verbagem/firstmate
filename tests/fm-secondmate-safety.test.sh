@@ -1946,6 +1946,8 @@ run_secondmate_child_unrecorded_lease_teardown() {  # <case> <status-json-templa
   mkdir -p "$home/state" "$home/data" "$subhome/state"
   fm_git_worktree "$childproj" "$childwt" "$name-child"
   printf 'child work\n' > "$childwt/work.txt"
+  mkdir -p "$childwt/.claude"
+  printf '{}\n' > "$childwt/.claude/settings.local.json"
   printf 'domain\n' > "$subhome/.fm-secondmate-home"
   cat > "$home/state/domain.meta" <<EOF
 window=firstmate:fm-domain
@@ -1996,11 +1998,13 @@ assert_secondmate_child_guarded_return_failure_preserves_copy() {  # <case> <sta
     || fail "$1: refusal did not name the child, worktree and lease of the failed conditional return"
 }
 
-assert_secondmate_child_unrecorded_lease_refused() {  # <case> <status-json-template> <expected-error>
-  run_secondmate_child_unrecorded_lease_teardown "$1" "$2"
+assert_secondmate_child_unrecorded_lease_refused() {  # <case> <status-json-template> <expected-error> [recorded-lease]
+  run_secondmate_child_unrecorded_lease_teardown "$1" "$2" "${4:-}"
   [ "$CHILD_LEASE_RC" -ne 0 ] || fail "$1: force teardown returned a child copy whose lease it cannot own"
   grep -F "treehouse return" "$CHILD_LEASE_LOG" >/dev/null && fail "$1: force teardown returned the child copy"
   [ "$(cat "$CHILD_LEASE_WT/work.txt" 2>/dev/null)" = 'child work' ] || fail "$1: force teardown discarded child work"
+  [ -f "$CHILD_LEASE_WT/.claude/settings.local.json" ] || fail "$1: force teardown stripped the child copy's hook wiring"
+  [ -e "$CHILD_LEASE_FILE" ] || fail "$1: force teardown released the child lease"
   [ -e "$CHILD_LEASE_META" ] || fail "$1: force teardown cleared the child record"
   [ -d "$CHILD_LEASE_SUBHOME" ] || fail "$1: force teardown removed the secondmate home"
   grep -F "$3" "$CHILD_LEASE_ERR" >/dev/null || fail "$1: refusal did not explain: $3"
@@ -2021,8 +2025,14 @@ test_secondmate_force_teardown_guards_unrecorded_child_leases() {
 }
 
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails() {
-  assert_secondmate_child_guarded_return_failure_preserves_copy child-stale-recorded-lease \
-    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:other-task"}]'
+  assert_secondmate_child_unrecorded_lease_refused child-stale-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:other-task"}]' \
+    "holder 'firstmate:other-task'" \
+    "$(printf '%s\n%s' treehouse_lease_id=lease-child treehouse_lease_holder=firstmate:child)"
+  assert_secondmate_child_unrecorded_lease_refused child-lost-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"available"}]' \
+    "is not listed under its recorded lease" \
+    "$(printf '%s\n%s' treehouse_lease_id=lease-child treehouse_lease_holder=firstmate:child)"
   assert_secondmate_child_guarded_return_failure_preserves_copy child-ambiguous-lease-inventory \
     '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"},{"name":"2","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"}]'
   pass "secondmate force teardown keeps a lease-bound child copy, lease and work when its guarded return fails"

@@ -1018,9 +1018,10 @@ test_unknown_backend_reports_invalid_configuration() {
   pass "bootstrap: unknown resolved backends fail closed with an actionable diagnostic"
 }
 
-test_json_backends_require_jq_not_tmux() {
+test_treehouse_backends_require_jq() {
   local backend case_dir fakebin bash_env out
-  # herdr/zellij/cmux parse their backend's JSON output, so jq is a genuine dep.
+  # Every treehouse-backed backend parses Treehouse's lease inventory, and
+  # herdr/zellij/cmux also parse their backend's JSON output, so jq is a genuine dep.
   # jq lives in a system BASE_PATH dir on many hosts, so force it missing with a
   # command()/jq() override (the same technique the git-required case uses) to keep
   # the assertion host-independent.
@@ -1032,7 +1033,7 @@ test_json_backends_require_jq_not_tmux() {
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     # Session CLI present, tmux absent, jq deliberately NOT stubbed and masked below.
     fakebin=$(make_fake_toolchain "$case_dir")
-    rm -f "$fakebin/tmux"
+    [ "$backend" = tmux ] || rm -f "$fakebin/tmux"
     fm_fake_exit0 "$fakebin" "$backend"
     bash_env="$case_dir/no-jq.bash"
     cat > "$bash_env" <<'SH'
@@ -1051,11 +1052,12 @@ SH
     assert_contains "$out" "MISSING: jq" "backend=$backend must fail closed on missing jq"
     assert_not_contains "$out" "MISSING: tmux" "backend=$backend must not demand tmux when jq is missing"
   done <<'ROWS'
+tmux
 herdr
 zellij
 cmux
 ROWS
-  pass "bootstrap: JSON-emitting backends require jq (their genuine dep), never tmux"
+  pass "bootstrap: treehouse-backed backends require jq (their genuine dep), and only tmux demands tmux"
 }
 
 test_treehouse_lease_check_follows_resolved_backend() {
@@ -1589,7 +1591,7 @@ test_session_provider_backends_gate_own_cli_not_tmux
 test_herdr_install_requires_manual_action
 test_cmux_bundled_cli_satisfies_dependency
 test_unknown_backend_reports_invalid_configuration
-test_json_backends_require_jq_not_tmux
+test_treehouse_backends_require_jq
 test_treehouse_lease_check_follows_resolved_backend
 test_fleet_sync_timeout_scales_with_origin_backed_project_count
 test_fleet_sync_timeout_floor_preserves_small_fleets

@@ -2622,7 +2622,7 @@ test_treehouse_return_is_bound_to_recorded_lease_identity() {
   : > "$case_dir/treehouse.log"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
-[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[{"name":"1","path":"$case_dir/wt","status":"leased","lease_id":"lease-task-x1","lease_holder":"firstmate:task-x1"}]'; exit 0; }
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
 exit 0
 SH
@@ -2708,6 +2708,43 @@ SH
   [ -f "$case_dir/wt/other.txt" ] || fail "teardown discarded the other owner's uncommitted work"
   [ -e "$case_dir/state/task-x1.meta" ] || fail "teardown removed the stale record instead of leaving it for reconciliation"
   pass "teardown of an unleased record leaves another owner's leased copy, lease and work untouched"
+}
+
+assert_recorded_lease_not_held_refuses_before_touching_copy() {  # <case> <status-json> <expected-error>
+  local case_dir rc
+  case_dir=$(make_case "$1")
+  write_meta "$case_dir" local-only ship
+  {
+    printf '%s\n' 'treehouse_lease_id=lease-task-x1'
+    printf '%s\n' 'treehouse_lease_holder=firstmate:task-x1'
+  } >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' 'other owner work' > "$case_dir/wt/other.txt"
+  mkdir -p "$case_dir/wt/.claude"
+  printf '%s\n' '{}' > "$case_dir/wt/.claude/settings.local.json"
+  write_status_treehouse "$case_dir" "  printf '%s\\n' '${2//@WT@/$case_dir/wt}'; exit 0"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "$1: teardown must refuse a copy that no longer holds the record's lease"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "$1: teardown returned a copy that no longer holds the record's lease"
+  fi
+  assert_grep "$3" "$case_dir/stderr" "$1: refusal did not explain the lease mismatch"
+  assert_grep "aborted before touching worktree" "$case_dir/stderr" "$1: refusal did not happen before touching the copy"
+  [ -f "$case_dir/wt/other.txt" ] || fail "$1: teardown discarded the current owner's work"
+  [ -f "$case_dir/wt/.claude/settings.local.json" ] || fail "$1: teardown stripped the current owner's hook wiring"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] || fail "$1: teardown deleted the checked-out branch"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "$1: teardown removed the record"
+}
+
+test_recorded_lease_refuses_before_touching_copy_it_no_longer_holds() {
+  assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-stale-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:task-y1"}]' \
+    "lease 'lease-other', holder 'firstmate:task-y1'"
+  assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-lost-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"available"}]' \
+    "is not listed under its recorded lease"
+  pass "teardown refuses before reaping, stripping or returning a copy that no longer holds the record's lease"
 }
 
 write_status_treehouse() {  # <case-dir> <status-script>
@@ -2831,3 +2868,4 @@ test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root
 test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner
 test_unleased_record_adopts_its_own_firstmate_lease
 test_unleased_record_refuses_teardown_when_lease_state_unverifiable
+test_recorded_lease_refuses_before_touching_copy_it_no_longer_holds

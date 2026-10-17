@@ -1335,17 +1335,28 @@ treehouse_listed_worktree_path() {  # <dir> <cd-dir>
   fi
 }
 
-# Verify the lease state of a pooled worktree whose record owns no Treehouse
-# lease before anything returns it. A lease held by firstmate:<task-id> is the
-# record's own and is exposed through TREEHOUSE_ADOPTED_LEASE_ID/_HOLDER as the
-# return guard; any other durable lease, or lease state that cannot be read,
-# refuses so another owner's live copy is never reset.
-treehouse_refuse_unrecorded_lease() {  # <dir> <cd-dir> <label> <task-id> <meta>
-  local dir=$1 cd_dir=$2 label=$3 task_id=$4 meta=$5 want status entries path lease_id lease_holder reason=""
-  TREEHOUSE_ADOPTED_LEASE_ID=
-  TREEHOUSE_ADOPTED_LEASE_HOLDER=
+# Verify a pooled worktree's Treehouse lease state before anything reaps in,
+# strips or returns it. A record with a recorded lease id/holder must find that
+# exact lease on its listed copy. A record without one may adopt a lease held by
+# firstmate:<task-id>; any other durable lease refuses. Lease state that cannot
+# be read refuses either way, so another owner's live copy is never touched.
+# The verified guard is exposed through TREEHOUSE_VERIFIED_LEASE_ID/_HOLDER.
+treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [<lease-id> <lease-holder>]
+  local dir=$1 cd_dir=$2 label=$3 task_id=$4 meta=$5 recorded_id=${6:-} recorded_holder=${7:-}
+  local want status entries path lease_id lease_holder reason="" ownership found=0
+  TREEHOUSE_VERIFIED_LEASE_ID=
+  TREEHOUSE_VERIFIED_LEASE_HOLDER=
+  if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
+    ownership="record '$meta' is bound to Treehouse lease '${recorded_id:-none}' (holder '${recorded_holder:-none}')"
+  else
+    ownership="record '$meta' owns no Treehouse lease"
+  fi
   want=$(canonical_existing_dir "$dir") || want=$dir
-  if ! command -v jq >/dev/null 2>&1; then
+  if [ -z "$cd_dir" ] || [ ! -d "$cd_dir" ]; then
+    reason="its project '${cd_dir:-none}' is unavailable"
+  elif ! command -v treehouse >/dev/null 2>&1; then
+    reason="treehouse is not installed"
+  elif ! command -v jq >/dev/null 2>&1; then
     reason="jq is not installed"
   elif ! status=$( cd "$cd_dir" && treehouse status --json 2>/dev/null ); then
     reason="'treehouse status --json' failed in '$cd_dir'"
@@ -1355,20 +1366,34 @@ treehouse_refuse_unrecorded_lease() {  # <dir> <cd-dir> <label> <task-id> <meta>
     reason="'treehouse status --json' in '$cd_dir' did not return a parseable pool list"
   fi
   if [ -n "$reason" ]; then
-    echo "error: cannot verify Treehouse lease state of $label '$dir' of task $task_id because $reason; record '$meta' owns no Treehouse lease, so refusing to return a copy that may be leased to another owner. The copy and this record were left untouched; restore a working jq and 'treehouse status --json', then rerun teardown" >&2
+    echo "error: cannot verify Treehouse lease state of $label '$dir' of task $task_id because $reason; $ownership, so refusing to touch a copy that may be leased to another owner. The copy, its work and this record were left untouched; restore the project, treehouse, jq and 'treehouse status --json', then rerun teardown" >&2
     return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
   fi
   while IFS=$'\t' read -r path lease_id lease_holder; do
     [ -n "$path" ] || continue
     [ "$(canonical_existing_dir "$path" || printf '%s' "$path")" = "$want" ] || continue
-    if [ "$lease_holder" = "firstmate:$task_id" ]; then
-      TREEHOUSE_ADOPTED_LEASE_ID=$lease_id
-      TREEHOUSE_ADOPTED_LEASE_HOLDER=$lease_holder
+    if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
+      if { [ -n "$recorded_id" ] && [ "$lease_id" = "$recorded_id" ]; } \
+         || { [ -z "$recorded_id" ] && [ "$lease_holder" = "$recorded_holder" ]; }; then
+        found=1
+        continue
+      fi
+    elif [ "$lease_holder" = "firstmate:$task_id" ]; then
+      TREEHOUSE_VERIFIED_LEASE_ID=$lease_id
+      TREEHOUSE_VERIFIED_LEASE_HOLDER=$lease_holder
       return 0
     fi
-    echo "error: $label '$dir' of task $task_id is durably leased in Treehouse (lease '${lease_id:-none}', holder '${lease_holder:-none}'), but record '$meta' owns no Treehouse lease; refusing to return another owner's copy. The copy, its lease and this record were left untouched. Inspect '$meta' against 'treehouse status --json' in '$cd_dir'; if the holder is another owner, this record no longer owns the copy, so retire only the record by moving '$meta' aside once task $task_id's branch and work are confirmed safe elsewhere" >&2
+    echo "error: $label '$dir' of task $task_id is durably leased in Treehouse (lease '${lease_id:-none}', holder '${lease_holder:-none}'), but $ownership; refusing to touch another owner's copy. The copy, its lease, its work and this record were left untouched. Inspect '$meta' against 'treehouse status --json' in '$cd_dir'; if the holder is another owner, this record no longer owns the copy, so retire only the record by moving '$meta' aside once task $task_id's branch and work are confirmed safe elsewhere" >&2
     return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
   done <<<"$entries"
+  if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
+    if [ "$found" -ne 1 ]; then
+      echo "error: $label '$dir' of task $task_id is not listed under its recorded lease in 'treehouse status --json' in '$cd_dir'; $ownership, so the lease was lost and the slot may since belong to another owner. The copy, its work and this record were left untouched. Re-establish the lease with 'treehouse lease' as holder '${recorded_holder:-firstmate:$task_id}' once the copy is confirmed to be task $task_id's, then rerun teardown" >&2
+      return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+    fi
+    TREEHOUSE_VERIFIED_LEASE_ID=$recorded_id
+    TREEHOUSE_VERIFIED_LEASE_HOLDER=$recorded_holder
+  fi
   return 0
 }
 
@@ -2564,11 +2589,12 @@ cleanup_firstmate_home_children() {
       fm_backend_remove_worktree "$child_backend" "$child_orca_worktree_id" || return 1
     elif [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
-      if [ -z "$child_treehouse_lease_id" ] && [ -z "$child_treehouse_lease_holder" ] \
-         && [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; then
-        treehouse_refuse_unrecorded_lease "$child_wt" "$child_proj" "child worktree" "$child_id" "$child_meta" || return $?
-        child_treehouse_lease_id=$TREEHOUSE_ADOPTED_LEASE_ID
-        child_treehouse_lease_holder=$TREEHOUSE_ADOPTED_LEASE_HOLDER
+      if [ -n "$child_treehouse_lease_id" ] || [ -n "$child_treehouse_lease_holder" ] \
+         || { [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; }; then
+        treehouse_verify_worktree_lease "$child_wt" "$child_proj" "child worktree" "$child_id" "$child_meta" \
+          "$child_treehouse_lease_id" "$child_treehouse_lease_holder" || return $?
+        child_treehouse_lease_id=$TREEHOUSE_VERIFIED_LEASE_ID
+        child_treehouse_lease_holder=$TREEHOUSE_VERIFIED_LEASE_HOLDER
       fi
       rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" \
         "$child_wt/.opencode/plugins/fm-busy-state.js" \
@@ -2588,9 +2614,6 @@ cleanup_firstmate_home_children() {
           fi
           safe_rm_rf_child_worktree "$child_wt" "$child_proj"
         fi
-      elif [ -n "$child_treehouse_lease_id" ] || [ -n "$child_treehouse_lease_holder" ]; then
-        echo "error: child $child_id worktree '$child_wt' is bound to Treehouse lease '${child_treehouse_lease_id:-none}' (holder '${child_treehouse_lease_holder:-none}'), but its project '${child_proj:-none}' or treehouse is unavailable for a conditional return; the copy, its lease, its work and record '$child_meta' were left untouched. Restore the project and treehouse, then rerun teardown" >&2
-        return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
       else
         safe_rm_rf_child_worktree "$child_wt" "$child_proj"
       fi
@@ -2746,18 +2769,19 @@ if [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
-# A record without its own Treehouse lease must not reap processes in, strip,
-# or return a pooled copy unless Treehouse confirms it is free or leased to
-# this task's own firstmate holder.
+# No record may reap processes in, strip, or return a pooled copy until
+# Treehouse confirms it still holds its recorded lease or, for a record without
+# one, that the copy is free or leased to this task's own firstmate holder.
 if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] && [ -d "$WT" ] \
-   && [ -z "$TREEHOUSE_LEASE_ID" ] && [ -z "$TREEHOUSE_LEASE_HOLDER" ] \
-   && [ -n "$PROJ" ] && [ -d "$PROJ" ] && command -v treehouse >/dev/null 2>&1; then
-  treehouse_refuse_unrecorded_lease "$WT" "$PROJ" "worktree" "$ID" "$META" || {
+   && { [ -n "$TREEHOUSE_LEASE_ID" ] || [ -n "$TREEHOUSE_LEASE_HOLDER" ] \
+        || { [ -n "$PROJ" ] && [ -d "$PROJ" ] && command -v treehouse >/dev/null 2>&1; }; }; then
+  treehouse_verify_worktree_lease "$WT" "$PROJ" "worktree" "$ID" "$META" \
+    "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER" || {
     echo "error: teardown of $ID aborted before touching worktree $WT" >&2
     exit 1
   }
-  TREEHOUSE_LEASE_ID=$TREEHOUSE_ADOPTED_LEASE_ID
-  TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_ADOPTED_LEASE_HOLDER
+  TREEHOUSE_LEASE_ID=$TREEHOUSE_VERIFIED_LEASE_ID
+  TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_VERIFIED_LEASE_HOLDER
 fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
