@@ -40,6 +40,9 @@ SH
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
   printf '%s\n' 'Usage: treehouse get [--lease]'
 fi
+if [ "${1:-}" = lease ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' 'Usage: treehouse lease <name>'
+fi
 SH
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash

@@ -158,10 +158,69 @@ fm_fakebin() {
   printf '%s\n' "$fakebin"
 }
 
+fm_fake_treehouse_task_leases() {
+  local fakebin=$1
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-}:${2:-}" in
+  get:--help)
+    printf '%s\n' 'Usage: treehouse get [--lease] [--lease-holder <holder>]'
+    exit 0
+    ;;
+  lease:--help)
+    printf '%s\n' 'Usage: treehouse lease <name> [--lease-holder <holder>] [--json]'
+    exit 0
+    ;;
+esac
+case "${1:-}:${2:-}" in
+  status:--json|lease:*) ;;
+  *) exit 0 ;;
+esac
+candidate=${FM_FAKE_PANE_PATH:-}
+if [ -z "$candidate" ]; then
+  current=$(pwd -P)
+  candidate=$(git worktree list --porcelain 2>/dev/null \
+    | awk '/^worktree / { sub(/^worktree /, ""); if ($0 != current) { print; exit } }' current="$current")
+fi
+if [ "${1:-}:${2:-}" = status:--json ]; then
+  if [ -z "$candidate" ]; then
+    printf '[]\n'
+  else
+    jq -cn --arg path "$candidate" \
+      '[{name:"1",path:$path,status:"in-use",lease_id:"",lease_holder:"",leased_at:null,processes:[]}]'
+  fi
+  exit 0
+fi
+if [ "${1:-}" = lease ]; then
+  holder=
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --lease-holder) holder=${2:-}; shift 2 ;;
+      --lease-holder=*) holder=${1#--lease-holder=}; shift ;;
+      --json) shift ;;
+      *) shift ;;
+    esac
+  done
+  [ -n "$candidate" ] || exit 1
+  jq -cn --arg path "$candidate" --arg holder "$holder" \
+    '{path:$path,lease_id:("fake-" + $holder),lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z"}'
+  exit 0
+fi
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
+}
+
 fm_fake_exit0() {
   local fakebin=$1 tool
   shift
   for tool in "$@"; do
+    if [ "$tool" = treehouse ]; then
+      fm_fake_treehouse_task_leases "$fakebin"
+      continue
+    fi
     cat > "$fakebin/$tool" <<'SH'
 #!/usr/bin/env bash
 exit 0

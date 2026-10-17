@@ -103,9 +103,35 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  cat > "$fakebin/treehouse" <<'SH'
+cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 set -u
+case "${1:-}:${2:-}" in
+  lease:--help)
+    printf '%s\n' 'Usage: treehouse lease <name> [--lease-holder <holder>] [--json]'
+    exit 0
+    ;;
+  status:--json)
+    jq -cn --arg path "${FM_FAKE_PANE_PATH:-}" \
+      '[{name:"1",path:$path,status:"in-use",lease_id:"",lease_holder:"",leased_at:null,processes:[]}]'
+    exit 0
+    ;;
+esac
+if [ "${1:-}" = lease ]; then
+  holder=
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --lease-holder) holder=${2:-}; shift 2 ;;
+      --lease-holder=*) holder=${1#--lease-holder=}; shift ;;
+      --json) shift ;;
+      *) shift ;;
+    esac
+  done
+  jq -cn --arg path "${FM_FAKE_PANE_PATH:-}" --arg holder "$holder" \
+    '{path:$path,lease_id:("fake-" + $holder),lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z"}'
+  exit 0
+fi
 if [ "${1:-}" = return ] && [ "${2:-}" = --force ] && [ -n "${3:-}" ]; then
   target=$3
   case "$target" in ''|/) exit 1 ;; esac

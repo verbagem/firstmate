@@ -41,7 +41,9 @@ unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_SOCKET_PATH CMUX_TAB_ID CMUX_PANEL_ID 2>/dev/null || true
 
 # A fake toolchain where every required tool is present and gh is authenticated.
-# treehouse's `get --help` advertises --lease only when FM_FAKE_TREEHOUSE_LEASE_HELP=1.
+# Treehouse advertises both required lease surfaces when
+# FM_FAKE_TREEHOUSE_LEASE_HELP=1. FM_FAKE_TREEHOUSE_EXISTING_LEASE_HELP can
+# independently suppress the state-only takeover command.
 make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -73,6 +75,13 @@ if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
     printf '%s\n' 'Usage: treehouse get'
   fi
   exit 0
+fi
+if [ "${1:-}" = lease ] && [ "${2:-}" = --help ]; then
+  if [ "${FM_FAKE_TREEHOUSE_EXISTING_LEASE_HELP:-${FM_FAKE_TREEHOUSE_LEASE_HELP:-}}" = 1 ]; then
+    printf '%s\n' 'Usage: treehouse lease <name> [--lease-holder <holder>] [--json]'
+    exit 0
+  fi
+  exit 1
 fi
 exit 0
 SH
@@ -307,8 +316,8 @@ test_bootstrap_reporting() {
         ;;
     esac
   done <<'ROWS'
-treehouse --lease support is accepted silently^1^0.2.4^1^manual^empty^^
-treehouse without --lease reports an upgrade, gh auth is fine^0^0.2.4^1^-^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
+treehouse task-lease support is accepted silently^1^0.2.4^1^manual^empty^^
+treehouse without task leases reports an upgrade, gh auth is fine^0^0.2.4^1^-^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
 compatible tasks-axi is silent by default^1^0.2.4^1^-^empty^^
 missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
@@ -1077,6 +1086,20 @@ test_treehouse_lease_check_follows_resolved_backend() {
     "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$out" "MISSING: treehouse" "backend=herdr must still require treehouse with durable lease support"
   assert_not_contains "$out" "MISSING: tmux" "backend=herdr must not demand tmux even when treehouse is too old"
+
+  # `get --lease` alone protects only newly acquired leases. Firstmate also
+  # needs state-only takeover so records created before this guard can be made
+  # durable before another get is allowed to select and reset their slots.
+  case_dir="$TMP_ROOT/herdr-no-existing-lease"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' herdr > "$case_dir/home/config/backend"
+  fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_TREEHOUSE_EXISTING_LEASE_HELP=0 \
+    "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" "MISSING: treehouse" \
+    "backend=herdr must reject treehouse without state-only lease takeover"
   pass "bootstrap: the treehouse lease check follows the resolved backend's worktree provider"
 }
 

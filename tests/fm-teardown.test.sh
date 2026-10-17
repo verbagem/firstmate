@@ -2596,6 +2596,30 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+test_treehouse_return_is_bound_to_recorded_lease_identity() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-lease-identity)
+  write_meta "$case_dir" local-only ship
+  {
+    printf '%s\n' 'treehouse_lease_id=lease-task-x1'
+    printf '%s\n' 'treehouse_lease_holder=firstmate:task-x1'
+  } >> "$case_dir/state/task-x1.meta"
+  : > "$case_dir/treehouse.log"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "lease-identity teardown should succeed"
+  assert_grep "return --force $case_dir/wt --if-lease-id lease-task-x1" "$case_dir/treehouse.log" \
+    "teardown did not bind Treehouse return to the task's recorded lease identity"
+  pass "teardown returns only the exact Treehouse lease recorded for the task"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2654,3 +2678,4 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_treehouse_return_is_bound_to_recorded_lease_identity

@@ -148,6 +148,16 @@
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
+#   For every Treehouse-backed fresh ship/scout spawn, the per-home task-set
+#   lock also protects a reservation reconciliation before `treehouse get` can
+#   reset anything. Every same-project ship/scout meta record must name one
+#   unique Treehouse slot; an unleased legacy slot is leased in place under
+#   `firstmate:<task-id>` without touching its files or git state, and ambiguous
+#   or unprotectable records stop allocation with the task and path named. The
+#   newly acquired slot is likewise leased in place before its base is refreshed,
+#   with treehouse_lease_id/treehouse_lease_holder recorded in task metadata.
+#   Relaunch never enters this path: it keeps the recorded endpoint, worktree,
+#   and durable lease of the task it is replacing.
 #   Before a fresh ship or scout worker starts, its clean task worktree fetches
 #   origin, resolves the current remote default branch, and resets to its tip.
 #   An unreachable origin, unresolved default branch, or non-clean worktree
@@ -715,6 +725,10 @@ SPAWN_FRESH_RESOURCE_WORKTREE=
 SPAWN_FRESH_RESOURCE_PROJECT=
 SPAWN_FRESH_RESOURCE_WINDOW=
 SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=
+SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=
+SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=
+TREEHOUSE_LEASE_ID=
+TREEHOUSE_LEASE_HOLDER=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -1022,11 +1036,12 @@ spawn_fresh_resource_cleanup_clear() {
   SPAWN_FRESH_RESOURCE_PROJECT=
   SPAWN_FRESH_RESOURCE_WINDOW=
   SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=
+  SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=
+  SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=
 }
 
 spawn_fresh_resource_cleanup_arm() {
   spawn_fresh_resource_cleanup_clear
-  [ "$DISPATCH_PROFILE_ACTIVE" = 1 ] || return 0
   [ "$RELAUNCH" -eq 0 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ "$BACKEND" != orca ] || return 0
@@ -1040,6 +1055,8 @@ spawn_fresh_resource_cleanup_arm() {
   SPAWN_FRESH_RESOURCE_PROJECT=$PROJ_ABS
   SPAWN_FRESH_RESOURCE_WINDOW=${W:-}
   SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=${ZELLIJ_TAB_ID:-}
+  SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=${TREEHOUSE_LEASE_ID:-}
+  SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=${TREEHOUSE_LEASE_HOLDER:-}
   SPAWN_FRESH_RESOURCE_CLEANUP=1
 }
 
@@ -1048,7 +1065,7 @@ spawn_fresh_resource_cleanup_disarm() {
 }
 
 spawn_fresh_resource_cleanup_run() {
-  local backend target worktree project window zellij_tab status=0
+  local backend target worktree project window zellij_tab lease_id lease_holder status=0
   [ "$SPAWN_FRESH_RESOURCE_CLEANUP" = 1 ] || return 0
   backend=$SPAWN_FRESH_RESOURCE_BACKEND
   target=$SPAWN_FRESH_RESOURCE_TARGET
@@ -1056,6 +1073,8 @@ spawn_fresh_resource_cleanup_run() {
   project=$SPAWN_FRESH_RESOURCE_PROJECT
   window=$SPAWN_FRESH_RESOURCE_WINDOW
   zellij_tab=$SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID
+  lease_id=$SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID
+  lease_holder=$SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER
   spawn_fresh_resource_cleanup_clear
   if [ -n "$backend" ] && [ -n "$target" ]; then
     case "$backend" in
@@ -1066,7 +1085,13 @@ spawn_fresh_resource_cleanup_run() {
   fi
   if [ -n "$worktree" ] && [ -d "$worktree" ]; then
     if [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; then
-      ( cd "$project" && treehouse return --force "$worktree" ) >/dev/null 2>&1 || status=1
+      if [ -n "$lease_id" ]; then
+        ( cd "$project" && treehouse return --force "$worktree" --if-lease-id "$lease_id" ) >/dev/null 2>&1 || status=1
+      elif [ -n "$lease_holder" ]; then
+        ( cd "$project" && treehouse return --force "$worktree" --if-lease-holder "$lease_holder" ) >/dev/null 2>&1 || status=1
+      else
+        status=1
+      fi
     else
       status=1
     fi
@@ -2349,6 +2374,240 @@ real_path_or_raw() {  # <path>
   fi
 }
 
+treehouse_task_lease_holder() {  # <task-id>
+  printf 'firstmate:%s\n' "$1"
+}
+
+treehouse_require_task_lease_support() {
+  if treehouse lease --help >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "error: installed treehouse lacks the state-only 'treehouse lease' command required to protect preserved task worktrees before allocation; upgrade treehouse and retry" >&2
+  return 1
+}
+
+treehouse_status_json() {
+  local status
+  status=$(cd "$PROJ_ABS" && treehouse status --json) || {
+    echo "error: could not inspect Treehouse reservations for project '$PROJ_ABS'; refusing fresh allocation" >&2
+    return 1
+  }
+  if ! jq -e '
+    type == "array" and all(.[ ];
+      (.name | type) == "string" and
+      (.path | type) == "string" and
+      (.status | type) == "string" and
+      ((.lease_id // "") | type) == "string" and
+      ((.lease_holder // "") | type) == "string")
+  ' <<<"$status" >/dev/null 2>&1; then
+    echo "error: treehouse status --json returned an invalid reservation inventory for project '$PROJ_ABS'; refusing fresh allocation" >&2
+    return 1
+  fi
+  printf '%s\n' "$status"
+}
+
+# Resolve one canonical worktree path to exactly one Treehouse status entry.
+# The globals are cleared on entry and populated only for a unique match.
+treehouse_status_find_worktree() {  # <status-json> <canonical-worktree> <task-id>
+  local status_json=$1 wanted=$2 task_id=$3 count i row_path row_real matches=0
+  TREEHOUSE_STATUS_NAME=
+  TREEHOUSE_STATUS_STATE=
+  TREEHOUSE_STATUS_LEASE_ID=
+  TREEHOUSE_STATUS_LEASE_HOLDER=
+  count=$(jq -r 'length' <<<"$status_json") || return 1
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    row_path=$(jq -r --argjson i "$i" '.[$i].path' <<<"$status_json") || return 1
+    row_real=$(real_path_or_raw "$row_path")
+    if [ "$row_real" = "$wanted" ]; then
+      matches=$((matches + 1))
+      TREEHOUSE_STATUS_NAME=$(jq -r --argjson i "$i" '.[$i].name' <<<"$status_json") || return 1
+      TREEHOUSE_STATUS_STATE=$(jq -r --argjson i "$i" '.[$i].status' <<<"$status_json") || return 1
+      TREEHOUSE_STATUS_LEASE_ID=$(jq -r --argjson i "$i" '.[$i].lease_id // ""' <<<"$status_json") || return 1
+      TREEHOUSE_STATUS_LEASE_HOLDER=$(jq -r --argjson i "$i" '.[$i].lease_holder // ""' <<<"$status_json") || return 1
+    fi
+    i=$((i + 1))
+  done
+  if [ "$matches" -eq 0 ]; then
+    echo "error: task $task_id records pooled worktree '$wanted', but Treehouse does not list that path for project '$PROJ_ABS'; refusing fresh allocation because the preserved copy cannot be reserved" >&2
+    return 1
+  fi
+  if [ "$matches" -ne 1 ]; then
+    echo "error: task $task_id records pooled worktree '$wanted', but Treehouse lists that path $matches times for project '$PROJ_ABS'; refusing ambiguous fresh allocation" >&2
+    return 1
+  fi
+}
+
+treehouse_validate_lease_result() {  # <json> <task-id> <canonical-worktree> <expected-holder>
+  local result=$1 task_id=$2 wanted=$3 expected_holder=$4 leased_path leased_real
+  if ! jq -e '
+    type == "object" and
+    (.path | type) == "string" and
+    (.lease_id | type) == "string" and (.lease_id | length) > 0 and
+    (.lease_holder | type) == "string"
+  ' <<<"$result" >/dev/null 2>&1; then
+    echo "error: Treehouse returned invalid lease metadata while protecting task $task_id worktree '$wanted'; refusing fresh allocation" >&2
+    return 1
+  fi
+  leased_path=$(jq -r '.path' <<<"$result") || return 1
+  leased_real=$(real_path_or_raw "$leased_path")
+  TREEHOUSE_LEASE_ID=$(jq -r '.lease_id' <<<"$result") || return 1
+  TREEHOUSE_LEASE_HOLDER=$(jq -r '.lease_holder' <<<"$result") || return 1
+  if [ "$leased_real" != "$wanted" ] || [ "$TREEHOUSE_LEASE_HOLDER" != "$expected_holder" ]; then
+    echo "error: Treehouse leased path '$leased_path' to holder '${TREEHOUSE_LEASE_HOLDER:-none}' while task $task_id requires '$wanted' held by '$expected_holder'; refusing fresh allocation" >&2
+    return 1
+  fi
+}
+
+treehouse_meta_record_lease() {  # <meta> <task-id> <canonical-worktree> <lease-id> <lease-holder>
+  local meta=$1 task_id=$2 wanted=$3 lease_id=$4 lease_holder=$5 lock tmp current current_real recorded_id recorded_holder status=0
+  lock=$(fm_meta_lock_path "$meta") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  if [ ! -f "$meta" ] || [ -L "$meta" ]; then
+    echo "error: task $task_id metadata changed while its Treehouse lease was being recorded; worktree '$wanted' remains leased for safety" >&2
+    fm_lock_release "$lock"
+    return 1
+  fi
+  current=$(fm_meta_get "$meta" worktree)
+  current_real=$(real_path_or_raw "$current")
+  recorded_id=$(fm_meta_get "$meta" treehouse_lease_id)
+  recorded_holder=$(fm_meta_get "$meta" treehouse_lease_holder)
+  if [ "$current_real" != "$wanted" ] \
+     || { [ -n "$recorded_id" ] && [ "$recorded_id" != "$lease_id" ]; } \
+     || { [ -n "$recorded_holder" ] && [ "$recorded_holder" != "$lease_holder" ]; }; then
+    echo "error: task $task_id metadata changed while its Treehouse lease was being recorded; worktree '$wanted' remains leased for safety" >&2
+    fm_lock_release "$lock"
+    return 1
+  fi
+  if [ "$recorded_id" = "$lease_id" ] && [ "$recorded_holder" = "$lease_holder" ]; then
+    fm_lock_release "$lock"
+    return 0
+  fi
+  tmp=$(mktemp "$STATE/.$task_id.meta.treehouse-lease.XXXXXX") || {
+    echo "error: could not stage Treehouse lease ownership for task $task_id; worktree '$wanted' remains leased for safety" >&2
+    fm_lock_release "$lock"
+    return 1
+  }
+  if ! awk -F= '$1 != "treehouse_lease_id" && $1 != "treehouse_lease_holder"' "$meta" > "$tmp" \
+     || ! printf 'treehouse_lease_id=%s\ntreehouse_lease_holder=%s\n' "$lease_id" "$lease_holder" >> "$tmp" \
+     || ! mv -f "$tmp" "$meta"; then
+    status=1
+    rm -f "$tmp" 2>/dev/null || true
+    echo "error: could not record Treehouse lease ownership for task $task_id; worktree '$wanted' remains leased for safety" >&2
+  fi
+  fm_lock_release "$lock" || status=1
+  return "$status"
+}
+
+treehouse_ensure_record_lease() {  # <meta> <task-id> <canonical-worktree>
+  local meta=$1 task_id=$2 wanted=$3 expected_holder status_json result recorded_id recorded_holder
+  expected_holder=$(treehouse_task_lease_holder "$task_id")
+  status_json=$(treehouse_status_json) || return 1
+  treehouse_status_find_worktree "$status_json" "$wanted" "$task_id" || return 1
+  recorded_id=$(fm_meta_get "$meta" treehouse_lease_id)
+  recorded_holder=$(fm_meta_get "$meta" treehouse_lease_holder)
+  if [ "$TREEHOUSE_STATUS_STATE" = leased ]; then
+    if [ -z "$TREEHOUSE_STATUS_LEASE_ID" ] \
+       || [ "$TREEHOUSE_STATUS_LEASE_HOLDER" != "$expected_holder" ] \
+       || { [ -n "$recorded_id" ] && [ "$recorded_id" != "$TREEHOUSE_STATUS_LEASE_ID" ]; } \
+       || { [ -n "$recorded_holder" ] && [ "$recorded_holder" != "$TREEHOUSE_STATUS_LEASE_HOLDER" ]; }; then
+      echo "error: task $task_id records pooled worktree '$wanted', but Treehouse reports lease '${TREEHOUSE_STATUS_LEASE_ID:-none}' held by '${TREEHOUSE_STATUS_LEASE_HOLDER:-none}' instead of '$expected_holder'; refusing fresh allocation until ownership is reconciled" >&2
+      return 1
+    fi
+    TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
+    TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_STATUS_LEASE_HOLDER
+  else
+    if ! result=$(cd "$PROJ_ABS" && treehouse lease "$TREEHOUSE_STATUS_NAME" --lease-holder "$expected_holder" --json); then
+      echo "error: could not reserve preserved task $task_id worktree '$wanted' in Treehouse; refusing fresh allocation before any pooled copy is reset" >&2
+      return 1
+    fi
+    treehouse_validate_lease_result "$result" "$task_id" "$wanted" "$expected_holder" || return 1
+  fi
+  treehouse_meta_record_lease "$meta" "$task_id" "$wanted" "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER"
+}
+
+treehouse_protect_recorded_worktrees() {
+  local meta task_id kind backend meta_project meta_project_real worktree worktree_real records='[]'
+  local duplicate_count i duplicate_worktree duplicate_tasks record_count
+  treehouse_require_task_lease_support || return 1
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || [ -L "$meta" ] || continue
+    task_id=$(basename "$meta" .meta)
+    case "$task_id" in
+      ''|*[!A-Za-z0-9._-]*)
+        echo "error: invalid task metadata filename '$meta'; refusing fresh Treehouse allocation" >&2
+        return 1
+        ;;
+    esac
+    if [ ! -f "$meta" ] || [ -L "$meta" ]; then
+      echo "error: task $task_id metadata is not a safe regular file: $meta; refusing fresh Treehouse allocation" >&2
+      return 1
+    fi
+    kind=$(fm_meta_get "$meta" kind)
+    [ -n "$kind" ] || kind=ship
+    [ "$kind" != secondmate ] || continue
+    backend=$(fm_backend_of_meta "$meta")
+    [ "$backend" != orca ] || continue
+    meta_project=$(fm_meta_get "$meta" project)
+    [ -n "$meta_project" ] || continue
+    meta_project_real=$(real_path_or_raw "$meta_project")
+    [ "$meta_project_real" = "$PROJ_ABS_REAL" ] || continue
+    worktree=$(fm_meta_get "$meta" worktree)
+    if [ -z "$worktree" ]; then
+      echo "error: task $task_id has no recorded worktree for project '$PROJ_ABS'; refusing fresh Treehouse allocation" >&2
+      return 1
+    fi
+    worktree_real=$(real_path_or_raw "$worktree")
+    records=$(jq -c \
+      --arg task "$task_id" --arg meta "$meta" --arg worktree "$worktree_real" \
+      '. + [{task:$task,meta:$meta,worktree:$worktree}]' <<<"$records") || return 1
+  done
+
+  duplicate_count=$(jq -r 'group_by(.worktree) | map(select(length > 1)) | length' <<<"$records") || return 1
+  if [ "$duplicate_count" -gt 0 ]; then
+    i=0
+    while [ "$i" -lt "$duplicate_count" ]; do
+      duplicate_worktree=$(jq -r --argjson i "$i" 'group_by(.worktree) | map(select(length > 1)) | .[$i][0].worktree' <<<"$records") || return 1
+      duplicate_tasks=$(jq -r --argjson i "$i" 'group_by(.worktree) | map(select(length > 1)) | .[$i] | map(.task) | join(", ")' <<<"$records") || return 1
+      echo "error: preserved task records [$duplicate_tasks] all reference pooled worktree '$duplicate_worktree' for project '$PROJ_ABS'; refusing fresh allocation until those owners are reconciled without resetting or discarding either task" >&2
+      i=$((i + 1))
+    done
+    return 1
+  fi
+
+  record_count=$(jq -r 'length' <<<"$records") || return 1
+  i=0
+  while [ "$i" -lt "$record_count" ]; do
+    task_id=$(jq -r --argjson i "$i" '.[$i].task' <<<"$records") || return 1
+    meta=$(jq -r --argjson i "$i" '.[$i].meta' <<<"$records") || return 1
+    worktree_real=$(jq -r --argjson i "$i" '.[$i].worktree' <<<"$records") || return 1
+    treehouse_ensure_record_lease "$meta" "$task_id" "$worktree_real" || return 1
+    i=$((i + 1))
+  done
+}
+
+treehouse_lease_fresh_worktree() {  # <task-id> <worktree>
+  local task_id=$1 worktree=$2 wanted expected_holder status_json result
+  wanted=$(real_path_or_raw "$worktree")
+  expected_holder=$(treehouse_task_lease_holder "$task_id")
+  status_json=$(treehouse_status_json) || return 1
+  treehouse_status_find_worktree "$status_json" "$wanted" "$task_id" || return 1
+  if [ "$TREEHOUSE_STATUS_STATE" = leased ]; then
+    if [ -z "$TREEHOUSE_STATUS_LEASE_ID" ] || [ "$TREEHOUSE_STATUS_LEASE_HOLDER" != "$expected_holder" ]; then
+      echo "error: freshly allocated worktree '$wanted' for task $task_id is already leased to '${TREEHOUSE_STATUS_LEASE_HOLDER:-unknown}' (lease '${TREEHOUSE_STATUS_LEASE_ID:-none}'); refusing to overwrite another owner" >&2
+      return 1
+    fi
+    TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
+    TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_STATUS_LEASE_HOLDER
+    return 0
+  fi
+  if ! result=$(cd "$PROJ_ABS" && treehouse lease "$TREEHOUSE_STATUS_NAME" --lease-holder "$expected_holder" --json); then
+    echo "error: could not durably lease freshly allocated worktree '$wanted' for task $task_id; refusing to refresh or launch in an unreserved copy" >&2
+    return 1
+  fi
+  treehouse_validate_lease_result "$result" "$task_id" "$wanted" "$expected_holder"
+}
+
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
 # a herdr spawn goes through the version-gated, workspace-per-HOME,
@@ -2537,6 +2796,10 @@ herdr_projection_existing_meta_allows_flat() {  # <meta>
       ;;
   esac
 }
+
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
+  treehouse_protect_recorded_worktrees || exit 1
+fi
 
 W="fm-$ID"
 if [ "$RELAUNCH" -eq 1 ]; then
@@ -2974,12 +3237,13 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+  treehouse_lease_fresh_worktree "$ID" "$WT" || exit 1
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+  spawn_fresh_resource_cleanup_arm
 fi
 if [ "$DISPATCH_PROFILE_ACTIVE" = 1 ]; then
-  spawn_fresh_resource_cleanup_arm
   typed_dispatch_resolve_and_apply
   [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
   resolve_spawn_launch_profile
@@ -3409,6 +3673,8 @@ if ! {
   echo "effort=${EFFORT:-default}"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  [ -z "$TREEHOUSE_LEASE_ID" ] || echo "treehouse_lease_id=$TREEHOUSE_LEASE_ID"
+  [ -z "$TREEHOUSE_LEASE_HOLDER" ] || echo "treehouse_lease_holder=$TREEHOUSE_LEASE_HOLDER"
   # Default-off writes no traceparent= line.
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
