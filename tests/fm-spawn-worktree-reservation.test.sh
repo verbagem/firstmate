@@ -357,11 +357,49 @@ test_abort_release_command_names_treehouse_listed_path_under_symlinked_root() {
   pass "the guarded release command names Treehouse's listed path under a symlinked pool root"
 }
 
+test_lost_recorded_lease_refuses_without_leasing_again() {
+  local rec old_id new_id old_slot out status
+  old_id=lost-lease-paused
+  new_id=after-lost-lease
+  rec=$(make_case lost-recorded-lease 2)
+  read_case "$rec"
+  old_slot="$CASE_DIR/slot-1"
+  write_preserved_meta "$old_id" "$old_slot"
+  printf 'treehouse_lease_id=lease-lost-1\ntreehouse_lease_holder=firstmate:%s\n' "$old_id" \
+    >> "$HOME_DIR/state/$old_id.meta"
+  write_brief "$new_id"
+
+  out=$(run_spawn "$new_id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a record whose recorded lease was lost must refuse fresh allocation: $out"
+  assert_contains "$out" "lease-lost-1" "the refusal did not name the lost recorded lease"
+  assert_contains "$out" "$old_id" "the refusal did not name the task whose lease was lost"
+  [ ! -s "$TREEHOUSE_LOG" ] || fail "the lost lease reached Treehouse mutation: $(cat "$TREEHOUSE_LOG")"
+  [ "$(jq -r '.[0].status' "$TREEHOUSE_STATE")" = available ] \
+    || fail "spawn created an unrecorded second lease on the preserved slot"
+  assert_grep "treehouse_lease_id=lease-lost-1" "$HOME_DIR/state/$old_id.meta" \
+    "the refusal rewrote the preserved record's lease"
+  [ ! -e "$HOME_DIR/state/$new_id.meta" ] || fail "the refused spawn published task metadata"
+
+  awk -F= '$1 != "treehouse_lease_id" && $1 != "treehouse_lease_holder"' \
+    "$HOME_DIR/state/$old_id.meta" > "$HOME_DIR/state/$old_id.meta.next"
+  mv -f "$HOME_DIR/state/$old_id.meta.next" "$HOME_DIR/state/$old_id.meta"
+  out=$(run_spawn "$new_id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "the advised recovery should let spawn re-lease and record the preserved copy: $out"
+  assert_grep "treehouse_lease_id=lease-1-firstmate:$old_id" "$HOME_DIR/state/$old_id.meta" \
+    "the recovered record did not record its new lease"
+  assert_not_contains "$(cat "$TREEHOUSE_LOG")" "reset	$old_slot" \
+    "recovery reset the preserved task's worktree"
+  pass "a lost recorded lease refuses without an orphan lease and recovers by dropping the stale lease lines"
+}
+
 test_preserved_ship_is_leased_before_scout_allocation
 test_genuinely_free_slot_still_allocates
 test_duplicate_preserved_owners_refuse_before_reset
 test_record_under_lifecycle_action_refuses_before_reset
 test_abort_after_fresh_lease_reports_unowned_lease
 test_abort_release_command_names_treehouse_listed_path_under_symlinked_root
+test_lost_recorded_lease_refuses_without_leasing_again
 
 echo "# all fm-spawn worktree reservation tests passed"

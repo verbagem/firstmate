@@ -1386,12 +1386,16 @@ treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [
       TREEHOUSE_VERIFIED_LEASE_HOLDER=$lease_holder
       return 0
     fi
+    if [ -n "$recorded_holder" ] && [ "$lease_holder" = "$recorded_holder" ]; then
+      echo "error: $label '$dir' of task $task_id is durably leased in Treehouse by this record's own holder '$lease_holder', but under lease '${lease_id:-none}' instead of the recorded '${recorded_id:-none}'; refusing to touch the copy until the record names that lease. The copy, its lease, its work and this record were left untouched. Once the copy is confirmed to be task $task_id's, remove the treehouse_lease_id and treehouse_lease_holder lines from '$meta' so teardown adopts the '$lease_holder' lease, then rerun teardown" >&2
+      return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+    fi
     echo "error: $label '$dir' of task $task_id is durably leased in Treehouse (lease '${lease_id:-none}', holder '${lease_holder:-none}'), but $ownership; refusing to touch another owner's copy. The copy, its lease, its work and this record were left untouched. Inspect '$meta' against 'treehouse status --json' in '$cd_dir'; if the holder is another owner, this record no longer owns the copy, so retire only the record by moving '$meta' aside once task $task_id's branch and work are confirmed safe elsewhere" >&2
     return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
   done <<<"$entries"
   if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
     if [ "$found" -ne 1 ]; then
-      echo "error: $label '$dir' of task $task_id is not listed under its recorded lease in 'treehouse status --json' in '$cd_dir'; $ownership, so the lease was lost and the slot may since belong to another owner. The copy, its work and this record were left untouched. Re-establish the lease with 'treehouse lease' as holder '${recorded_holder:-firstmate:$task_id}' once the copy is confirmed to be task $task_id's, then rerun teardown" >&2
+      echo "error: $label '$dir' of task $task_id is not listed under its recorded lease in 'treehouse status --json' in '$cd_dir'; $ownership, so the lease was lost and the slot may since belong to another owner. The copy, its work and this record were left untouched. Once the copy is confirmed to be task $task_id's, remove the treehouse_lease_id and treehouse_lease_holder lines from '$meta' and rerun teardown" >&2
       return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
     fi
     TREEHOUSE_VERIFIED_LEASE_ID=$recorded_id

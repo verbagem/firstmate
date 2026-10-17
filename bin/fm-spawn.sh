@@ -2575,6 +2575,10 @@ treehouse_ensure_record_lease() {  # <meta> <task-id> <canonical-worktree>
     TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
     TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_STATUS_LEASE_HOLDER
   else
+    if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
+      echo "error: task $task_id records Treehouse lease '${recorded_id:-none}' (holder '${recorded_holder:-none}') on pooled worktree '$wanted', but Treehouse no longer lists that lease (slot state '${TREEHOUSE_STATUS_STATE:-unknown}'); the lease was lost and the slot may since hold other work, so refusing fresh allocation without leasing it again. Leave the copy untouched and inspect it in '$PROJ_ABS'. Once it is confirmed to still be task $task_id's, remove the treehouse_lease_id and treehouse_lease_holder lines from '$meta' and retry, so the next spawn re-leases it as '$expected_holder' and records that lease" >&2
+      return 1
+    fi
     if ! result=$(cd "$PROJ_ABS" && treehouse lease "$TREEHOUSE_STATUS_NAME" --lease-holder "$expected_holder" --json); then
       echo "error: could not reserve preserved task $task_id worktree '$wanted' in Treehouse; refusing fresh allocation before any pooled copy is reset" >&2
       return 1

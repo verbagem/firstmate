@@ -2744,6 +2744,9 @@ test_recorded_lease_refuses_before_touching_copy_it_no_longer_holds() {
   assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-lost-recorded-lease \
     '[{"name":"1","path":"@WT@","status":"available"}]' \
     "is not listed under its recorded lease"
+  assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-same-holder-new-lease \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-relost","lease_holder":"firstmate:task-x1"}]' \
+    "by this record's own holder 'firstmate:task-x1', but under lease 'lease-relost' instead of the recorded 'lease-task-x1'"
   pass "teardown refuses before reaping, stripping or returning a copy that no longer holds the record's lease"
 }
 
