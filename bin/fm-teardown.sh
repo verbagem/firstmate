@@ -63,13 +63,16 @@
 # `treehouse return --if-lease-id`/`--if-lease-holder`, so it can never release a
 # lease it does not own. If that guarded return fails, or a child's project or
 # treehouse is unavailable for it, teardown refuses and never falls back to
-# deleting the lease-bound copy. A record with no recorded lease first verifies the
-# copy's lease state, even with --force and before its worktree is stripped or
-# returned (for a ship or scout task, also before any process reaping). A lease
-# held by firstmate:<that task id> is the record's own and guards the return;
-# a lease held by anyone else, or lease state that cannot be read (jq missing,
-# `treehouse status --json` failing or unparseable), refuses and leaves the
-# copy, its lease, and the record untouched for reconciliation.
+# deleting the lease-bound copy. A record with a recorded lease, or any record
+# whose project and treehouse are available, first verifies the copy's lease
+# state, even with --force and before its worktree is stripped or returned (for a
+# ship or scout task, also before any process reaping). A record with a recorded
+# lease must find that exact lease listed on its copy. For a record without one,
+# a lease held by firstmate:<that task id> is the record's own and guards the
+# return. A missing recorded lease, a lease held by anyone else, or lease state
+# that cannot be read (jq missing, `treehouse status --json` failing or
+# unparseable) refuses and leaves the copy, its lease, and the record untouched
+# for reconciliation.
 # Usage: fm-teardown.sh <task-id> [--force]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
