@@ -917,6 +917,10 @@ SH
 #!/usr/bin/env bash
 set -u
 { printf 'treehouse'; for a in "$@"; do printf '\x1f%s' "$a"; done; printf '\n'; } >> "${FM_TMUX_LOG:?}"
+if [ "${1:-}:${2:-}" = status:--json ]; then
+  jq -cn --arg path "${FM_FAKE_TREEHOUSE_PATH:?}" \
+    '[{name:"fixture",path:$path,status:"available",lease_id:"",lease_holder:""}]'
+fi
 exit 0
 SH
   chmod +x "$fb/tmux" "$fb/treehouse"
@@ -934,7 +938,7 @@ run_teardown_case() {
   : > "$log"
   env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$fmroot" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_TMUX_LOG="$log" \
+    FM_TMUX_LOG="$log" FM_FAKE_TREEHOUSE_PATH="$(sed -n 's/^worktree=//p' "$state/$id.meta" | tail -1)" \
     "$script" "$id"
 }
 

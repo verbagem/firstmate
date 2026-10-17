@@ -228,10 +228,19 @@ write_child_meta() {
     "mode=local-only" "yolo=off"
 }
 mkdir -p "$TMP_ROOT/childfake"
-for t in tmux treehouse no-mistakes gh gh-axi tasks-axi; do
+for t in tmux no-mistakes gh gh-axi tasks-axi; do
   printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/childfake/$t"
   chmod +x "$TMP_ROOT/childfake/$t"
 done
+cat > "$TMP_ROOT/childfake/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}:${2:-}" = status:--json ]; then
+  jq -cn --arg path "$PWD" \
+    '[{name:"fixture",path:$path,status:"available",lease_id:"",lease_holder:""}]'
+fi
+exit 0
+SH
+chmod +x "$TMP_ROOT/childfake/treehouse"
 
 run_child_teardown() { # <extra env assignments...>
   local out rc=0

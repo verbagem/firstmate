@@ -85,8 +85,9 @@
 #          A TANGLE line means the firstmate primary checkout (FM_ROOT) is stranded
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
-#          treehouse is also MISSING when its installed version lacks
-#          "treehouse get --lease" support.
+#          treehouse is also MISSING when its installed version lacks either
+#          durable "treehouse get --lease" acquisition or the state-only
+#          "treehouse lease" takeover used to protect preserved task records.
 #          no-mistakes is also MISSING when its installed version is older than
 #          1.60.2 (the pipeline must rebind the PR-body attestation after each
 #          CI-repair push, or the Require no-mistakes gate stays red; see CONTRIBUTING.md).
@@ -1118,7 +1119,9 @@ GH_AXI_MIN=0.1.29
 LAVISH_AXI_MIN=0.1.46
 
 treehouse_supports_lease() {
-  treehouse get --help 2>&1 | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)'
+  treehouse get --help 2>&1 \
+    | grep -Eq '(^|[^[:alnum:]_-])--lease([^[:alnum:]_-]|$)' \
+    && treehouse lease --help >/dev/null 2>&1
 }
 
 # Shared semantic-version floor for the tool gates below. A version string that
@@ -1503,7 +1506,9 @@ detect_local_tools() {
   done
   # The treehouse lease-support upgrade check is only relevant when the resolved
   # backend actually requires treehouse (every backend except orca, which owns its
-  # own worktrees); an orca home must not be told to upgrade a provider it never uses.
+  # own worktrees). Both leased acquisition and state-only lease takeover are
+  # required so preserved task records are protected before a fresh allocation.
+  # An orca home must not be told to upgrade a provider it never uses.
   if fm_backend_list_contains "$TOOLS" treehouse \
     && command -v treehouse >/dev/null 2>&1 && ! treehouse_supports_lease; then
     echo "MISSING: treehouse (install: $(install_cmd treehouse))"
