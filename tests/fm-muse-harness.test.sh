@@ -396,7 +396,7 @@ test_spawn_refuses_secondmate() {
 }
 
 test_spawn_writes_busy_binding_and_teardown_removes_it() {
-  local rec case_dir home proj wt fakebin id binding prior
+  local rec case_dir home proj wt fakebin id binding prior out status
   rec=$(make_spawn_case binding)
   IFS='|' read -r case_dir home proj wt fakebin id <<EOF
 $rec
@@ -419,9 +419,10 @@ EOF
   assert_absent "$home/state/$id.busy-gen" "muse spawn armed a busy record it can never clear"
   printf 'binding_id=retired\nsession_log=%s\n' "$prior" > "$home/state/$id.muse-session-current"
 
-  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
-    PATH="$fakebin:$PATH" "$TEARDOWN" "$id" --force >/dev/null 2>&1 \
-    || fail "muse teardown failed"
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    PATH="$fakebin:$PATH" "$TEARDOWN" "$id" --force 2>&1)
+  status=$?
+  expect_code 0 "$status" "muse teardown failed: $out"
   assert_absent "$binding" "muse session binding survived teardown"
   assert_absent "$home/state/$id.muse-session-current" "muse session cache survived teardown"
   pass "muse spawn writes a session binding that teardown removes"

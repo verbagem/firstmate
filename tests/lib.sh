@@ -163,6 +163,7 @@ fm_fake_treehouse_task_leases() {
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 set -u
+lease_state="$0.leases"
 case "${1:-}:${2:-}" in
   get:--help)
     printf '%s\n' 'Usage: treehouse get [--lease] [--lease-holder <holder>]'
@@ -174,7 +175,7 @@ case "${1:-}:${2:-}" in
     ;;
 esac
 case "${1:-}:${2:-}" in
-  status:--json|lease:*) ;;
+  status:--json|lease:*|return:*) ;;
   *) exit 0 ;;
 esac
 candidate=${FM_FAKE_PANE_PATH:-}
@@ -183,12 +184,26 @@ if [ -z "$candidate" ]; then
   candidate=$(git worktree list --porcelain 2>/dev/null \
     | awk '/^worktree / { sub(/^worktree /, ""); if ($0 != current) { print; exit } }' current="$current")
 fi
+if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+  candidate=$(cd "$candidate" && pwd -P)
+fi
 if [ "${1:-}:${2:-}" = status:--json ]; then
   if [ -z "$candidate" ]; then
     printf '[]\n'
   else
-    jq -cn --arg path "$candidate" \
-      '[{name:"1",path:$path,status:"in-use",lease_id:"",lease_holder:"",leased_at:null,processes:[]}]'
+    lease_id=
+    lease_holder=
+    if [ -f "$lease_state" ]; then
+      lease_id=$(awk -F '\t' -v path="$candidate" '$1 == path { print $2; exit }' "$lease_state")
+      lease_holder=$(awk -F '\t' -v path="$candidate" '$1 == path { print $3; exit }' "$lease_state")
+    fi
+    if [ -n "$lease_id" ]; then
+      jq -cn --arg path "$candidate" --arg lease_id "$lease_id" --arg holder "$lease_holder" \
+        '[{name:"1",path:$path,status:"leased",lease_id:$lease_id,lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z",processes:[]}]'
+    else
+      jq -cn --arg path "$candidate" \
+        '[{name:"1",path:$path,status:"in-use",lease_id:"",lease_holder:"",leased_at:null,processes:[]}]'
+    fi
   fi
   exit 0
 fi
@@ -204,8 +219,46 @@ if [ "${1:-}" = lease ]; then
     esac
   done
   [ -n "$candidate" ] || exit 1
-  jq -cn --arg path "$candidate" --arg holder "$holder" \
-    '{path:$path,lease_id:("fake-" + $holder),lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z"}'
+  lease_id="fake-$holder"
+  lease_tmp="$lease_state.tmp.$$"
+  {
+    if [ -f "$lease_state" ]; then
+      awk -F '\t' -v path="$candidate" '$1 != path' "$lease_state"
+    fi
+    printf '%s\t%s\t%s\n' "$candidate" "$lease_id" "$holder"
+  } > "$lease_tmp"
+  mv -f "$lease_tmp" "$lease_state"
+  jq -cn --arg path "$candidate" --arg lease_id "$lease_id" --arg holder "$holder" \
+    '{path:$path,lease_id:$lease_id,lease_holder:$holder,leased_at:"2030-01-01T00:00:00Z"}'
+  exit 0
+fi
+if [ "${1:-}" = return ]; then
+  target=
+  guard_id=
+  guard_holder=
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) shift ;;
+      --if-lease-id) guard_id=${2:-}; shift 2 ;;
+      --if-lease-holder) guard_holder=${2:-}; shift 2 ;;
+      --if-lease-id=*) guard_id=${1#--if-lease-id=}; shift ;;
+      --if-lease-holder=*) guard_holder=${1#--if-lease-holder=}; shift ;;
+      *) target=$1; shift ;;
+    esac
+  done
+  if [ -n "$target" ] && [ -d "$target" ]; then
+    target=$(cd "$target" && pwd -P)
+  fi
+  if [ -n "$target" ] && [ -f "$lease_state" ]; then
+    recorded_id=$(awk -F '\t' -v path="$target" '$1 == path { print $2; exit }' "$lease_state")
+    recorded_holder=$(awk -F '\t' -v path="$target" '$1 == path { print $3; exit }' "$lease_state")
+    [ -z "$guard_id" ] || [ "$guard_id" = "$recorded_id" ] || exit 1
+    [ -z "$guard_holder" ] || [ "$guard_holder" = "$recorded_holder" ] || exit 1
+    lease_tmp="$lease_state.tmp.$$"
+    awk -F '\t' -v path="$target" '$1 != path' "$lease_state" > "$lease_tmp"
+    mv -f "$lease_tmp" "$lease_state"
+  fi
   exit 0
 fi
 exit 0
