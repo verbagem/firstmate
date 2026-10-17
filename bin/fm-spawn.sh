@@ -156,6 +156,14 @@
 #   or unprotectable records stop allocation with the task and path named. The
 #   newly acquired slot is likewise leased in place before its base is refreshed,
 #   with treehouse_lease_id/treehouse_lease_holder recorded in task metadata.
+#   Each legacy record is leased only while its own control lock is free, so
+#   reconciliation never races that task's teardown or relaunch. A spawn that
+#   stops after its new lease but before task cleanup is armed leaves the copy
+#   leased and untouched and prints the lease and the guarded release command.
+#   Reconciliation reads only this home's records; a legacy record that lives
+#   only in another home is protected by running, in that project,
+#   `treehouse lease <slot> --lease-holder firstmate:<task-id>`, which the
+#   owning home's next fresh spawn adopts into that task's metadata.
 #   Relaunch never enters this path: it keeps the recorded endpoint, worktree,
 #   and durable lease of the task it is replacing.
 #   Before a fresh ship or scout worker starts, its clean task worktree fetches
@@ -729,6 +737,10 @@ SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=
 SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=
 TREEHOUSE_LEASE_ID=
 TREEHOUSE_LEASE_HOLDER=
+SPAWN_UNOWNED_LEASE_WORKTREE=
+SPAWN_UNOWNED_LEASE_ID=
+SPAWN_UNOWNED_LEASE_HOLDER=
+SPAWN_RECORD_CONTROL_LOCK=
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -1058,6 +1070,9 @@ spawn_fresh_resource_cleanup_arm() {
   SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=${TREEHOUSE_LEASE_ID:-}
   SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=${TREEHOUSE_LEASE_HOLDER:-}
   SPAWN_FRESH_RESOURCE_CLEANUP=1
+  SPAWN_UNOWNED_LEASE_WORKTREE=
+  SPAWN_UNOWNED_LEASE_ID=
+  SPAWN_UNOWNED_LEASE_HOLDER=
 }
 
 spawn_fresh_resource_cleanup_disarm() {
@@ -1101,6 +1116,18 @@ spawn_fresh_resource_cleanup_run() {
 
 spawn_abort_cleanup() {
   local status=$?
+  if [ -n "$SPAWN_RECORD_CONTROL_LOCK" ]; then
+    fm_lock_release "$SPAWN_RECORD_CONTROL_LOCK" || true
+    SPAWN_RECORD_CONTROL_LOCK=
+  fi
+  if [ -n "$SPAWN_UNOWNED_LEASE_WORKTREE" ]; then
+    echo "warning: fresh spawn of task ${ID:-unknown} stopped after Treehouse durably leased pooled worktree '$SPAWN_UNOWNED_LEASE_WORKTREE' (lease '${SPAWN_UNOWNED_LEASE_ID:-unknown}', holder '$SPAWN_UNOWNED_LEASE_HOLDER'); no task record owns that lease and the copy was left untouched" >&2
+    if [ -n "$SPAWN_UNOWNED_LEASE_ID" ]; then
+      echo "warning: to reconcile, inspect it with: git -C '$SPAWN_UNOWNED_LEASE_WORKTREE' status --short; once it holds nothing to keep, release only that lease with: (cd '$PROJ_ABS' && treehouse return '$SPAWN_UNOWNED_LEASE_WORKTREE' --if-lease-id '$SPAWN_UNOWNED_LEASE_ID')" >&2
+    else
+      echo "warning: to reconcile, inspect it with: git -C '$SPAWN_UNOWNED_LEASE_WORKTREE' status --short; once it holds nothing to keep, release only that holder's lease with: (cd '$PROJ_ABS' && treehouse return '$SPAWN_UNOWNED_LEASE_WORKTREE' --if-lease-holder '$SPAWN_UNOWNED_LEASE_HOLDER')" >&2
+    fi
+  fi
   if ! dispatch_receipt_emit; then
     echo "error: could not record typed-dispatch receipt for ${ID:-unknown}" >&2
     status=1
@@ -2429,11 +2456,11 @@ treehouse_status_find_worktree() {  # <status-json> <canonical-worktree> <task-i
     i=$((i + 1))
   done
   if [ "$matches" -eq 0 ]; then
-    echo "error: task $task_id records pooled worktree '$wanted', but Treehouse does not list that path for project '$PROJ_ABS'; refusing fresh allocation because the preserved copy cannot be reserved" >&2
+    echo "error: task $task_id records pooled worktree '$wanted', but 'treehouse status --json' in '$PROJ_ABS' does not list that path; refusing fresh allocation because the preserved copy cannot be reserved. Leave the copy as is; if task $task_id is finished, tear it down normally with bin/fm-teardown.sh $task_id, otherwise confirm the copy still exists and is listed by the project's Treehouse pool, then retry" >&2
     return 1
   fi
   if [ "$matches" -ne 1 ]; then
-    echo "error: task $task_id records pooled worktree '$wanted', but Treehouse lists that path $matches times for project '$PROJ_ABS'; refusing ambiguous fresh allocation" >&2
+    echo "error: task $task_id records pooled worktree '$wanted', but 'treehouse status --json' in '$PROJ_ABS' lists that path $matches times; refusing ambiguous fresh allocation. Inspect that inventory and repair the duplicate pool entry in Treehouse without changing the copy, then retry" >&2
     return 1
   fi
 }
@@ -2511,7 +2538,7 @@ treehouse_ensure_record_lease() {  # <meta> <task-id> <canonical-worktree>
        || [ "$TREEHOUSE_STATUS_LEASE_HOLDER" != "$expected_holder" ] \
        || { [ -n "$recorded_id" ] && [ "$recorded_id" != "$TREEHOUSE_STATUS_LEASE_ID" ]; } \
        || { [ -n "$recorded_holder" ] && [ "$recorded_holder" != "$TREEHOUSE_STATUS_LEASE_HOLDER" ]; }; then
-      echo "error: task $task_id records pooled worktree '$wanted', but Treehouse reports lease '${TREEHOUSE_STATUS_LEASE_ID:-none}' held by '${TREEHOUSE_STATUS_LEASE_HOLDER:-none}' instead of '$expected_holder'; refusing fresh allocation until ownership is reconciled" >&2
+      echo "error: task $task_id records pooled worktree '$wanted', but Treehouse reports lease '${TREEHOUSE_STATUS_LEASE_ID:-none}' held by '${TREEHOUSE_STATUS_LEASE_HOLDER:-none}' instead of '$expected_holder' (recorded lease '${recorded_id:-none}', holder '${recorded_holder:-none}'); refusing fresh allocation until ownership is reconciled. The current holder owns the copy: if it is another Firstmate home's task, finish or tear down that task in its own home; if task $task_id here is finished, tear it down with bin/fm-teardown.sh $task_id; never return or reset the copy to break the tie" >&2
       return 1
     fi
     TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
@@ -2528,7 +2555,7 @@ treehouse_ensure_record_lease() {  # <meta> <task-id> <canonical-worktree>
 
 treehouse_protect_recorded_worktrees() {
   local meta task_id kind backend meta_project meta_project_real worktree worktree_real records='[]'
-  local duplicate_count i duplicate_worktree duplicate_tasks record_count
+  local duplicate_count i duplicate_worktree duplicate_tasks record_count record_status
   treehouse_require_task_lease_support || return 1
   for meta in "$STATE"/*.meta; do
     [ -e "$meta" ] || [ -L "$meta" ] || continue
@@ -2581,7 +2608,18 @@ treehouse_protect_recorded_worktrees() {
     task_id=$(jq -r --argjson i "$i" '.[$i].task' <<<"$records") || return 1
     meta=$(jq -r --argjson i "$i" '.[$i].meta' <<<"$records") || return 1
     worktree_real=$(jq -r --argjson i "$i" '.[$i].worktree' <<<"$records") || return 1
-    treehouse_ensure_record_lease "$meta" "$task_id" "$worktree_real" || return 1
+    if ! fm_lock_try_acquire "$STATE/.control-$task_id.lock"; then
+      echo "error: another lifecycle action (teardown, relaunch, or recovery) is running for preserved task $task_id, which records pooled worktree '$worktree_real'; refusing fresh allocation rather than racing it. Retry this spawn after that action finishes" >&2
+      return 1
+    fi
+    SPAWN_RECORD_CONTROL_LOCK="$STATE/.control-$task_id.lock"
+    record_status=0
+    if [ -f "$meta" ] && [ ! -L "$meta" ]; then
+      treehouse_ensure_record_lease "$meta" "$task_id" "$worktree_real" || record_status=1
+    fi
+    SPAWN_RECORD_CONTROL_LOCK=
+    fm_lock_release "$STATE/.control-$task_id.lock" || record_status=1
+    [ "$record_status" -eq 0 ] || return 1
     i=$((i + 1))
   done
 }
@@ -2594,17 +2632,23 @@ treehouse_lease_fresh_worktree() {  # <task-id> <worktree>
   treehouse_status_find_worktree "$status_json" "$wanted" "$task_id" || return 1
   if [ "$TREEHOUSE_STATUS_STATE" = leased ]; then
     if [ -z "$TREEHOUSE_STATUS_LEASE_ID" ] || [ "$TREEHOUSE_STATUS_LEASE_HOLDER" != "$expected_holder" ]; then
-      echo "error: freshly allocated worktree '$wanted' for task $task_id is already leased to '${TREEHOUSE_STATUS_LEASE_HOLDER:-unknown}' (lease '${TREEHOUSE_STATUS_LEASE_ID:-none}'); refusing to overwrite another owner" >&2
+      echo "error: freshly allocated worktree '$wanted' for task $task_id is already leased to '${TREEHOUSE_STATUS_LEASE_HOLDER:-unknown}' (lease '${TREEHOUSE_STATUS_LEASE_ID:-none}'); refusing to overwrite another owner. Leave the copy to its holder, inspect 'treehouse status --json' in '$PROJ_ABS', and retry once a free slot is available" >&2
       return 1
     fi
     TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
     TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_STATUS_LEASE_HOLDER
+    SPAWN_UNOWNED_LEASE_WORKTREE=$wanted
+    SPAWN_UNOWNED_LEASE_ID=$TREEHOUSE_LEASE_ID
+    SPAWN_UNOWNED_LEASE_HOLDER=$TREEHOUSE_LEASE_HOLDER
     return 0
   fi
   if ! result=$(cd "$PROJ_ABS" && treehouse lease "$TREEHOUSE_STATUS_NAME" --lease-holder "$expected_holder" --json); then
     echo "error: could not durably lease freshly allocated worktree '$wanted' for task $task_id; refusing to refresh or launch in an unreserved copy" >&2
     return 1
   fi
+  SPAWN_UNOWNED_LEASE_WORKTREE=$wanted
+  SPAWN_UNOWNED_LEASE_ID=$(jq -r '.lease_id // empty' <<<"$result" 2>/dev/null || true)
+  SPAWN_UNOWNED_LEASE_HOLDER=$expected_holder
   treehouse_validate_lease_result "$result" "$task_id" "$wanted" "$expected_holder"
 }
 

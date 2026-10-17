@@ -272,8 +272,72 @@ test_duplicate_preserved_owners_refuse_before_reset() {
   pass "duplicate preserved task owners fail closed with both tasks and the worktree named before reset"
 }
 
+test_record_under_lifecycle_action_refuses_before_reset() {
+  local rec old_id new_id old_slot old_slot_real lock holder i out status
+  old_id=legacy-being-torn-down
+  new_id=racing-fresh-ship
+  rec=$(make_case lifecycle-race 2)
+  read_case "$rec"
+  old_slot="$CASE_DIR/slot-1"
+  old_slot_real=$(cd "$old_slot" && pwd -P)
+  write_preserved_meta "$old_id" "$old_slot"
+  write_brief "$new_id"
+  lock="$HOME_DIR/state/.control-$old_id.lock"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock" || exit 1
+    sleep 30
+  ) &
+  holder=$!
+  i=0
+  while [ ! -e "$lock/pid" ] && [ "$i" -lt 100 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ -e "$lock/pid" ] || { kill "$holder" 2>/dev/null; fail "could not stage a held control lock"; }
+
+  out=$(run_spawn "$new_id" --mode no-mistakes --yolo off)
+  status=$?
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$status" -ne 0 ] || fail "a record under a running lifecycle action must refuse fresh allocation: $out"
+  assert_contains "$out" "$old_id" "the refusal did not name the task under a lifecycle action"
+  assert_contains "$out" "$old_slot_real" "the refusal did not name that task's worktree"
+  [ ! -s "$TREEHOUSE_LOG" ] || fail "the refusal reached Treehouse mutation: $(cat "$TREEHOUSE_LOG")"
+  assert_no_grep "treehouse_lease_holder=" "$HOME_DIR/state/$old_id.meta" \
+    "reconciliation rewrote a record whose lifecycle action holds its control lock"
+  [ ! -e "$HOME_DIR/state/$new_id.meta" ] || fail "the refused spawn published task metadata"
+  pass "a record held by a running lifecycle action fails closed before any lease or reset"
+}
+
+test_abort_after_fresh_lease_reports_unowned_lease() {
+  local rec id slot slot_real out status
+  id=freshen-refused-ship
+  rec=$(make_case abort-after-lease 1)
+  read_case "$rec"
+  slot="$CASE_DIR/slot-1"
+  slot_real=$(cd "$slot" && pwd -P)
+  write_brief "$id"
+  git -C "$slot" remote set-url origin "$CASE_DIR/missing-origin.git"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unreachable origin must stop the fresh spawn: $out"
+  [ "$(jq -r '.[0].status' "$TREEHOUSE_STATE")" = leased ] \
+    || fail "the aborted spawn's slot should stay leased rather than be returned or reset"
+  assert_contains "$out" "$slot_real" "the abort did not name the leased worktree"
+  assert_contains "$out" "lease-1-firstmate:$id" "the abort did not name the leased identity"
+  assert_contains "$out" "--if-lease-id 'lease-1-firstmate:$id'" \
+    "the abort did not give the lease-guarded release command"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "the aborted spawn published task metadata"
+  pass "a spawn stopped after its fresh lease keeps the copy leased and reports the guarded release step"
+}
+
 test_preserved_ship_is_leased_before_scout_allocation
 test_genuinely_free_slot_still_allocates
 test_duplicate_preserved_owners_refuse_before_reset
+test_record_under_lifecycle_action_refuses_before_reset
+test_abort_after_fresh_lease_reports_unowned_lease
 
 echo "# all fm-spawn worktree reservation tests passed"

@@ -186,6 +186,7 @@ Crewmates never intentionally touch your project clone; [treehouse](https://gith
 For ship and scout work, `fm-spawn.sh` refuses to launch unless the resolved task path is a real git worktree root that is distinct from the project primary checkout.
 Before Treehouse can select and reset a slot, `fm-spawn.sh` reconciles every same-project ship/scout task record into a state-only durable lease and refuses duplicate or unprotectable ownership records with the conflicting task and worktree named.
 After Treehouse enters a genuinely free slot, `fm-spawn.sh` converts that live owner reservation into a durable `firstmate:<task-id>` lease and records its identity in task metadata, while relaunch keeps the recorded owner's existing lease and worktree.
+Reconciliation covers only the active home's records and never leases a record whose lifecycle action holds its control lock; a legacy record that exists only in another home is protected with `treehouse lease <slot> --lease-holder firstmate:<task-id>` in that project, and the `fm-spawn.sh` header owns the exact reconciliation and leaked-lease reporting steps.
 `fm-spawn.sh` also owns the base-freshness boundary for every fresh ship and scout: no worker starts until its clean task worktree matches the fetched tip of origin's resolved default branch, and any unsafe or unverifiable base stops the spawn.
 Its header owns the exact refusal mechanics, while `tests/fm-spawn-worktree-reservation.test.sh` and `tests/fm-spawn-pool-base-freshen.test.sh` own the portable regression coverage.
 
