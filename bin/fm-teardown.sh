@@ -58,6 +58,14 @@
 # releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
+# A ship or scout record (or secondmate child record) carrying
+# treehouse_lease_id/treehouse_lease_holder returns its worktree only through
+# `treehouse return --if-lease-id`/`--if-lease-holder`, so it can never release a
+# lease it does not own. A record with no recorded lease refuses, even with
+# --force and before its worktree is stripped or returned (for a ship or scout
+# task, also before any process reaping), when Treehouse reports that copy
+# durably leased: the lease belongs to another owner, so the copy, its lease,
+# and the record are left untouched for reconciliation.
 # Usage: fm-teardown.sh <task-id> [--force]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it

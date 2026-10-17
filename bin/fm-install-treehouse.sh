@@ -83,7 +83,7 @@ mkdir -p "$DESTINATION"
 install -m 0755 "$BIN" "$DESTINATION/treehouse"
 
 installed_version=$("$DESTINATION/treehouse" --version 2>/dev/null | tr -d '[:space:]')
-# treehouse prints "v2.0.1" (leading v) on --version.
+# treehouse prints "v<version>" (leading v) on --version.
 case "$installed_version" in
   "v${FM_TREEHOUSE_CI_VERSION}"|"${FM_TREEHOUSE_CI_VERSION}") ;;
   *)
