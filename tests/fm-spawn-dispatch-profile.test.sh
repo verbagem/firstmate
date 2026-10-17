@@ -103,7 +103,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-cat > "$fakebin/treehouse" <<'SH'
+  cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 set -u
 case "${1:-}:${2:-}" in
@@ -135,6 +135,7 @@ fi
 if [ "${1:-}" = return ] && [ "${2:-}" = --force ] && [ -n "${3:-}" ]; then
   target=$3
   case "$target" in ''|/) exit 1 ;; esac
+  [ "${FM_FAKE_TREEHOUSE_RETURN_FAIL:-0}" != 1 ] || exit 1
   if [ "${FM_FAKE_TREEHOUSE_RETURN_REMOVES:-0}" = 1 ]; then
     git -C "$(pwd)" worktree remove --force "$target" >/dev/null 2>&1 || rm -rf "$target"
   fi
@@ -370,6 +371,7 @@ run_spawn() {
     FM_FAKE_CURSOR_TRUST_LOG="${FM_TEST_CURSOR_TRUST_LOG:-}" \
     FM_FAKE_DISPATCH_CURL_LOG="${FM_TEST_DISPATCH_CURL_LOG:-}" \
     FM_FAKE_TREEHOUSE_RETURN_REMOVES="${FM_TEST_TREEHOUSE_RETURN_REMOVES:-0}" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL="${FM_TEST_TREEHOUSE_RETURN_FAIL:-0}" \
     HOME="${FM_TEST_HOME:-${HOME:-}}" GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -614,6 +616,31 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   [ "$(jq -r .divergence_reason <<<"$receipt")" = absent_key ] || fail "absent-key receipt did not explain fallback"
   [ "$(jq -r .launched <<<"$receipt")" = null ] || fail "refused absent-key launch receipt claims a worker launched"
   pass "active crew-dispatch profile requires an explicit harness for ship spawns"
+}
+
+test_failed_conditional_cleanup_reports_leased_slot() {
+  local rec id out status window_dir
+  id=profile-cleanup-fails-z11
+  rec=$(make_spawn_case profile-cleanup-fails claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  window_dir="$CASE_DIR/tmux-windows"
+
+  out=$(FM_TEST_TMUX_WINDOW_DIR="$window_dir" FM_TEST_TREEHOUSE_RETURN_FAIL=1 \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "ship spawn without explicit harness should fail when dispatch profiles are active"
+  assert_present "$WT_DIR" "a failed conditional cleanup must leave the leased worktree in place"
+  assert_contains "$out" "fresh spawn of task $id aborted" "the failure did not name the task"
+  assert_contains "$out" "$(basename "$WT_DIR")" "the failure did not name the leased worktree"
+  assert_contains "$out" "lease 'fake-firstmate:$id' (holder 'firstmate:$id')" \
+    "the failure did not name the lease identity"
+  assert_contains "$out" "conditional cleanup 'treehouse return --force" \
+    "the failure did not name the failed conditional return"
+  assert_contains "$out" "--if-lease-id 'fake-firstmate:$id'), which confirms before cleaning" \
+    "the failure did not give the lease-guarded reconciliation step"
+  assert_absent "$HOME_DIR/state/$id.meta" "the aborted spawn published task metadata"
+  pass "a failed conditional cleanup of a fresh lease keeps the copy and reports the exact lease"
 }
 
 test_fake_typesafe_response_fixture_is_valid_clear_json() {
@@ -1878,6 +1905,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
 test_explicit_model_identifier_rejects_control_characters
 test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_failed_conditional_cleanup_reports_leased_slot
 test_fake_typesafe_response_fixture_is_valid_clear_json
 test_typed_dispatch_validates_project_before_resolver_call
 test_clear_typed_cursor_selection_reaches_launch_and_receipt

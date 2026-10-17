@@ -158,8 +158,9 @@
 #   with treehouse_lease_id/treehouse_lease_holder recorded in task metadata.
 #   Each legacy record is leased only while its own control lock is free, so
 #   reconciliation never races that task's teardown or relaunch. A spawn that
-#   stops after its new lease but before task cleanup is armed leaves the copy
-#   leased and untouched and prints the lease and the guarded release command.
+#   stops after its new lease but before task cleanup is armed, or whose armed
+#   lease-conditional return fails, leaves the copy leased and untouched and
+#   prints the lease and the guarded release command.
 #   Reconciliation reads only this home's records; a legacy record that lives
 #   only in another home is protected by running, in that project,
 #   `treehouse lease <slot> --lease-holder firstmate:<task-id>`, which the
@@ -1079,6 +1080,17 @@ spawn_fresh_resource_cleanup_disarm() {
   spawn_fresh_resource_cleanup_clear
 }
 
+spawn_report_unowned_lease() {  # <worktree> <project> <lease-id> <lease-holder> <what-happened>
+  local worktree=$1 project=$2 lease_id=$3 lease_holder=$4 what=$5 guard
+  if [ -n "$lease_id" ]; then
+    guard="--if-lease-id '$lease_id'"
+  else
+    guard="--if-lease-holder '$lease_holder'"
+  fi
+  echo "warning: fresh spawn of task ${ID:-unknown} $what; pooled worktree '$worktree' keeps Treehouse lease '${lease_id:-unknown}' (holder '$lease_holder'), no task record owns that lease, and the copy was left untouched" >&2
+  echo "warning: to reconcile, inspect it with: git -C '$worktree' status --short; once it holds nothing to keep, release only that lease with: (cd '$project' && treehouse return '$worktree' $guard), which confirms before cleaning and refuses any other lease" >&2
+}
+
 spawn_fresh_resource_cleanup_run() {
   local backend target worktree project window zellij_tab lease_id lease_holder status=0
   [ "$SPAWN_FRESH_RESOURCE_CLEANUP" = 1 ] || return 0
@@ -1101,9 +1113,17 @@ spawn_fresh_resource_cleanup_run() {
   if [ -n "$worktree" ] && [ -d "$worktree" ]; then
     if [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; then
       if [ -n "$lease_id" ]; then
-        ( cd "$project" && treehouse return --force "$worktree" --if-lease-id "$lease_id" ) >/dev/null 2>&1 || status=1
+        if ! ( cd "$project" && treehouse return --force "$worktree" --if-lease-id "$lease_id" ) >/dev/null 2>&1; then
+          status=1
+          spawn_report_unowned_lease "$worktree" "$project" "$lease_id" "$lease_holder" \
+            "aborted and its conditional cleanup 'treehouse return --force $worktree --if-lease-id $lease_id' failed"
+        fi
       elif [ -n "$lease_holder" ]; then
-        ( cd "$project" && treehouse return --force "$worktree" --if-lease-holder "$lease_holder" ) >/dev/null 2>&1 || status=1
+        if ! ( cd "$project" && treehouse return --force "$worktree" --if-lease-holder "$lease_holder" ) >/dev/null 2>&1; then
+          status=1
+          spawn_report_unowned_lease "$worktree" "$project" "" "$lease_holder" \
+            "aborted and its conditional cleanup 'treehouse return --force $worktree --if-lease-holder $lease_holder' failed"
+        fi
       else
         status=1
       fi
@@ -1121,12 +1141,9 @@ spawn_abort_cleanup() {
     SPAWN_RECORD_CONTROL_LOCK=
   fi
   if [ -n "$SPAWN_UNOWNED_LEASE_WORKTREE" ]; then
-    echo "warning: fresh spawn of task ${ID:-unknown} stopped after Treehouse durably leased pooled worktree '$SPAWN_UNOWNED_LEASE_WORKTREE' (lease '${SPAWN_UNOWNED_LEASE_ID:-unknown}', holder '$SPAWN_UNOWNED_LEASE_HOLDER'); no task record owns that lease and the copy was left untouched" >&2
-    if [ -n "$SPAWN_UNOWNED_LEASE_ID" ]; then
-      echo "warning: to reconcile, inspect it with: git -C '$SPAWN_UNOWNED_LEASE_WORKTREE' status --short; once it holds nothing to keep, release only that lease with: (cd '$PROJ_ABS' && treehouse return '$SPAWN_UNOWNED_LEASE_WORKTREE' --if-lease-id '$SPAWN_UNOWNED_LEASE_ID')" >&2
-    else
-      echo "warning: to reconcile, inspect it with: git -C '$SPAWN_UNOWNED_LEASE_WORKTREE' status --short; once it holds nothing to keep, release only that holder's lease with: (cd '$PROJ_ABS' && treehouse return '$SPAWN_UNOWNED_LEASE_WORKTREE' --if-lease-holder '$SPAWN_UNOWNED_LEASE_HOLDER')" >&2
-    fi
+    spawn_report_unowned_lease "$SPAWN_UNOWNED_LEASE_WORKTREE" "$PROJ_ABS" \
+      "$SPAWN_UNOWNED_LEASE_ID" "$SPAWN_UNOWNED_LEASE_HOLDER" \
+      "stopped after Treehouse durably leased its slot and before task cleanup was armed"
   fi
   if ! dispatch_receipt_emit; then
     echo "error: could not record typed-dispatch receipt for ${ID:-unknown}" >&2
@@ -2538,7 +2555,7 @@ treehouse_ensure_record_lease() {  # <meta> <task-id> <canonical-worktree>
        || [ "$TREEHOUSE_STATUS_LEASE_HOLDER" != "$expected_holder" ] \
        || { [ -n "$recorded_id" ] && [ "$recorded_id" != "$TREEHOUSE_STATUS_LEASE_ID" ]; } \
        || { [ -n "$recorded_holder" ] && [ "$recorded_holder" != "$TREEHOUSE_STATUS_LEASE_HOLDER" ]; }; then
-      echo "error: task $task_id records pooled worktree '$wanted', but Treehouse reports lease '${TREEHOUSE_STATUS_LEASE_ID:-none}' held by '${TREEHOUSE_STATUS_LEASE_HOLDER:-none}' instead of '$expected_holder' (recorded lease '${recorded_id:-none}', holder '${recorded_holder:-none}'); refusing fresh allocation until ownership is reconciled. The current holder owns the copy: if it is another Firstmate home's task, finish or tear down that task in its own home; if task $task_id here is finished, tear it down with bin/fm-teardown.sh $task_id; never return or reset the copy to break the tie" >&2
+      echo "error: task $task_id records pooled worktree '$wanted', but Treehouse reports lease '${TREEHOUSE_STATUS_LEASE_ID:-none}' held by '${TREEHOUSE_STATUS_LEASE_HOLDER:-none}' instead of '$expected_holder' (recorded lease '${recorded_id:-none}', holder '${recorded_holder:-none}'); refusing fresh allocation until ownership is reconciled. Leave the copy and that lease untouched and inspect local record '$meta' against 'treehouse status --json' in '$PROJ_ABS'. If the current holder is another owner, this record no longer owns the copy: retire only the record by moving '$meta' out of '$STATE' once task $task_id's branch and work are confirmed safe elsewhere. Do not run bin/fm-teardown.sh $task_id for it, because teardown of a record without its own lease returns the recorded worktree" >&2
       return 1
     fi
     TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
