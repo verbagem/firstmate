@@ -61,7 +61,9 @@
 # A ship or scout record (or secondmate child record) carrying
 # treehouse_lease_id/treehouse_lease_holder returns its worktree only through
 # `treehouse return --if-lease-id`/`--if-lease-holder`, so it can never release a
-# lease it does not own. A record with no recorded lease first verifies the
+# lease it does not own. If that guarded return fails, or a child's project or
+# treehouse is unavailable for it, teardown refuses and never falls back to
+# deleting the lease-bound copy. A record with no recorded lease first verifies the
 # copy's lease state, even with --force and before its worktree is stripped or
 # returned (for a ship or scout task, also before any process reaping). A lease
 # held by firstmate:<that task id> is the record's own and guards the return;
