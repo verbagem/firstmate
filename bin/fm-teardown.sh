@@ -1298,12 +1298,43 @@ cleanup_stale_lock_for_safety_check() {
   return "$TEARDOWN_TREEHOUSE_LOCK_REFUSED"
 }
 
+# Print the path `treehouse status --json` lists for <dir> when exactly one pool
+# entry resolves to the same physical directory; otherwise print <dir> unchanged
+# so a lease-guarded return still fails closed on its precondition.
+treehouse_listed_worktree_path() {  # <dir> <cd-dir>
+  local dir=$1 cd_dir=$2 want status listed path match="" matches=0
+  want=$(canonical_existing_dir "$dir") || want=$dir
+  if command -v jq >/dev/null 2>&1 \
+     && status=$( cd "$cd_dir" && treehouse status --json 2>/dev/null ) \
+     && listed=$(jq -r '.[]?.path // empty' <<<"$status" 2>/dev/null); then
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      if [ "$(canonical_existing_dir "$path" || printf '%s' "$path")" = "$want" ]; then
+        match=$path
+        matches=$((matches + 1))
+      fi
+    done <<<"$listed"
+  fi
+  if [ "$matches" -eq 1 ]; then
+    printf '%s\n' "$match"
+  else
+    printf '%s\n' "$dir"
+  fi
+}
+
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
 # stale git index.lock left by a killed crew process. See the script header.
 teardown_treehouse_return() {
   local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} lease_id=${5:-} lease_holder=${6:-}
   local out lock attempt=0 max_retries lock_desc
-  local -a return_cmd=(treehouse return --force "$dir")
+  local -a return_cmd
+
+  # Treehouse keys a lease by its own listed pool path, which can differ from
+  # the recorded (physically resolved) worktree under a symlinked pool root.
+  if [ -n "$lease_id" ] || [ -n "$lease_holder" ]; then
+    dir=$(treehouse_listed_worktree_path "$dir" "$cd_dir")
+  fi
+  return_cmd=(treehouse return --force "$dir")
 
   if [ -n "$lease_id" ]; then
     return_cmd+=(--if-lease-id "$lease_id")

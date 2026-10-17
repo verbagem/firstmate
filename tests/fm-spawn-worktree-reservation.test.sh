@@ -334,10 +334,34 @@ test_abort_after_fresh_lease_reports_unowned_lease() {
   pass "a spawn stopped after its fresh lease keeps the copy leased and reports the guarded release step"
 }
 
+test_abort_release_command_names_treehouse_listed_path_under_symlinked_root() {
+  local rec id listed out status
+  id=symlinked-root-ship
+  rec=$(make_case abort-symlinked-root 1)
+  read_case "$rec"
+  ln -s "$CASE_DIR" "$CASE_DIR/pool-link"
+  listed="$CASE_DIR/pool-link/slot-1"
+  # Treehouse keys the slot and its lease by the unresolved pool path.
+  jq -c --arg path "$listed" '.[0].path = $path' "$TREEHOUSE_STATE" > "$TREEHOUSE_STATE.next"
+  mv -f "$TREEHOUSE_STATE.next" "$TREEHOUSE_STATE"
+  write_brief "$id"
+  git -C "$CASE_DIR/slot-1" remote set-url origin "$CASE_DIR/missing-origin.git"
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unreachable origin must stop the fresh spawn: $out"
+  [ "$(jq -r '.[0].status' "$TREEHOUSE_STATE")" = leased ] \
+    || fail "the aborted spawn's slot should stay leased rather than be returned or reset"
+  assert_contains "$out" "treehouse return '$listed' --if-lease-id 'lease-1-firstmate:$id'" \
+    "the guarded release command did not name the path Treehouse lists for the leased slot"
+  pass "the guarded release command names Treehouse's listed path under a symlinked pool root"
+}
+
 test_preserved_ship_is_leased_before_scout_allocation
 test_genuinely_free_slot_still_allocates
 test_duplicate_preserved_owners_refuse_before_reset
 test_record_under_lifecycle_action_refuses_before_reset
 test_abort_after_fresh_lease_reports_unowned_lease
+test_abort_release_command_names_treehouse_listed_path_under_symlinked_root
 
 echo "# all fm-spawn worktree reservation tests passed"

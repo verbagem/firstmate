@@ -2620,6 +2620,47 @@ SH
   pass "teardown returns only the exact Treehouse lease recorded for the task"
 }
 
+test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root() {
+  local case_dir rc listed_wt
+  case_dir=$(make_case treehouse-lease-symlinked-root)
+  case_dir=$(cd "$case_dir" && pwd -P)
+  ln -s "$case_dir" "$case_dir/pool-link"
+  listed_wt="$case_dir/pool-link/wt"
+  write_meta "$case_dir" local-only ship
+  {
+    printf '%s\n' 'treehouse_lease_id=lease-task-x1'
+    printf '%s\n' 'treehouse_lease_holder=firstmate:task-x1'
+  } >> "$case_dir/state/task-x1.meta"
+  : > "$case_dir/treehouse.log"
+  # Real Treehouse keys the pool entry and its lease by the unresolved pool
+  # path, so a guarded return of the resolved path fails its lease precondition.
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+case "\${1:-}:\${2:-}" in
+  status:--json)
+    printf '%s\n' '[{"name":"1","path":"$listed_wt","status":"leased","lease_id":"lease-task-x1","lease_holder":"firstmate:task-x1"}]'
+    exit 0 ;;
+  return:--force)
+    if [ "\${3:-}" = "$listed_wt" ] && [ "\${4:-}" = --if-lease-id ] && [ "\${5:-}" = lease-task-x1 ]; then
+      exit 0
+    fi
+    echo "failed to return worktree: lease precondition failed: worktree \${3:-} is not leased" >&2
+    exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "lease-guarded teardown under a symlinked pool root should succeed"
+  assert_grep "return --force $listed_wt --if-lease-id lease-task-x1" "$case_dir/treehouse.log" \
+    "teardown did not return the Treehouse-listed path for the leased worktree"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "teardown left the task record after a successful return"
+  pass "teardown returns a leased worktree by Treehouse's listed path under a symlinked pool root"
+}
+
 test_local_only_fork_remote_allows
 test_teardown_prompts_tasks_axi_done_when_compatible
 test_teardown_manual_backend_prompts_hand_edit_even_when_tasks_axi_present
@@ -2679,3 +2720,4 @@ test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
 test_treehouse_return_is_bound_to_recorded_lease_identity
+test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root

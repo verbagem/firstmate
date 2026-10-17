@@ -736,9 +736,12 @@ SPAWN_FRESH_RESOURCE_WINDOW=
 SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=
 SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=
 SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=
+SPAWN_FRESH_RESOURCE_TREEHOUSE_PATH=
 TREEHOUSE_LEASE_ID=
 TREEHOUSE_LEASE_HOLDER=
+TREEHOUSE_LEASE_PATH=
 SPAWN_UNOWNED_LEASE_WORKTREE=
+SPAWN_UNOWNED_LEASE_PATH=
 SPAWN_UNOWNED_LEASE_ID=
 SPAWN_UNOWNED_LEASE_HOLDER=
 SPAWN_RECORD_CONTROL_LOCK=
@@ -1051,6 +1054,7 @@ spawn_fresh_resource_cleanup_clear() {
   SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=
   SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=
   SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=
+  SPAWN_FRESH_RESOURCE_TREEHOUSE_PATH=
 }
 
 spawn_fresh_resource_cleanup_arm() {
@@ -1070,8 +1074,10 @@ spawn_fresh_resource_cleanup_arm() {
   SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID=${ZELLIJ_TAB_ID:-}
   SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_ID=${TREEHOUSE_LEASE_ID:-}
   SPAWN_FRESH_RESOURCE_TREEHOUSE_LEASE_HOLDER=${TREEHOUSE_LEASE_HOLDER:-}
+  SPAWN_FRESH_RESOURCE_TREEHOUSE_PATH=${TREEHOUSE_LEASE_PATH:-$WT}
   SPAWN_FRESH_RESOURCE_CLEANUP=1
   SPAWN_UNOWNED_LEASE_WORKTREE=
+  SPAWN_UNOWNED_LEASE_PATH=
   SPAWN_UNOWNED_LEASE_ID=
   SPAWN_UNOWNED_LEASE_HOLDER=
 }
@@ -1080,23 +1086,26 @@ spawn_fresh_resource_cleanup_disarm() {
   spawn_fresh_resource_cleanup_clear
 }
 
-spawn_report_unowned_lease() {  # <worktree> <project> <lease-id> <lease-holder> <what-happened>
-  local worktree=$1 project=$2 lease_id=$3 lease_holder=$4 what=$5 guard
+# <treehouse-path> is the path Treehouse lists for the slot; a lease-guarded
+# return must name it, since it can differ from the resolved worktree.
+spawn_report_unowned_lease() {  # <worktree> <project> <lease-id> <lease-holder> <what-happened> [treehouse-path]
+  local worktree=$1 project=$2 lease_id=$3 lease_holder=$4 what=$5 treehouse_path=${6:-$1} guard
   if [ -n "$lease_id" ]; then
     guard="--if-lease-id '$lease_id'"
   else
     guard="--if-lease-holder '$lease_holder'"
   fi
   echo "warning: fresh spawn of task ${ID:-unknown} $what; pooled worktree '$worktree' keeps Treehouse lease '${lease_id:-unknown}' (holder '$lease_holder'), no task record owns that lease, and the copy was left untouched" >&2
-  echo "warning: to reconcile, inspect it with: git -C '$worktree' status --short; once it holds nothing to keep, release only that lease with: (cd '$project' && treehouse return '$worktree' $guard), which confirms before cleaning and refuses any other lease" >&2
+  echo "warning: to reconcile, inspect it with: git -C '$worktree' status --short; once it holds nothing to keep, release only that lease with: (cd '$project' && treehouse return '$treehouse_path' $guard), which confirms before cleaning and refuses any other lease" >&2
 }
 
 spawn_fresh_resource_cleanup_run() {
-  local backend target worktree project window zellij_tab lease_id lease_holder status=0
+  local backend target worktree treehouse_path project window zellij_tab lease_id lease_holder status=0
   [ "$SPAWN_FRESH_RESOURCE_CLEANUP" = 1 ] || return 0
   backend=$SPAWN_FRESH_RESOURCE_BACKEND
   target=$SPAWN_FRESH_RESOURCE_TARGET
   worktree=$SPAWN_FRESH_RESOURCE_WORKTREE
+  treehouse_path=${SPAWN_FRESH_RESOURCE_TREEHOUSE_PATH:-$worktree}
   project=$SPAWN_FRESH_RESOURCE_PROJECT
   window=$SPAWN_FRESH_RESOURCE_WINDOW
   zellij_tab=$SPAWN_FRESH_RESOURCE_ZELLIJ_TAB_ID
@@ -1113,16 +1122,18 @@ spawn_fresh_resource_cleanup_run() {
   if [ -n "$worktree" ] && [ -d "$worktree" ]; then
     if [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; then
       if [ -n "$lease_id" ]; then
-        if ! ( cd "$project" && treehouse return --force "$worktree" --if-lease-id "$lease_id" ) >/dev/null 2>&1; then
+        if ! ( cd "$project" && treehouse return --force "$treehouse_path" --if-lease-id "$lease_id" ) >/dev/null 2>&1; then
           status=1
           spawn_report_unowned_lease "$worktree" "$project" "$lease_id" "$lease_holder" \
-            "aborted and its conditional cleanup 'treehouse return --force $worktree --if-lease-id $lease_id' failed"
+            "aborted and its conditional cleanup 'treehouse return --force $treehouse_path --if-lease-id $lease_id' failed" \
+            "$treehouse_path"
         fi
       elif [ -n "$lease_holder" ]; then
-        if ! ( cd "$project" && treehouse return --force "$worktree" --if-lease-holder "$lease_holder" ) >/dev/null 2>&1; then
+        if ! ( cd "$project" && treehouse return --force "$treehouse_path" --if-lease-holder "$lease_holder" ) >/dev/null 2>&1; then
           status=1
           spawn_report_unowned_lease "$worktree" "$project" "" "$lease_holder" \
-            "aborted and its conditional cleanup 'treehouse return --force $worktree --if-lease-holder $lease_holder' failed"
+            "aborted and its conditional cleanup 'treehouse return --force $treehouse_path --if-lease-holder $lease_holder' failed" \
+            "$treehouse_path"
         fi
       else
         status=1
@@ -1143,7 +1154,8 @@ spawn_abort_cleanup() {
   if [ -n "$SPAWN_UNOWNED_LEASE_WORKTREE" ]; then
     spawn_report_unowned_lease "$SPAWN_UNOWNED_LEASE_WORKTREE" "$PROJ_ABS" \
       "$SPAWN_UNOWNED_LEASE_ID" "$SPAWN_UNOWNED_LEASE_HOLDER" \
-      "stopped after Treehouse durably leased its slot and before task cleanup was armed"
+      "stopped after Treehouse durably leased its slot and before task cleanup was armed" \
+      "$SPAWN_UNOWNED_LEASE_PATH"
   fi
   if ! dispatch_receipt_emit; then
     echo "error: could not record typed-dispatch receipt for ${ID:-unknown}" >&2
@@ -2455,6 +2467,7 @@ treehouse_status_json() {
 treehouse_status_find_worktree() {  # <status-json> <canonical-worktree> <task-id>
   local status_json=$1 wanted=$2 task_id=$3 count i row_path row_real matches=0
   TREEHOUSE_STATUS_NAME=
+  TREEHOUSE_STATUS_PATH=
   TREEHOUSE_STATUS_STATE=
   TREEHOUSE_STATUS_LEASE_ID=
   TREEHOUSE_STATUS_LEASE_HOLDER=
@@ -2465,6 +2478,7 @@ treehouse_status_find_worktree() {  # <status-json> <canonical-worktree> <task-i
     row_real=$(real_path_or_raw "$row_path")
     if [ "$row_real" = "$wanted" ]; then
       matches=$((matches + 1))
+      TREEHOUSE_STATUS_PATH=$row_path
       TREEHOUSE_STATUS_NAME=$(jq -r --argjson i "$i" '.[$i].name' <<<"$status_json") || return 1
       TREEHOUSE_STATUS_STATE=$(jq -r --argjson i "$i" '.[$i].status' <<<"$status_json") || return 1
       TREEHOUSE_STATUS_LEASE_ID=$(jq -r --argjson i "$i" '.[$i].lease_id // ""' <<<"$status_json") || return 1
@@ -2647,6 +2661,7 @@ treehouse_lease_fresh_worktree() {  # <task-id> <worktree>
   expected_holder=$(treehouse_task_lease_holder "$task_id")
   status_json=$(treehouse_status_json) || return 1
   treehouse_status_find_worktree "$status_json" "$wanted" "$task_id" || return 1
+  TREEHOUSE_LEASE_PATH=$TREEHOUSE_STATUS_PATH
   if [ "$TREEHOUSE_STATUS_STATE" = leased ]; then
     if [ -z "$TREEHOUSE_STATUS_LEASE_ID" ] || [ "$TREEHOUSE_STATUS_LEASE_HOLDER" != "$expected_holder" ]; then
       echo "error: freshly allocated worktree '$wanted' for task $task_id is already leased to '${TREEHOUSE_STATUS_LEASE_HOLDER:-unknown}' (lease '${TREEHOUSE_STATUS_LEASE_ID:-none}'); refusing to overwrite another owner. Leave the copy to its holder, inspect 'treehouse status --json' in '$PROJ_ABS', and retry once a free slot is available" >&2
@@ -2655,6 +2670,7 @@ treehouse_lease_fresh_worktree() {  # <task-id> <worktree>
     TREEHOUSE_LEASE_ID=$TREEHOUSE_STATUS_LEASE_ID
     TREEHOUSE_LEASE_HOLDER=$TREEHOUSE_STATUS_LEASE_HOLDER
     SPAWN_UNOWNED_LEASE_WORKTREE=$wanted
+    SPAWN_UNOWNED_LEASE_PATH=$TREEHOUSE_LEASE_PATH
     SPAWN_UNOWNED_LEASE_ID=$TREEHOUSE_LEASE_ID
     SPAWN_UNOWNED_LEASE_HOLDER=$TREEHOUSE_LEASE_HOLDER
     return 0
@@ -2664,6 +2680,7 @@ treehouse_lease_fresh_worktree() {  # <task-id> <worktree>
     return 1
   fi
   SPAWN_UNOWNED_LEASE_WORKTREE=$wanted
+  SPAWN_UNOWNED_LEASE_PATH=$TREEHOUSE_LEASE_PATH
   SPAWN_UNOWNED_LEASE_ID=$(jq -r '.lease_id // empty' <<<"$result" 2>/dev/null || true)
   SPAWN_UNOWNED_LEASE_HOLDER=$expected_holder
   treehouse_validate_lease_result "$result" "$task_id" "$wanted" "$expected_holder"
