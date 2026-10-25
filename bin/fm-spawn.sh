@@ -506,6 +506,10 @@
 #                  every other harness)
 #     __TURNEND__  absolute path to state/<task-id>.turn-ended (for harnesses whose
 #                  turn-end signal rides the launch command, e.g. codex -c notify=[...])
+#     __PIRECAPEXT__ absolute path to the tracked .pi/extensions/fm-task-recap.ts
+#                  captain-recap widget (pi ship/scout only, never secondmate);
+#                  its FM_RECAP_TASK_ID/STATE_DIR/DATA_DIR env vars are prefixed
+#                  onto LAUNCH alongside the other harness env prefixes below
 #     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi busy-state extension,
 #                  written by this script; outside the worktree to avoid pi's trust gate;
 #                  a secondmate loads it beside its two primary extensions)
@@ -2678,7 +2682,12 @@ launch_template() {
       # project-trust gate does not fire on it.
       printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ -e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     else
-      printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      # __PIRECAPEXT__ is the tracked .pi/extensions/fm-task-recap.ts widget
+      # (ship/scout only - a secondmate is a firstmate instance with its own
+      # backlog, not a task with a phase, so it gets no recap). It reads
+      # FM_RECAP_* env vars rather than per-task interpolation so the file
+      # stays static and testable; see the FM_RECAP_* prefix below.
+      printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ -e __PIRECAPEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     fi
     ;;
   # omp (Oh My Pi), a Pi fork. Same one-positional-brief, --model, --thinking,
@@ -6817,6 +6826,7 @@ fi
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")
+sq_pirecapext=$(shell_quote "$FM_ROOT/.pi/extensions/fm-task-recap.ts")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
@@ -6865,11 +6875,22 @@ fi
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
 LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
+LAUNCH=${LAUNCH//__PIRECAPEXT__/$sq_pirecapext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
 LAUNCH=${LAUNCH//__OMPWORKERCFG__/$sq_ompcfg}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
+# fm-task-recap.ts (loaded above via __PIRECAPEXT__, ship/scout only) is a
+# static tracked file rather than a per-task generated one, so it reads its
+# task identity from these env vars instead of interpolated source text.
+case "$HARNESS" in
+  pi|pi-signed)
+    if [ "$KIND" != secondmate ]; then
+      LAUNCH="FM_RECAP_TASK_ID=$(shell_quote "$ID") FM_RECAP_STATE_DIR=$(shell_quote "$STATE_REAL") FM_RECAP_DATA_DIR=$(shell_quote "$DATA") $LAUNCH"
+    fi
+    ;;
+esac
 case "$HARNESS" in
 pi | pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
 cursor) LAUNCH=${LAUNCH//__CURSORBIN__/"$(shell_quote "$CURSOR_BIN")"} ;;

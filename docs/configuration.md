@@ -1119,6 +1119,7 @@ The Kimi installer requires an existing regular non-symlink `~/.kimi-code/config
 
 Its `remove` action excises only the marker-delimited Firstmate region and removes Firstmate's hook files.
 For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree, plus the parent home's `state/<id>.pi-ext.ts` busy extension.
+For Pi and pi-signed ship and scout launches, `fm-spawn.sh` also loads the tracked `.pi/extensions/fm-task-recap.ts` widget, which renders `bin/fm-pi-recap.sh`'s sanitized task recap (title, phase, open blocker or decision, PR) below the crewmate's editor; secondmates never get it, and the `FM_RECAP_*` variables below carry its task identity ([runtime-backends.md](verification/runtime-backends.md#pi-task-recap) holds the live evidence).
 Pi-family secondmates can start unattended in Firstmate-seeded homes without accepting project trust manually; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the capability requirement, session-only approval scope, and older-version fallback, with [regression evidence](verification/runtime-backends.md#pi-seeded-secondmate-project-trust).
 
 For omp secondmate launches, `fm-spawn.sh` names only the parent home's `state/<id>.omp-ext.ts` busy extension with `-e`: omp auto-discovers the home's tracked `.omp/extensions/` with no trust gate, and naming a discovered file with `-e` as well loads it twice; every omp launch also carries the tracked `.omp/fm-worker-overlay.yml` posture overlay through `--config`, which [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns.
@@ -2969,6 +2970,10 @@ FM_ARM_CONFIRM_TIMEOUT=10   # seconds fm-watch-arm waits to confirm a fresh watc
 FM_ARM_ATTACH_POLL=0.5  # seconds between checks while fm-watch-arm follows an attached watcher cycle (bin/fm-watch-arm.sh header)
 FM_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # milliseconds the OpenCode primary watcher plugin waits for an arm attempt to report started, healthy, wake, or failure; default 35000 on Windows to stay above the MSYS confirm budget
 FM_PI_ARM_READY_TIMEOUT_MS=12000   # milliseconds the Pi watcher extension waits for a successor arm to report started or attached; default 35000 on Windows to stay above the MSYS confirm budget
+FM_PI_RECAP_LINE_MAX=100   # max characters per rendered line of bin/fm-pi-recap.sh's captain-facing Pi task recap before deterministic ellipsis truncation
+FM_RECAP_TASK_ID=          # internal: set by fm-spawn.sh on Pi ship/scout launches only; the task id .pi/extensions/fm-task-recap.ts renders the recap for
+FM_RECAP_STATE_DIR=        # internal: absolute state directory for that recap (state/<id>.status and state/<id>.meta pr=)
+FM_RECAP_DATA_DIR=         # internal: absolute data directory for that recap (data/backlog.md title)
 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries
 FM_WATCH_REARM_RETRY_BASE_MS=250   # Pi/OpenCode adapter base delay for continuity restoration retries
 FM_WATCH_REARM_RETRY_MAX_MS=4000   # Pi/OpenCode adapter cap for exponential continuity retry delay

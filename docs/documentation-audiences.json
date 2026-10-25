@@ -710,6 +710,10 @@
     {
       "path": "docs/verification/proposal-cards.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "Plans/bubbly-stargazing-quilt.md",
+      "audience": "maintainer-architecture"
     }
   ]
 }

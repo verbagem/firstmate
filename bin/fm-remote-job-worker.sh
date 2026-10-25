@@ -211,6 +211,18 @@ worker_recover_quarantine() { # <account-home>
   rm -f -- "$WORKER_LOCK/quarantine"
 }
 
+# Scratch files that mktemp left inside the lock when an owner died between
+# mktemp and mv would keep rmdir failing, wedging every later reclaim.
+worker_discard_lock_scratch() {
+  local scratch
+  for scratch in "$WORKER_LOCK"/.pid.?????? "$WORKER_LOCK"/.start.?????? \
+    "$WORKER_LOCK"/.command.?????? "$WORKER_LOCK"/.quarantine.??????; do
+    [ -e "$scratch" ] || [ -L "$scratch" ] || continue
+    [ -f "$scratch" ] && [ ! -L "$scratch" ] || return 1
+    rm -f -- "$scratch" || return 1
+  done
+}
+
 worker_acquire_lock() { # <account-home> <identity>
   local account_home=$1 identity=$2 attempt=0
   while [ "$attempt" -lt 150 ]; do
@@ -236,6 +248,7 @@ worker_acquire_lock() { # <account-home> <identity>
     fi
     [ ! -L "$WORKER_LOCK/pid" ] && [ ! -L "$WORKER_LOCK/start" ] && [ ! -L "$WORKER_LOCK/command" ] || return 1
     rm -f -- "$WORKER_LOCK/pid" "$WORKER_LOCK/start" "$WORKER_LOCK/command" || return 1
+    worker_discard_lock_scratch || return 1
     rmdir "$WORKER_LOCK" || return 1
   done
   return 1
