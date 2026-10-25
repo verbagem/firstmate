@@ -3101,6 +3101,41 @@ test_drain_rotates_orphaned_scratch() {
   pass "drain rotates scratch files an interrupted drain left under the queue lock"
 }
 
+# --captain-work-pending is a read-only peek: quiet only when a drain would
+# surface nothing, and it must leave every cursor and the queue untouched.
+test_captain_work_peek_is_read_only_and_reports_pending_work() {
+  local dir state snap_before snap_after out
+  dir=$(make_case captain-work-peek)
+  state="$dir/state"
+  snapshot_state() { (cd "$state" && find . -type f -exec cksum {} + | sort); }
+  peek() { FM_STATE_OVERRIDE="$state" "$DRAIN" --captain-work-pending 2>/dev/null; }
+
+  out=$(peek) || fail "peek failed on an empty state"
+  [ "$out" = quiet ] || fail "empty state must peek quiet, got: $out"
+
+  printf 'note: unread answer\n' > "$state/t1.status"
+  snap_before=$(snapshot_state)
+  out=$(peek) || fail "peek failed with an unread note"
+  [ "$out" = pending ] || fail "an unread note must peek pending, got: $out"
+  snap_after=$(snapshot_state)
+  [ "$snap_before" = "$snap_after" ] || fail "the peek changed state files: $snap_before vs $snap_after"
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null)
+  case "$out" in *'t1 note: unread answer'*) ;; *) fail "the peek consumed the unread note before the drain could present it: $out" ;; esac
+  out=$(peek) || fail "peek failed after the note was presented"
+  [ "$out" = quiet ] || fail "a presented note must peek quiet, got: $out"
+
+  printf 'needs-decision: choose target\n' >> "$state/t1.status"
+  out=$(peek) || fail "peek failed with an open decision"
+  [ "$out" = pending ] || fail "an open decision must peek pending, got: $out"
+  : > "$state/t1.status"
+  printf '1700000000\t1\tsignal\tdemo\tsignal: demo\n' > "$state/.wake-queue"
+  out=$(peek) || fail "peek failed with a queued row"
+  [ "$out" = pending ] || fail "a queued row must peek pending, got: $out"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --captain-work-pending extra >/dev/null 2>&1 \
+    && fail "the peek accepted extra arguments"
+  pass "captain-work peek reports quiet or pending without touching cursors or the queue"
+}
+
 # --- secondmate endpoint liveness tick ---------------------------------------
 # bin/fm-watch.sh's secondmate_liveness_tick drives the shared
 # bin/fm-secondmate-liveness-lib.sh probe+relaunch machinery during ordinary
@@ -3675,6 +3710,7 @@ test_recovery_ack_failure_is_reported
 test_interruption_before_and_after_raw_commit
 test_wake_queue_prune_task
 test_drain_rotates_orphaned_scratch
+test_captain_work_peek_is_read_only_and_reports_pending_work
 test_secondmate_liveness_tick_relaunches_dead_endpoint_once
 test_secondmate_liveness_tick_relaunches_missing_endpoint
 test_secondmate_liveness_tick_relaunches_every_dead_mate_before_waking

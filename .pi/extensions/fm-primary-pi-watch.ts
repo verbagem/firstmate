@@ -346,6 +346,17 @@ function retireGenerationOwner(generation: SessionGeneration, replacement: boole
   }
 }
 
+function captainWorkPending(): boolean {
+  // Fail toward waking: any peek failure or unexpected output counts as pending.
+  const result = spawnSync("bash", [`${fmRoot}/bin/fm-wake-drain.sh`, "--captain-work-pending"], {
+    cwd: fmRoot,
+    encoding: "utf8",
+    env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_ROOT_OVERRIDE: fmRoot },
+  });
+  if (result.status !== 0) return true;
+  return result.stdout.trim() !== "quiet";
+}
+
 function actionableLine(output: string): string {
   const lines = output.split(/\r?\n/);
   return lines.find((line) => /^(signal:|stale:|check:|heartbeat($|:))/.test(line)) || "";
@@ -790,6 +801,13 @@ export default function (pi: ExtensionAPI) {
         }
         return await sendWake(owner, `${message}\n\n${confirmed.detail}`, pending);
       }
+    }
+    // An empty re-arm resurface (watcher restored, recovery confirmed above,
+    // nothing queued, no open decisions, no unread status) has nothing for the
+    // captain lane: the peek runs after the restoration so work that appeared
+    // meanwhile still wakes. Any doubt falls through to the normal wake.
+    if (message === "check: rearm-resurface" && !repairFailed && !captainWorkPending()) {
+      return true;
     }
     if (!repairFailed) {
       const branchDelivery = offerWakeToBranch(message);

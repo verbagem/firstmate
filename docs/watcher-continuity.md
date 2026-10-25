@@ -45,6 +45,10 @@ Each adapter:
 Pi treats an arm child whose process is already gone as an empty slot even while its close event is still pending, so a repair call or a scheduled retry starts a fresh arm instead of answering unchanged.
 A failed follow-up never cancels continuity restoration.
 
+Pi treats a lone `check: rearm-resurface` as an extension-owned continuity handoff.
+After restoring the watcher and confirming the successor's handling state, it sends no follow-up and offers nothing to the supervision branch only when `bin/fm-wake-drain.sh --captain-work-pending` prints `quiet`: an empty durable wake queue, no open decisions, and no unread informational status lines.
+The peek touches no cursor, and any pending result, failed peek, failed restoration, or unconfirmed handoff delivers the ordinary single wake.
+
 ### Pi session replacement
 
 Pi same-process session replacement follows the generation-owner contract in `.pi/extensions/fm-primary-pi-watch.ts`:
@@ -434,6 +438,7 @@ It then simulates actionable and empty child closes against the actual Pi and Op
 - Verifies single-flight behavior.
 - Changes the session lock before close to prove ownership is rechecked.
 - Hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
+- Drives a quiet `check: rearm-resurface` close to prove zero follow-ups and a queued durable row to prove exactly one.
 
 The same suite covers ordinary same-process session replacement for `/new`, `/resume`, `/fork`, and reload, plus:
 

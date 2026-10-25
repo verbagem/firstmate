@@ -105,7 +105,10 @@ install_pi_watch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   mkdir -p "$repo/bin"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
-  chmod +x "$repo/bin/fm-operational-input.sh"
+  # The empty re-arm peek runs the real drain, so ship it with its libraries.
+  cp "$ROOT/bin/fm-wake-drain.sh" "$repo/bin/fm-wake-drain.sh"
+  cp "$ROOT"/bin/fm-*-lib.sh "$ROOT/bin/fm-afk-contract.sh" "$repo/bin/"
+  chmod +x "$repo/bin/fm-operational-input.sh" "$repo/bin/fm-wake-drain.sh"
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/package.json" <<'JSON'
 {"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}
 JSON
@@ -489,6 +492,82 @@ EOF
   expect_code 0 "$status" "Pi actionable close must start one successor before wake delivery settles"
   [ -z "$out" ] || fail "Pi continuous-rearm test printed output: $out"
   pass "Pi actionable close starts one successor before wake delivery settles"
+}
+
+# A watcher re-arm that only resurfaces an empty recovery must not enter the
+# captain lane: the extension restores the watcher, confirms the recovery
+# handoff silently, and sends no follow-up when the drain peek is quiet. Any
+# queued durable row keeps the ordinary single follow-up.
+run_pi_empty_rearm_case() { # <name> <queue-row-or-empty> <expected-follow-ups>
+  local name=$1 row=$2 expected=$3 repo home log stop out status
+  repo="$TMP_ROOT/pi-empty-rearm-$name-root"
+  home="$TMP_ROOT/pi-empty-rearm-$name-home"
+  log="$TMP_ROOT/pi-empty-rearm-$name.log"
+  stop="$TMP_ROOT/pi-empty-rearm-$name.stop"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  [ -z "$row" ] || printf '%s\n' "$row" > "$home/state/.wake-queue"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then
+  printf 'confirmed generation=%s watcher=%s\n' "$2" "$4" >> "${FM_ARM_LOG:?}"
+  exit 0
+fi
+printf 'arm=%s\n' "$$" >> "$FM_ARM_LOG"
+count=$(grep -c '^arm=' "$FM_ARM_LOG")
+if [ "$count" -eq 1 ]; then
+  printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+  printf 'check: rearm-resurface\n'
+  exit 0
+fi
+printf 'watcher: started pid=%s (beacon fresh) recovery-generation=fixture-generation\n' "$$"
+trap 'exit 0' TERM INT
+while [ ! -e "$FM_STOP_FILE" ] && [ -e "$0" ]; do sleep 0.02; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$repo/.pi/extensions/fm-primary-pi-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+    FM_ARM_LOG="$log" FM_STOP_FILE="$stop" EXPECTED="$expected" node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+let tool = null;
+let followUps = 0;
+const pi = {
+  on() {},
+  registerCommand() {},
+  registerTool(candidate) {
+    if (candidate.name === "fm_watch_arm_pi") tool = candidate;
+  },
+  sendUserMessage: async () => {
+    followUps += 1;
+  },
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await tool.execute("tool-call-empty-rearm", {}, undefined, undefined, {});
+const rows = () => (existsSync(process.env.FM_ARM_LOG) ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n") : []);
+for (let i = 0; i < 250; i += 1) {
+  if (rows().some((row) => row.startsWith("confirmed ")) && followUps >= Number(process.env.EXPECTED)) break;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+await new Promise((resolve) => setTimeout(resolve, 200));
+const all = rows();
+if (followUps !== Number(process.env.EXPECTED)) throw new Error(`expected ${process.env.EXPECTED} follow-ups, got ${followUps}: ${all.join(" | ")}`);
+if (all.filter((row) => row.startsWith("arm=")).length !== 2) throw new Error(`expected exactly one successor arm: ${all.join(" | ")}`);
+if (all.filter((row) => row.startsWith("confirmed ")).length !== 1) throw new Error(`recovery handoff must be confirmed exactly once: ${all.join(" | ")}`);
+writeFileSync(process.env.FM_STOP_FILE, "stop\n");
+process.exit(0);
+EOF
+  )
+  status=$?
+  expect_code 0 "$status" "Pi empty re-arm case $name: $out"
+}
+
+test_pi_empty_rearm_resurface_stays_out_of_the_captain_lane() {
+  run_pi_empty_rearm_case quiet "" 0
+  run_pi_empty_rearm_case pending "$(printf '1700000000\t1\tsignal\tdemo\tsignal: demo.status: done: x')" 1
+  pass "Pi empty rearm-resurface is silent when quiet and delivers once when a durable row is queued"
 }
 
 # The arm child can publish its complete actionable line before its process
@@ -5792,6 +5871,7 @@ test_pi_unretired_successor_falls_back_without_retry
 test_pi_late_unretired_close_resumes_supervision
 test_pi_empty_close_retries_instead_of_disappearing
 test_pi_established_empty_close_honors_retry_limit
+test_pi_empty_rearm_resurface_stays_out_of_the_captain_lane
 test_pi_actionable_close_rechecks_session_lock
 test_pi_arm_distinguishes_session_lock_ownership
 test_pi_arm_reads_a_windows_tagged_session_lock
