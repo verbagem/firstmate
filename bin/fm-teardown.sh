@@ -2630,7 +2630,9 @@ preflight_descendant_task_locks() {
 }
 
 preflight_descendant_treehouse_slots() {
-  local i state task_id meta kind backend target worktree project lock_path held
+  local i state task_id meta kind backend target worktree project lock_path held slot seen_entry
+  local -a seen_slots
+  seen_slots=()
   for ((i=0; i < ${#DESCENDANT_TASK_IDS[@]}; i++)); do
     state=${DESCENDANT_TASK_STATES[$i]}
     task_id=${DESCENDANT_TASK_IDS[$i]}
@@ -2643,6 +2645,22 @@ preflight_descendant_treehouse_slots() {
     if [ "$kind" = secondmate ] || [ "$backend" = orca ]; then
       continue
     fi
+    if [ -d "$worktree" ]; then
+      slot=$(canonical_existing_dir "$worktree") || {
+        echo "REFUSED: cannot canonicalize the live worktree for child $task_id; forced teardown changed nothing" >&2
+        return 1
+      }
+      for seen_entry in ${seen_slots[@]+"${seen_slots[@]}"}; do
+        case "$seen_entry" in
+          "$slot"$'\t'*)
+            echo "REFUSED: descendant task $task_id's recorded worktree $slot is also descendant task ${seen_entry#*$'\t'}'s recorded worktree." >&2
+            echo "Returning or removing that worktree would kill the other task's processes and reset its copy, so forced teardown changed nothing." >&2
+            return 1
+            ;;
+        esac
+      done
+      seen_slots+=("$slot"$'\t'"$task_id")
+    fi
     if ! is_treehouse_pool_slot "$project" "$worktree"; then
       continue
     fi
@@ -2652,7 +2670,7 @@ preflight_descendant_treehouse_slots() {
     }
     held=0
     [ "$TREEHOUSE_PROJECT_LOCK_HELD" != 1 ] || [ "$TREEHOUSE_PROJECT_LOCK" != "$lock_path" ] || held=1
-    for target in "${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]}"; do
+    for target in ${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]+"${DESCENDANT_TREEHOUSE_LOCK_PATHS[@]}"}; do
       [ "$target" != "$lock_path" ] || held=1
     done
     if [ "$held" = 0 ]; then

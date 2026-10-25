@@ -4,6 +4,8 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 SECONDS_ARG=${FM_CODEX_WATCH_CHECKPOINT:-180}
 
 usage() {
@@ -51,46 +53,33 @@ ERR=$(mktemp "${TMPDIR:-/tmp}/fm-watch-checkpoint.err.XXXXXX") || {
 }
 trap 'rm -f "$OUT" "$ERR"' EXIT
 
-run_with_perl_timeout() {
-  perl -e '
-    my $seconds = shift;
-    my $pid = fork;
-    die "fork failed\n" unless defined $pid;
-    if (!$pid) {
-      setpgrp(0, 0);
-      exec @ARGV;
-      die "exec failed: $!\n";
-    }
-    local $SIG{ALRM} = sub {
-      kill "TERM", -$pid;
-      my $grace = $ENV{FM_SIGNAL_GRACE} || 5;
-      local $SIG{ALRM} = sub {
-        kill "KILL", -$pid;
-        waitpid $pid, 0;
-        exit 124;
-      };
-      alarm $grace;
-      waitpid $pid, 0;
-      exit 124;
-    };
-    alarm $seconds;
-    waitpid $pid, 0;
-    alarm 0;
-    exit($? >> 8);
-  ' "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh"
+checkpoint_clean_dead_lock() {
+  local state lock pid
+  state=${FM_STATE_OVERRIDE:-${FM_HOME:-$SCRIPT_DIR/..}/state}
+  lock="$state/.watch.lock"
+  [ -d "$lock" ] || return 0
+  if [ ! -e "$lock/pid" ]; then
+    rmdir "$lock" 2>/dev/null || true
+    return 0
+  fi
+  pid=$(cat "$lock/pid" 2>/dev/null || true)
+  case "$pid" in
+    ''|*[!0-9]*)
+      rm -f "$lock/pid" "$lock/pid-identity" "$lock/fm-home" "$lock/watcher-path" 2>/dev/null || true
+      rmdir "$lock" 2>/dev/null || true
+      ;;
+    *)
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$lock/pid" "$lock/pid-identity" "$lock/fm-home" "$lock/watcher-path" 2>/dev/null || true
+        rmdir "$lock" 2>/dev/null || true
+      fi
+      ;;
+  esac
 }
 
 set +e
-if command -v timeout >/dev/null 2>&1; then
-  timeout "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
-  RC=$?
-elif command -v gtimeout >/dev/null 2>&1; then
-  gtimeout "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
-  RC=$?
-else
-  run_with_perl_timeout >"$OUT" 2>"$ERR"
-  RC=$?
-fi
+fm_run_timed "$SECONDS_ARG" "$SCRIPT_DIR/fm-watch.sh" >"$OUT" 2>"$ERR"
+RC=$?
 set -e
 
 if grep -E '^(signal:|stale:|check:|heartbeat($|:))' "$OUT" >/dev/null 2>&1; then
@@ -107,6 +96,7 @@ if grep -E '^watcher: already running' "$OUT" "$ERR" >/dev/null 2>&1; then
 fi
 
 if [ "$RC" -eq 124 ]; then
+  checkpoint_clean_dead_lock
   printf 'checkpoint: no actionable wake within %ss\n' "$SECONDS_ARG"
   exit 124
 fi

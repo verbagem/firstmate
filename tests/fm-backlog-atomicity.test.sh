@@ -25,6 +25,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$ROOT/bin/fm-timeout-lib.sh"
 
 # An exported TASKS_AXI_BACKEND would outrank each case's .tasks.toml fixture
 # in fm_tasks_axi_backend, so the backend cases must start from a clean slate.
@@ -96,6 +98,55 @@ exit 0
 SH
   chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
+  cat > "$fakebin/fm-test-signal-spawn" <<'SH'
+#!/usr/bin/env bash
+target=${1:-}
+signal=${2:-TERM}
+signal_pid() {
+  pid=$1
+  command=$(ps -o command= -p "$pid" 2>/dev/null || true)
+  set -- $command
+  case "${1:-} ${2:-} ${3:-}" in
+    */bin/fm-spawn.sh\ *|*\ */bin/fm-spawn.sh\ *|*\ *\ */bin/fm-spawn.sh)
+      kill "-$signal" "$pid"
+      exit $?
+      ;;
+  esac
+}
+if [ ! -d "$target" ]; then
+  wait_count=0
+  while [ ! -s "$target" ] && [ "$wait_count" -lt 100 ]; do
+    sleep 0.05
+    wait_count=$((wait_count + 1))
+  done
+  if [ -s "$target" ]; then
+    pid=$(cat "$target" 2>/dev/null || true)
+    case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+    kill "-$signal" "$pid"
+    exit $?
+  fi
+fi
+if [ -d "$target" ]; then
+  for pidfile in "$target"/.spawn-*.lock.owner.*/pid; do
+    [ -f "$pidfile" ] || continue
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill "-$signal" "$pid"
+    exit $?
+  done
+  exit 1
+fi
+pid=$target
+depth=0
+while [ -n "$pid" ] && [ "$pid" != 1 ] && [ "$depth" -lt 30 ]; do
+  signal_pid "$pid"
+  pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+  depth=$((depth + 1))
+done
+exit 1
+SH
+  chmod +x "$fakebin/fm-test-signal-spawn"
 
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -241,15 +292,13 @@ interrupt_spawn_during_start() {  # <case-dir> <before|after>
 #!/usr/bin/env bash
 if [ "\${1:-}" = start ] && [ ! -f "$case_dir/start-interrupted" ]; then
   : > "$case_dir/start-interrupted"
-  spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
-  case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
   if [ "$timing" = before ]; then
-    kill -TERM "\$spawn_pid"
+    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
     kill -TERM "\$\$"
   fi
   "$real" "\$@" || exit \$?
   if [ "$timing" = after ]; then
-    kill -TERM "\$spawn_pid"
+    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
     kill -TERM "\$\$"
   fi
   exit 0
@@ -272,9 +321,7 @@ lie_start_then_interrupt() {  # <case-dir> <repair: works|fails>
 if [ "\${1:-}" = start ]; then
   if [ ! -f "$case_dir/start-interrupted" ]; then
     : > "$case_dir/start-interrupted"
-    spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
-    case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
-    kill -TERM "\$spawn_pid"
+    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
     exit 0
   fi
   if [ "$repair" = fails ]; then
@@ -300,9 +347,7 @@ hang_start_after_first() {  # <case-dir>
 if [ "\${1:-}" = start ]; then
   if [ ! -f "$case_dir/start-interrupted" ]; then
     : > "$case_dir/start-interrupted"
-    spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
-    case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
-    kill -TERM "\$spawn_pid"
+    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
     exit 0
   fi
   sleep 300
@@ -348,7 +393,10 @@ test_fm_tasks_axi_fallback_bounds_the_call_without_a_timeout_binary() {
   local case_dir fb out rc=0 started
   case_dir=$(make_home fm-tasks-axi-fallback)
   fb=$(make_fallback_bin "$case_dir" '#!/bin/bash
-exec sleep 300')
+trap "" TERM
+sleep 300 &
+printf "%s\n" "$!" > "'"$case_dir"'/grandchild.pid"
+wait')
   started=$SECONDS
   out=$(run_bounded_fm_tasks_axi "$fb" 2 show never-answers) || rc=$?
   [ "$rc" -eq 124 ] \
@@ -357,6 +405,10 @@ exec sleep 300')
     || fail "the perl watchdog fallback fired before the bound elapsed"
   [ $((SECONDS - started)) -lt 20 ] \
     || fail "the perl watchdog fallback did not bound the call (${SECONDS}s)"
+  if [ -s "$case_dir/grandchild.pid" ]; then
+    ! kill -0 "$(cat "$case_dir/grandchild.pid")" 2>/dev/null \
+      || fail "the perl watchdog fallback left a TERM-ignoring grandchild running"
+  fi
   pass "fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists"
 }
 
@@ -591,7 +643,7 @@ write_task_meta() {  # <case-dir> <id> <kind> <mode> [extra-line...]
 }
 
 run_spawn() {  # <case-dir> <args...>
-  local case_dir=$1
+  local case_dir=$1 spawn_pid
   shift
   # A claude spawn pre-registers workspace trust in the launching user's own
   # store (bin/fm-claude-trust.sh), so it runs against a throwaway HOME;
@@ -601,7 +653,10 @@ run_spawn() {  # <case-dir> <args...>
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR='' \
     PATH="$case_dir/fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+    "$SPAWN" "$@" 2>&1 &
+  spawn_pid=$!
+  printf '%s\n' "$spawn_pid" > "$case_dir/spawn.pid"
+  wait "$spawn_pid"
 }
 
 run_ship_spawn() {  # <case-dir> <id>
@@ -1475,18 +1530,35 @@ test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi() {
 
   # The read-back's own `start` never answers, so the spawn must bound it
   # (FM_TASKS_AXI_TIMEOUT=3), print the attempted wording naming the timeout,
-  # and exit - the outer `timeout -k 5 30` only turns a regression back into
+  # and exit - the outer 120s bound only turns a regression back into
   # the lock-held-forever hang it exists to catch.
   mkdir -p "$case_dir/user-home"
-  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
+  # shellcheck disable=SC2016 # $@ is expanded by the child bash -c.
+  out=$(fm_run_timed 120 bash -c '
+    spawn_pid_file=$1
+    shift
+    "$@" &
+    spawn_pid=$!
+    printf "%s\n" "$spawn_pid" > "$spawn_pid_file"
+    wait "$spawn_pid"
+    rc=$?
+    [ "$rc" -eq 124 ] && exit 123
+    exit "$rc"
+  ' _ "$case_dir/spawn.pid" env \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
     HOME="$case_dir/user-home" FM_SPAWN_NO_GUARD=1 \
     FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" CLAUDE_CONFIG_DIR='' \
-    FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
-    timeout -k 5 30 "$SPAWN" "$id" "$case_dir/project" \
+    FM_HOME_SUMMARY_TIMEOUT=1 FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
+    "$SPAWN" "$id" "$case_dir/project" \
     --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "an interrupted spawn reported success"
   case "$rc" in
-    124|137) fail "the verification hung on the unresponsive start instead of timing out: $out" ;;
+    124|137)
+      case "$out" in
+        *"did not finish within 3s"*) ;;
+        *) fail "the verification hung on the unresponsive start instead of timing out: $out" ;;
+      esac
+      ;;
   esac
   assert_contains "$out" "preservation could not be verified" \
     "a timed-out verification did not report the preservation as attempted, not verified"
@@ -2775,11 +2847,18 @@ test_spawn_refuses_a_special_file_tasks_config() {
   rm -f "$home/.tasks.toml"
   mkfifo "$home/.tasks.toml"
 
-  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
+  # shellcheck disable=SC2016 # $@ is expanded by the child bash -c.
+  out=$(fm_run_timed 60 bash -c '
+    "$@"
+    rc=$?
+    [ "$rc" -eq 124 ] && exit 123
+    exit "$rc"
+  ' _ env \
+    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR='' \
     PATH="$case_dir/fakebin:$PATH" \
-    timeout 60 "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
+    "$SPAWN" "$id" "$case_dir/project" --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 124 ] || fail "spawn hung reading a special-file tasks-axi config"
   [ "$rc" -ne 0 ] || fail "spawn accepted a special-file tasks-axi config"
   assert_contains "$out" "tasks-axi config is not a regular file" \

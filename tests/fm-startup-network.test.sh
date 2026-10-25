@@ -704,6 +704,13 @@ test_a_bounded_run_still_publishes_the_timings_it_managed_to_record() {
 $rec
 EOF
   printf '%s\n' $$ > "$home/state/.lock"
+  rm -f "$root/bin/fm-inactive-reconcile.sh"
+  cat > "$root/bin/fm-inactive-reconcile.sh" <<'SH'
+#!/usr/bin/env bash
+# This case owns timeout publication, not inactive-outcome scan latency.
+exit 0
+SH
+  chmod +x "$root/bin/fm-inactive-reconcile.sh"
 
   FM_STARTUP_NETWORK_TIMEOUT=1 FM_SESSION_START_TIMEOUT=2 \
     FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=20 \

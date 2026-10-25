@@ -14,7 +14,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (the guard parses herdr's JSON, and jq is the holder process)"; exit 0; }
+command -v jq >/dev/null 2>&1 || { echo "skip: jq not found (the guard parses herdr's JSON)"; exit 0; }
+command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found (the holder process blocks on a fifo)"; exit 0; }
 command -v mkfifo >/dev/null 2>&1 || { echo "skip: mkfifo not found (holder processes block on a fifo)"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-remote-herdr-guard)
@@ -26,6 +27,7 @@ trap 'if [ "${#HOLDER_PIDS[@]}" -gt 0 ]; then kill "${HOLDER_PIDS[@]}" 2>/dev/nu
 
 GUARD="$ROOT/bin/fm-remote-herdr-guard.sh"
 JQ=$(command -v jq)
+HOLDER=$(command -v python3)
 SESSION=fm-remote
 
 # The guard must see only the fixture and the system tools it really needs,
@@ -98,7 +100,7 @@ SH
 chmod +x "$FAKE/lsof" "$FAKE/launchctl" "$FAKE/herdr"
 cp "$FAKE/lsof" "$TMP_ROOT/lsof.fake"
 
-# hold <marker-env...> -> HOLDER_PID: a real non-platform process (jq blocked
+# hold <marker-env...> -> HOLDER_PID: a real process (python blocked
 # on a fifo this test keeps open) whose environment is exactly the markers.
 hold() {
   local fifo="$TMP_ROOT/holder-$HOLDER_FD.fifo"
@@ -107,7 +109,7 @@ hold() {
   # Open read-write so this never blocks on the reader; the holder sees EOF
   # only when the descriptor closes at exit.
   eval "exec ${HOLDER_FD}<>\"\$fifo\""
-  env -i "$@" "$JQ" . "$fifo" &
+  env -i "$@" "$HOLDER" -c 'import sys; open(sys.argv[1]).read()' "$fifo" &
   HOLDER_PID=$!
   HOLDER_PIDS+=("$HOLDER_PID")
   HOLDER_FD=$((HOLDER_FD + 1))

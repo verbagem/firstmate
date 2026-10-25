@@ -12,6 +12,11 @@ make_home() {
   local name=$1 home
   home="$TMP_ROOT/$name"
   mkdir -p "$home/state" "$home/data" "$home/config"
+  {
+    printf 'epoch=%s\n' "$(date +%s)"
+    printf 'cursor=\n'
+  } > "$home/state/.inactive-outcome-reconcile"
+  touch "$home/state/.last-heartbeat" "$home/state/home-summary.json"
   printf '%s\n' "$home"
 }
 
@@ -21,7 +26,9 @@ test_quiet_checkpoint_exits_124_cleanly() {
   out="$home/out.txt"
   err="$home/err.txt"
   status=0
-  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 "$CHECKPOINT" --seconds 1 >"$out" 2>"$err" || status=$?
+  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=9999999 \
+    FM_HEARTBEAT=999999 FM_HOME_SUMMARY_INTERVAL=9999999 \
+    FM_INACTIVE_RECONCILE_SECS=900 "$CHECKPOINT" --seconds 1 >"$out" 2>"$err" || status=$?
   expect_code 124 "$status" "quiet checkpoint exit"
   assert_contains "$(cat "$out")" "checkpoint: no actionable wake within 1s" "quiet checkpoint line missing"
   assert_absent "$home/state/.watch.lock/pid" "watch lock pid survived quiet checkpoint timeout"
@@ -33,12 +40,11 @@ test_signal_passes_through_and_exits_zero() {
   home=$(make_home signal)
   out="$home/out.txt"
   err="$home/err.txt"
-  (
-    sleep 1
-    printf 'done: synthetic wake\n' > "$home/state/demo.status"
-  ) &
+  printf 'done: synthetic wake\n' > "$home/state/demo.status"
   status=0
-  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 "$CHECKPOINT" --seconds 8 >"$out" 2>"$err" || status=$?
+  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=9999999 \
+    FM_HEARTBEAT=999999 FM_HOME_SUMMARY_INTERVAL=9999999 \
+    FM_INACTIVE_RECONCILE_SECS=900 "$CHECKPOINT" --seconds 20 >"$out" 2>"$err" || status=$?
   expect_code 0 "$status" "signal checkpoint exit"
   assert_contains "$(cat "$out")" "signal:" "signal wake was not passed through"
   drained=$(FM_HOME="$home" "$ROOT/bin/fm-wake-drain.sh")
@@ -59,7 +65,9 @@ SH
   FM_HOME="$home" "$ROOT/bin/fm-check-register.sh" env-check >/dev/null \
     || fail "could not register checkpoint custom check"
   status=0
-  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=1 "$CHECKPOINT" --seconds 5 >"$out" 2>"$err" || status=$?
+  FM_HOME="$home" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=1 \
+    FM_HEARTBEAT=999999 FM_HOME_SUMMARY_INTERVAL=9999999 \
+    FM_INACTIVE_RECONCILE_SECS=900 "$CHECKPOINT" --seconds 20 >"$out" 2>"$err" || status=$?
   expect_code 0 "$status" "check checkpoint exit"
   assert_contains "$(cat "$out")" "check:" "check wake was not passed through"
   assert_contains "$(cat "$out")" "FM_CHECK_INTERVAL=1" "watcher environment was not preserved"
