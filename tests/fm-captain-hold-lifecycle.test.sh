@@ -2933,6 +2933,7 @@ test_interrupted_cleanup_keeps_the_captain_call_recoverable() {
     || fail "completion gate failed for the cleanup-failure fixture"
   cat > "$home/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 1
 SH
   chmod +x "$home/fakebin/treehouse"
@@ -2992,6 +2993,7 @@ test_answer_before_cleanup_replay_preserves_the_retained_report() {
     || fail "completion gate failed for the answer-before-replay fixture"
   cat > "$home/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 1
 SH
   chmod +x "$home/fakebin/treehouse"
@@ -3058,6 +3060,7 @@ SH
   chmod +x "$home/fakebin/tasks-axi"
   cat > "$home/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 1
 SH
   chmod +x "$home/fakebin/treehouse"
@@ -3103,6 +3106,7 @@ test_unusable_pending_close_record_names_its_reason() {
     || fail "completion gate failed for the unusable pending-close fixture"
   cat > "$home/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 1
 SH
   chmod +x "$home/fakebin/treehouse"
@@ -3172,6 +3176,7 @@ EOF
     || fail "completion gate failed for the relocated answer-before-replay fixture"
   cat > "$home/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 1
 SH
   chmod +x "$home/fakebin/treehouse"

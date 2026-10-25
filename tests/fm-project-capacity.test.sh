@@ -124,6 +124,7 @@ exit 0
 SH
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 printf 'treehouse %s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 exit 0
 SH

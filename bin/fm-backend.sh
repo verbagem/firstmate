@@ -344,9 +344,10 @@ fm_backend_validate_spawn() {  # <name>
 # single owner of the per-backend dependency delta, so bootstrap follows the
 # RESOLVED backend instead of demanding an inactive backend's tools. Each set is:
 #   - the session-provider CLI itself (tmux/herdr/zellij/orca/cmux/paseo/rex);
-#   - jq, for the JSON-emitting adapters (herdr, zellij, cmux, paseo, rex) whose spawn/liveness
-#     paths parse the backend's JSON output (see each adapter's
-#     tool check, e.g. fm_backend_herdr_tool_check);
+#   - jq, which parses Treehouse's lease inventory when spawn reserves preserved
+#     task worktrees and teardown verifies them, and which the JSON-emitting
+#     adapters (herdr, zellij, cmux, paseo, rex) also use for their backend's own
+#     output (see each adapter's tool check, e.g. fm_backend_herdr_tool_check);
 #   - the treehouse worktree provider for every session-provider-only backend
 #     (tmux, herdr, zellij, cmux, paseo, rex, t3code); orca owns its own task worktree and
 #     terminal, so it drops both treehouse and any other backend's session CLI;
@@ -356,14 +357,14 @@ fm_backend_validate_spawn() {  # <name>
 # 1 and prints nothing for an unknown backend.
 fm_backend_required_tools() {  # <backend>
   case "$1" in
-    tmux)   printf '%s' 'tmux treehouse' ;;
+    tmux)   printf '%s' 'tmux jq treehouse' ;;
     herdr)  printf '%s' 'herdr jq treehouse' ;;
     zellij) printf '%s' 'zellij jq treehouse' ;;
     cmux)   printf '%s' 'cmux jq treehouse' ;;
     paseo)  printf '%s' 'paseo jq treehouse' ;;
     rex)    printf '%s' 'rex jq treehouse' ;;
     orca)   printf '%s' 'orca' ;;
-    t3code) printf '%s' 'node treehouse' ;;
+    t3code) printf '%s' 'node jq treehouse' ;;
     *) return 1 ;;
   esac
 }

@@ -96,6 +96,7 @@ make_case() {
   # run; the ALLOW cases need them so the script can complete cleanly.
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 # `treehouse return --force <wt>`: succeed silently.
 exit 0
 SH
@@ -442,6 +443,7 @@ add_lock_aware_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -476,6 +478,7 @@ add_transient_lock_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -521,6 +524,7 @@ add_persistent_lock_treehouse() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=""
@@ -678,7 +682,7 @@ backlog_row_state() {
 make_path_without_lsof() {  # <case-dir>
   local case_dir=$1 path_dir="$1/path-without-lsof" cmd resolved
   mkdir -p "$path_dir"
-  for cmd in awk bash basename cat chmod cp cut date dirname env find git grep head hostname id ln \
+  for cmd in awk bash basename cat chmod cp cut date dirname env find git grep head hostname id jq ln \
     mkdir mktemp mv perl ps readlink realpath rm sed sh sleep sort stat tail timeout tr uname wc xargs; do
     resolved=$(command -v "$cmd" 2>/dev/null) || continue
     case "$resolved" in /*) ln -sf "$resolved" "$path_dir/$cmd" ;; esac
@@ -1273,6 +1277,7 @@ test_content_in_default_fallback_allows() {
   land_on_origin_main "$case_dir" feature.txt hello
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 printf '%s\n' "$*" > "${FM_TEST_TREEHOUSE_LOG:?}"
 exit 0
 SH
@@ -1320,6 +1325,7 @@ test_content_fallback_uses_recorded_base_branch() {
     fi
     cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 0
 SH
     chmod +x "$case_dir/fakebin/treehouse"
@@ -1458,6 +1464,7 @@ add_treehouse_clean_fd() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=
@@ -1482,6 +1489,7 @@ add_treehouse_that_leaves_residue() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = return ]; then
   shift
   wt=
@@ -1564,6 +1572,7 @@ test_ship_nested_clone_is_refused_and_bytes_stay() {
   : > "$case_dir/treehouse.log"
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
 exit 0
 EOF
@@ -1683,6 +1692,7 @@ add_treehouse_that_removes_copy() {
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = return ]; then
   for a in "$@"; do wt=$a; done
   rm -f "$wt/.git"
@@ -3039,10 +3049,11 @@ test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes() {
   : > "$case_dir/state/task-x1.status"
   : > "$case_dir/state/task-x1.turn-ended"
   # Record every treehouse invocation: the contended-lock refusal must fire
-  # BEFORE the isolated copy is returned, so phase 1 may not invoke it at all.
+  # BEFORE the isolated copy is returned, so phase 1 may only query, never return.
   thlog="$case_dir/treehouse.log"; : > "$thlog"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
@@ -3076,7 +3087,7 @@ SH
   [ -e "$case_dir/state/task-x1.turn-ended" ] || { : > "$release"; fail "herdr-orphan-refusal: refusal erased the turn-end record"; }
   assert_grep "presentation lock is contended" "$case_dir/stderr" \
     "herdr-orphan-refusal: the pre-return refusal was not explained visibly"
-  if [ -s "$thlog" ]; then
+  if grep -q '^return' "$thlog"; then
     : > "$release"; fail "herdr-orphan-refusal: the contended refusal still returned the isolated copy: $(cat "$thlog")"
   fi
   [ -d "$case_dir/wt" ] || { : > "$release"; fail "herdr-orphan-refusal: the contended refusal removed the isolated copy"; }
@@ -3096,7 +3107,7 @@ SH
     run_teardown "$case_dir" --force > "$case_dir/stdout2" 2> "$case_dir/stderr2" \
     || fail "herdr-orphan-refusal: the retry after lock release failed: $(cat "$case_dir/stderr2")"
   [ -e "$closed" ] || fail "herdr-orphan-refusal: the retry never closed the pane under the lock"
-  [ -s "$thlog" ] || fail "herdr-orphan-refusal: the successful retry never returned the isolated copy"
+  grep -q '^return' "$thlog" || fail "herdr-orphan-refusal: the successful retry never returned the isolated copy"
   [ ! -e "$case_dir/state/task-x1.meta" ] || fail "herdr-orphan-refusal: the successful retry left the metadata behind"
   [ ! -e "$case_dir/state/task-x1.status" ] || fail "herdr-orphan-refusal: the successful retry left the status record behind"
   grep -q "teardown task-x1 complete" "$case_dir/stdout2" \
@@ -3139,6 +3150,7 @@ assert_herdr_teardown_preflight_refuses_before_changes() {
   thlog="$case_dir/treehouse.log"; : > "$thlog"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
@@ -3181,7 +3193,7 @@ SH
     || fail "herdr-preflight-$mode: refusal erased the task status record"
   [ -e "$case_dir/state/task-x1.turn-ended" ] \
     || fail "herdr-preflight-$mode: refusal erased the turn-end record"
-  [ ! -s "$thlog" ] || fail "herdr-preflight-$mode: refusal returned the isolated copy"
+  ! grep -q '^return' "$thlog" || fail "herdr-preflight-$mode: refusal returned the isolated copy"
   [ ! -e "$closed" ] || fail "herdr-preflight-$mode: refusal attempted an unlocked pane close"
 }
 
@@ -3393,6 +3405,7 @@ test_forced_secondmate_herdr_child_preflight_refuses_before_changes() {
   : > "$log"; : > "$thlog"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$thlog"
 exit 0
 SH
@@ -3406,7 +3419,7 @@ SH
   [ -e "$home/state/child-herdr.meta" ] || fail "herdr-child-preflight: refusal erased the child record"
   [ -e "$home/state/child-herdr.status" ] || fail "herdr-child-preflight: refusal erased child status"
   [ -d "$home" ] || fail "herdr-child-preflight: refusal removed the secondmate home"
-  [ ! -s "$thlog" ] || fail "herdr-child-preflight: refusal returned work before child preflight"
+  ! grep -q '^return' "$thlog" || fail "herdr-child-preflight: refusal returned work before child preflight"
   [ ! -e "$closed" ] || fail "herdr-child-preflight: refusal attempted a child close"
   assert_grep "nothing was changed" "$case_dir/stderr" \
     "herdr-child-preflight: refusal did not explain its non-mutating boundary"
@@ -3447,6 +3460,7 @@ exit 0
 SH
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
 exit 0
 SH
@@ -4670,6 +4684,8 @@ test_parked_own_run_refuses_when_abort_is_unconfirmed() {
 
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
+[ "\${1:-}" = return ] || exit 0
 printf 'return\n' >> "$case_dir/treehouse.log"
 EOF
   chmod +x "$case_dir/fakebin/treehouse"
@@ -4840,6 +4856,8 @@ exit 1
 SH
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
+[ "\${1:-}" = return ] || exit 0
 printf 'return\n' >> "$case_dir/treehouse.log"
 EOF
   chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/treehouse"
@@ -5066,6 +5084,8 @@ exec "$REAL_PS_FOR_TEST" "$@"
 SH
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
+[ "\${1:-}" = return ] || exit 0
 printf 'returned\n' > "$case_dir/treehouse.log"
 EOF
   chmod +x "$case_dir/fakebin/lsof" "$case_dir/fakebin/ps" "$case_dir/fakebin/treehouse"
@@ -5102,6 +5122,7 @@ test_run_abort_precedes_process_reap_precedes_worktree_removal() {
   # real observed state, not a source-text or line-number correlation.
   cat > "$case_dir/fakebin/treehouse" <<EOF
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[]'; exit 0; }
 if [ -s "$abort_log" ]; then echo "abort-already-happened" >> "$case_dir/order.log"; fi
 if ! kill -0 $pid 2>/dev/null; then echo "reap-already-happened" >> "$case_dir/order.log"; fi
 exit 0
@@ -5144,6 +5165,7 @@ prepare_teardown_source_copy() {  # <case-dir>
   printf 'manual\n' > "$case_dir/config/backlog-backend"
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
 exit 0
 SH
@@ -5296,6 +5318,203 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
   assert_grep "invalid teardown request" "$case_dir/stderr" \
     "retained-sources: the ordinary refusal was replaced"
   pass "present required sources still reach the ordinary teardown refusal"
+}
+
+test_treehouse_return_is_bound_to_recorded_lease_identity() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-lease-identity)
+  write_meta "$case_dir" local-only ship
+  {
+    printf '%s\n' 'treehouse_lease_id=lease-task-x1'
+    printf '%s\n' 'treehouse_lease_holder=firstmate:task-x1'
+  } >> "$case_dir/state/task-x1.meta"
+  : > "$case_dir/treehouse.log"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" = status:--json ] && { printf '%s\n' '[{"name":"1","path":"$case_dir/wt","status":"leased","lease_id":"lease-task-x1","lease_holder":"firstmate:task-x1"}]'; exit 0; }
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "lease-identity teardown should succeed"
+  assert_grep "return --force $case_dir/wt --if-lease-id lease-task-x1" "$case_dir/treehouse.log" \
+    "teardown did not bind Treehouse return to the task's recorded lease identity"
+  pass "teardown returns only the exact Treehouse lease recorded for the task"
+}
+
+test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root() {
+  local case_dir rc listed_wt
+  case_dir=$(make_case treehouse-lease-symlinked-root)
+  case_dir=$(cd "$case_dir" && pwd -P)
+  ln -s "$case_dir" "$case_dir/pool-link"
+  listed_wt="$case_dir/pool-link/wt"
+  write_meta "$case_dir" local-only ship
+  {
+    printf '%s\n' 'treehouse_lease_id=lease-task-x1'
+    printf '%s\n' 'treehouse_lease_holder=firstmate:task-x1'
+  } >> "$case_dir/state/task-x1.meta"
+  : > "$case_dir/treehouse.log"
+  # Real Treehouse keys the pool entry and its lease by the unresolved pool
+  # path, so a guarded return of the resolved path fails its lease precondition.
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+case "\${1:-}:\${2:-}" in
+  status:--json)
+    printf '%s\n' '[{"name":"1","path":"$listed_wt","status":"leased","lease_id":"lease-task-x1","lease_holder":"firstmate:task-x1"}]'
+    exit 0 ;;
+  return:--force)
+    if [ "\${3:-}" = "$listed_wt" ] && [ "\${4:-}" = --if-lease-id ] && [ "\${5:-}" = lease-task-x1 ]; then
+      exit 0
+    fi
+    echo "failed to return worktree: lease precondition failed: worktree \${3:-} is not leased" >&2
+    exit 1 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "lease-guarded teardown under a symlinked pool root should succeed"
+  assert_grep "return --force $listed_wt --if-lease-id lease-task-x1" "$case_dir/treehouse.log" \
+    "teardown did not return the Treehouse-listed path for the leased worktree"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "teardown left the task record after a successful return"
+  pass "teardown returns a leased worktree by Treehouse's listed path under a symlinked pool root"
+}
+
+test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-foreign-lease)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'other owner work' > "$case_dir/wt/other.txt"
+  : > "$case_dir/treehouse.log"
+  # The stale local record owns no lease, while Treehouse reports the same copy
+  # durably leased to a task in another Firstmate home.
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+case "\${1:-}:\${2:-}" in
+  status:--json)
+    printf '%s\n' '[{"name":"1","path":"$case_dir/wt","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:secondmate-task"}]'
+    exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "teardown of an unleased record must refuse a copy leased to another owner"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "teardown returned a copy that Treehouse reports leased to another owner"
+  fi
+  assert_grep "lease 'lease-other', holder 'firstmate:secondmate-task'" "$case_dir/stderr" \
+    "teardown refusal did not name the conflicting Treehouse lease"
+  [ -f "$case_dir/wt/other.txt" ] || fail "teardown discarded the other owner's uncommitted work"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "teardown removed the stale record instead of leaving it for reconciliation"
+  pass "teardown of an unleased record leaves another owner's leased copy, lease and work untouched"
+}
+
+assert_recorded_lease_not_held_refuses_before_touching_copy() {  # <case> <status-json> <expected-error>
+  local case_dir rc
+  case_dir=$(make_case "$1")
+  write_meta "$case_dir" local-only ship
+  {
+    printf '%s\n' 'treehouse_lease_id=lease-task-x1'
+    printf '%s\n' 'treehouse_lease_holder=firstmate:task-x1'
+  } >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' 'other owner work' > "$case_dir/wt/other.txt"
+  mkdir -p "$case_dir/wt/.claude"
+  printf '%s\n' '{}' > "$case_dir/wt/.claude/settings.local.json"
+  write_status_treehouse "$case_dir" "  printf '%s\\n' '${2//@WT@/$case_dir/wt}'; exit 0"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "$1: teardown must refuse a copy that no longer holds the record's lease"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "$1: teardown returned a copy that no longer holds the record's lease"
+  fi
+  assert_grep "$3" "$case_dir/stderr" "$1: refusal did not explain the lease mismatch"
+  assert_grep "aborted before touching worktree" "$case_dir/stderr" "$1: refusal did not happen before touching the copy"
+  [ -f "$case_dir/wt/other.txt" ] || fail "$1: teardown discarded the current owner's work"
+  [ -f "$case_dir/wt/.claude/settings.local.json" ] || fail "$1: teardown stripped the current owner's hook wiring"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] || fail "$1: teardown deleted the checked-out branch"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "$1: teardown removed the record"
+}
+
+test_recorded_lease_refuses_before_touching_copy_it_no_longer_holds() {
+  assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-stale-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:task-y1"}]' \
+    "lease 'lease-other', holder 'firstmate:task-y1'"
+  assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-lost-recorded-lease \
+    '[{"name":"1","path":"@WT@","status":"available"}]' \
+    "is not listed under its recorded lease"
+  assert_recorded_lease_not_held_refuses_before_touching_copy treehouse-same-holder-new-lease \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-relost","lease_holder":"firstmate:task-x1"}]' \
+    "by this record's own holder 'firstmate:task-x1', but under lease 'lease-relost' instead of the recorded 'lease-task-x1'"
+  pass "teardown refuses before reaping, stripping or returning a copy that no longer holds the record's lease"
+}
+
+write_status_treehouse() {  # <case-dir> <status-script>
+  local case_dir=$1
+  : > "$case_dir/treehouse.log"
+  cat > "$case_dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$case_dir/treehouse.log"
+if [ "\${1:-}:\${2:-}" = status:--json ]; then
+$2
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+test_unleased_record_adopts_its_own_firstmate_lease() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-own-lease)
+  write_meta "$case_dir" local-only ship
+  write_status_treehouse "$case_dir" "  printf '%s\\n' '[{\"name\":\"1\",\"path\":\"$case_dir/wt\",\"status\":\"leased\",\"lease_id\":\"lease-own\",\"lease_holder\":\"firstmate:task-x1\"}]'; exit 0"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "teardown of an unleased record must adopt a lease held by its own firstmate holder"
+  assert_grep "return --force $case_dir/wt --if-lease-id lease-own" "$case_dir/treehouse.log" \
+    "teardown did not guard the return with the adopted same-owner lease id"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail "teardown left the record after returning its own leased copy"
+  pass "teardown of an unleased record adopts its own firstmate lease as the return guard"
+}
+
+assert_unverifiable_lease_state_refuses() {  # <case> <status-script> <expected-error>
+  local case_dir rc
+  case_dir=$(make_case "$1")
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'uncommitted work' > "$case_dir/wt/work.txt"
+  write_status_treehouse "$case_dir" "$2"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "$1: teardown must refuse when the copy's lease state cannot be verified"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "$1: teardown returned a copy whose lease state it could not verify"
+  fi
+  assert_grep "$3" "$case_dir/stderr" "$1: refusal did not name why lease state is unverifiable"
+  [ -f "$case_dir/wt/work.txt" ] || fail "$1: teardown discarded uncommitted work"
+  [ "$(git -C "$case_dir/wt" rev-parse --abbrev-ref HEAD)" = fm/task-x1 ] || fail "$1: teardown dropped the task branch"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "$1: teardown removed the record"
+}
+
+test_unleased_record_refuses_teardown_when_lease_state_unverifiable() {
+  assert_unverifiable_lease_state_refuses treehouse-status-fails "  exit 1" \
+    "'treehouse status --json' failed"
+  assert_unverifiable_lease_state_refuses treehouse-status-unparseable "  printf '%s\\n' 'not json'; exit 0" \
+    "did not return a parseable pool list"
+  assert_unverifiable_lease_state_refuses treehouse-status-not-a-list "  printf '%s\\n' '{\"path\":\"x\"}'; exit 0" \
+    "did not return a parseable pool list"
+  pass "teardown of an unleased record refuses before any destructive step when lease state is unverifiable"
 }
 
 test_teardown_preserves_opencode_busy_plugin_on_pool_return
@@ -5740,3 +5959,9 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+test_treehouse_return_is_bound_to_recorded_lease_identity
+test_treehouse_lease_return_uses_treehouse_listed_path_under_symlinked_root
+test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner
+test_unleased_record_adopts_its_own_firstmate_lease
+test_unleased_record_refuses_teardown_when_lease_state_unverifiable
+test_recorded_lease_refuses_before_touching_copy_it_no_longer_holds

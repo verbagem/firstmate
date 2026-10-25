@@ -21,7 +21,7 @@ When any diagnostic needs captain attention, report the plain consequence and re
   Report the installed version and the printed `upgrade:` command and wait for the same consent rule before running it; a printed command that is the tool's own installer means that tool ships no self-updater yet, so the upgrade reuses its install command.
   [`bin/fm-bootstrap.sh`](../../../bin/fm-bootstrap.sh) owns the floor policy, and never argue the floor down to whatever the home happens to have installed.
   For `no-mistakes`, the floor is 1.60.2, because this repo's PR gate requires a structured attestation that rebinds to the new head after each CI-repair push, which older builds do not write.
-  For `treehouse`, the requirement is `treehouse get --lease` support.
+  For `treehouse`, the requirement is both `treehouse get --lease` and the state-only `treehouse lease` takeover.
   For `backpass`, this also covers an installed version older than the floor `bin/fm-bootstrap.sh` owns (`docs/configuration.md` "backpass"); install with `npm install -g backpass`, same as an update, and confirm `acpx` is also on `PATH` since backpass has no model calls of its own.
   A newly published package still inside any captain-set install-age hold is a captain decision, not a routine install; treat a `MISSING: backpass` line as an ordinary install-consent request, never as standing authority to override a hold the captain has not lifted.
   For `tasks-axi`, the requirement also covers the separate feature probe (`bin/fm-tasks-axi-lib.sh` owns the definition); `config/backlog-backend=manual` only suppresses the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not this report.

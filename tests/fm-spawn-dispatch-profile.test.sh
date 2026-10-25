@@ -371,18 +371,20 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
 
   linked_home="$CASE_DIR/home-link"
   ln -s "$HOME_DIR" "$linked_home"
+  # The first task still owns its copy, so the second is handed its own slot.
+  git -C "$PROJ_DIR" worktree add -q -b wt-profile-home-defaults-2 "$CASE_DIR/wt2"
   : > "$LAUNCH_LOG"
   out=$(
     FM_ROOT_OVERRIDE='' FM_HOME="$linked_home" \
       FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
       FM_PROJECTS_OVERRIDE="$linked_home/projects" FM_CONFIG_OVERRIDE="$linked_home/config" \
-      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$CASE_DIR/wt2" TMUX="fake,1,0" \
       CLAUDE_CONFIG_DIR='' FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" \
       GROK_HOME="$linked_home/grok-home" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$absolute_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
   )
   status=$?
-  expect_code 0 "$status" "spawn with absolute symlink-spelled FM_HOME defaults should succeed"
+  expect_code 0 "$status" "spawn with absolute symlink-spelled FM_HOME defaults should succeed: $out"
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "-e '$linked_home/state/$absolute_id.pi-ext.ts'" \
     "absolute FM_HOME spelling changed in Pi's default cross-process extension path"
@@ -1429,7 +1431,9 @@ test_batch_preserves_native_ultra() {
   rec=$(make_spawn_case ultra-batch pi "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+  # Each batch task gets its own pooled copy, as Treehouse would hand out.
+  git -C "$PROJ_DIR" worktree add -q -b "wt-$id2" "$CASE_DIR/wt2"
+  out=$(FM_FAKE_SECOND_TASK_ID=$id2 FM_FAKE_PANE_PATH_2="$CASE_DIR/wt2" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model codex-native/gpt-6-astra --effort ultra)
   expect_code 0 "$?" "native Ultra batch failed: $out"
   assert_meta_profile "$HOME_DIR/state/$id1.meta" pi codex-native/gpt-6-astra ultra
@@ -1999,7 +2003,9 @@ test_batch_forwards_shared_profile_flags() {
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+  # Each batch task gets its own pooled copy, as Treehouse would hand out.
+  git -C "$PROJ_DIR" worktree add -q -b "wt-$id2" "$CASE_DIR/wt2"
+  out=$(FM_FAKE_SECOND_TASK_ID=$id2 FM_FAKE_PANE_PATH_2="$CASE_DIR/wt2" run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness codex --model gpt-5 --effort high)
   status=$?
   expect_code 0 "$status" "batch spawn with shared profile flags should succeed"

@@ -11,6 +11,7 @@ set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
+TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-pool-base-freshen)
 
 make_case() {
@@ -182,6 +183,14 @@ test_stale_pool_base_refreshes_before_branching() {
     printf '# observed base: HEAD=%s origin/main=%s advanced-main=%s\n' \
       "$branch_head" "$current" "$(cat "$POOL_DIR/advanced-main.txt")"
   fi
+
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_FAKE_PANE_PATH="$POOL_DIR" PATH="$FAKEBIN_DIR:$PATH" \
+    "$TEARDOWN" "$id" --force 2>&1)
+  status=$?
+  expect_code 0 "$status" "the first task should release its lease before the pool is reused: $out"
 
   id='pool-current-base-repeat-r1'
   fm_test_spawn_brief "$HOME_DIR" "$id"
@@ -528,6 +537,13 @@ strand_submodule_pin_via_spawn() {  # <seed-id>
     || fail "the first spawn did not move the pooled base across the moved submodule pin"
   [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
     || fail "the first spawn did not strand the submodule on the pin the old base recorded"
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_FAKE_PANE_PATH="$POOL_DIR" PATH="$FAKEBIN_DIR:$PATH" \
+    "$TEARDOWN" "$id" --force 2>&1)
+  status=$?
+  expect_code 0 "$status" "the seed task should release its lease before the residue is probed: $out"
 }
 
 test_stale_submodule_pin_explains_itself() {

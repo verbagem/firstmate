@@ -17,6 +17,7 @@ make_fake_toolchain() {
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" node chrome-devtools-axi
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.80
+  fm_fake_version_tool "$fakebin" backpass FM_FAKE_BACKPASS_VERSION 0.1.16
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
@@ -37,8 +38,12 @@ exit 0
 SH
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
   printf '%s\n' 'Usage: treehouse get [--lease]'
+fi
+if [ "${1:-}" = lease ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' 'Usage: treehouse lease <name>'
 fi
 SH
   cat > "$fakebin/no-mistakes" <<'SH'

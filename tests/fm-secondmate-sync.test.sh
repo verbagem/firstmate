@@ -361,8 +361,12 @@ SH
   chmod +x "$fakebin/gh"
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
   printf '%s\n' 'Usage: treehouse get [--lease]'
+fi
+if [ "${1:-}" = lease ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' 'Usage: treehouse lease <name>'
 fi
 exit 0
 SH
@@ -394,6 +398,7 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/quota-axi"
+  fm_fake_version_tool "$fakebin" backpass FM_FAKE_BACKPASS_VERSION 0.1.16
   printf '%s\n' "$fakebin"
 }
 

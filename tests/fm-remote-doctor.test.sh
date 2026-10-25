@@ -281,6 +281,7 @@ esac
 SH
   cat > "$CASE_BIN/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 exit 0
 SH
   cat > "$CASE_BIN/claude" <<'SH'

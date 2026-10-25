@@ -685,7 +685,7 @@ test_backend_validate_spawn_accepts_orca() {
   fm_backend_validate_spawn orca 2>/dev/null || fail "fm_backend_validate_spawn should accept orca"
   fm_backend_validate_spawn cmux 2>/dev/null || fail "fm_backend_validate_spawn should accept cmux"
   fm_backend_validate_spawn t3code 2>/dev/null || fail "fm_backend_validate_spawn should accept t3code"
-  [ "$(fm_backend_required_tools t3code)" = 'node treehouse' ] || fail "t3code should require node and treehouse"
+  [ "$(fm_backend_required_tools t3code)" = 'node jq treehouse' ] || fail "t3code should require node, jq, and treehouse"
   out=$(fm_backend_validate_spawn bogus 2>&1) && fail "fm_backend_validate_spawn should still refuse unknown backends"
   assert_contains "$out" "unknown backend 'bogus'" "fm_backend_validate_spawn did not preserve unknown-backend validation"
   out=$(fm_backend_validate_spawn codex-app 2>&1) && fail "fm_backend_validate_spawn should refuse codex-app"
@@ -1130,6 +1130,10 @@ SH
 #!/usr/bin/env bash
 set -u
 { printf 'treehouse'; for a in "$@"; do printf '\x1f%s' "$a"; done; printf '\n'; } >> "${FM_TMUX_LOG:?}"
+if [ "${1:-}:${2:-}" = status:--json ]; then
+  jq -cn --arg path "${FM_FAKE_TREEHOUSE_PATH:?}" \
+    '[{name:"fixture",path:$path,status:"available",lease_id:"",lease_holder:""}]'
+fi
 exit 0
 SH
   cat > "$fb/tasks-axi" <<'SH'
@@ -1158,7 +1162,7 @@ run_teardown_case() {
   : > "$log"
   env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$fmroot" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_TMUX_LOG="$log" \
+    FM_TMUX_LOG="$log" FM_FAKE_TREEHOUSE_PATH="$(sed -n 's/^worktree=//p' "$state/$id.meta" | tail -1)" \
     "$script" "$id"
 }
 

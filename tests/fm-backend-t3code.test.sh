@@ -118,6 +118,7 @@ make_treehouse_fakebin() {  # <dir> -> echoes fakebin dir
   mkdir -p "$fb"
   cat > "$fb/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 set -u
 printf '{"tool":"treehouse","args":"%s","cwd":"%s"}\n' "$*" "$PWD" >> "${FM_T3_TREEHOUSE_LOG:?}"
 case "${1:-}" in
@@ -823,7 +824,7 @@ test_dispatcher_routes_and_validates_t3code_meta() {
   assert_contains "$out" "missing t3_thread_id" "the refusal must name the missing field"
   fm_write_meta "$state/$id.meta" "window=fm-$id" "endpoint_task_id=$id" "worktree=$REPO" "project=$REPO" "backend=t3code" "t3_thread_id=thread;rm"
   t3_run 'fm_backend_validate_task_endpoint "$1" "$2"' "$state/$id.meta" "$id" 2>/dev/null && fail "a thread id outside the id charset must refuse"
-  [ "$(t3_run 'fm_backend_required_tools t3code')" = 'node treehouse' ] || fail "t3code requires node and treehouse"
+  [ "$(t3_run 'fm_backend_required_tools t3code')" = 'node jq treehouse' ] || fail "t3code requires node, jq, and treehouse"
   t3_run 'fm_backend_has_push t3code' || fail "t3code pushes through its bounded t3_thread_wait event wait"
   [ "$(t3_run 'fm_backend_event_session t3code "$1"' "$thread")" = t3code ] || fail "every T3 thread shares the home's one event session"
   [ "$(t3_run 'fm_backend_transition_target t3code t3code "$1"' "$thread")" = "$thread" ] || fail "a T3 transition names the thread id itself"
@@ -2495,6 +2496,7 @@ test_pooled_t3_secondmate_home_returned_only_after_provider_exits() {
   provider=$!
   cat > "$fb/treehouse" <<TH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if kill -0 $provider 2>/dev/null; then printf 'provider-alive\n'; else printf 'provider-gone\n'; fi >> '$CASE_DIR/return.log'
 if [ -e '$home/.codex/config.toml' ] || [ -L '$home/config/t3code-token' ] \
   || grep -q FM_SUPERVISOR_TARGET '$home/.claude/settings.local.json'; then

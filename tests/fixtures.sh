@@ -142,8 +142,18 @@ fake_opencode_launched() {
       ;;
   esac
 }
+# A batch test gives its second task its own slot (FM_FAKE_SECOND_TASK_ID's window
+# reports FM_FAKE_PANE_PATH_2), the way Treehouse hands each task a distinct copy.
 case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
+  *"#{pane_current_path}"*)
+    if [ -n "${FM_FAKE_SECOND_TASK_ID:-}" ] && [ -n "${FM_FAKE_PANE_PATH_2:-}" ] \
+      && [[ "$*" == *"fm-$FM_FAKE_SECOND_TASK_ID"* ]]; then
+      printf '%s\n' "$FM_FAKE_PANE_PATH_2"
+    else
+      printf '%s\n' "${FM_FAKE_PANE_PATH:-}"
+    fi
+    exit 0
+    ;;
 esac
 fake_opencode_composer_drawn() {
   local reads

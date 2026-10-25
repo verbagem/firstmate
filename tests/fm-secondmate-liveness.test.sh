@@ -226,8 +226,12 @@ SH
   chmod +x "$fakebin/gh"
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
   printf '%s\n' 'Usage: treehouse get [--lease]'
+fi
+if [ "${1:-}" = lease ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' 'Usage: treehouse lease <name>'
 fi
 exit 0
 SH

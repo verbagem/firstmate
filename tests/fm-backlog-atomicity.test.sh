@@ -490,6 +490,7 @@ exit 0
 SH
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 : > "$case_dir/local-copy-resource-action"
 exit 0
 SH
@@ -500,6 +501,7 @@ interrupt_teardown_during_treehouse_return() {  # <case-dir>
   local case_dir=$1
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
+[ "\${1:-}:\${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "\${1:-}" = return ] && [ ! -f "$case_dir/teardown-interrupted" ]; then
   : > "$case_dir/teardown-interrupted"
   teardown_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
