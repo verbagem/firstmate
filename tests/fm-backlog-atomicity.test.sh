@@ -499,9 +499,21 @@ SH
 
 interrupt_teardown_during_treehouse_return() {  # <case-dir>
   local case_dir=$1
+  local home
+  home=$(home_of "$case_dir")
+  # The pool still lists each task copy under the lease its spawn recorded.
   cat > "$case_dir/fakebin/treehouse" <<SH
 #!/usr/bin/env bash
-[ "\${1:-}:\${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
+if [ "\${1:-}:\${2:-}" = status:--json ]; then
+  for m in "$home"/state/*.meta; do
+    [ -f "\$m" ] || continue
+    jq -cn --arg p "\$(sed -n 's/^worktree=//p' "\$m")" \\
+      --arg i "\$(sed -n 's/^treehouse_lease_id=//p' "\$m")" \\
+      --arg h "\$(sed -n 's/^treehouse_lease_holder=//p' "\$m")" \\
+      '{name:"1",path:\$p,status:(if \$i == "" then "in-use" else "leased" end),lease_id:\$i,lease_holder:\$h}'
+  done | jq -s '.'
+  exit 0
+fi
 if [ "\${1:-}" = return ] && [ ! -f "$case_dir/teardown-interrupted" ]; then
   : > "$case_dir/teardown-interrupted"
   teardown_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
