@@ -53,14 +53,43 @@ SH
 # fm_cursor_verify_executable) before accepting any candidate. Empty success
 # is not Cursor identity, so the fixture must mark itself the same way the
 # real CLI does or spawn falls through to a host agent / fails closed on CI.
-if [ "${1:-}" = --help ]; then
-  printf '%s\n' 'Start the Cursor Agent'
-  exit 0
-fi
-if [ "${1:-}" = --list-models ]; then
-  [ "${FM_FAKE_CURSOR_LIST_STATUS:-0}" -eq 0 ] || exit "${FM_FAKE_CURSOR_LIST_STATUS}"
-  printf '%b\n' "${FM_FAKE_CURSOR_MODELS:-Available models\ncursor-grok-4.5-high - Grok 4.5 High}"
-fi
+# The help text also carries the workspace-trust contract fm-spawn probes
+# (bin/fm-cursor-lib.sh fm_cursor_trust_contract).
+case " $* " in
+  *" --help "*)
+    case "${FM_FAKE_CURSOR_HELP_MODE:-headless}" in
+      headless)
+        printf '%s\n' \
+          'Usage: agent [options] [command] [prompt...]' \
+          'Start the Cursor Agent' \
+          '  --trust                      Trust the current workspace without prompting (only works with --print/headless mode)'
+        ;;
+      interactive)
+        printf '%s\n' \
+          'Usage: agent [options] [command] [prompt...]' \
+          'Start the Cursor Agent' \
+          '  --trust                      Trust the current workspace without prompting'
+        ;;
+      absent)
+        printf '%s\n' 'Usage: agent [options]' 'Start the Cursor Agent'
+        ;;
+    esac
+    exit 0
+    ;;
+  *" --list-models "*)
+    [ "${FM_FAKE_CURSOR_LIST_STATUS:-0}" -eq 0 ] || exit "${FM_FAKE_CURSOR_LIST_STATUS}"
+    printf '%b\n' "${FM_FAKE_CURSOR_MODELS:-Available models\ncursor-grok-4.5-high - Grok 4.5 High}"
+    exit 0
+    ;;
+  *" create-chat "*)
+    [ "${FM_FAKE_CURSOR_TRUST_STATUS:-0}" -eq 0 ] || exit "${FM_FAKE_CURSOR_TRUST_STATUS}"
+    if [ -n "${FM_FAKE_CURSOR_TRUST_LOG:-}" ]; then
+      printf '%s\n' "$*" >> "$FM_FAKE_CURSOR_TRUST_LOG"
+    fi
+    printf '%s\n' "${FM_FAKE_CURSOR_CHAT_ID:-fake-chat-id}"
+    exit 0
+    ;;
+esac
 exit 0
 SH
   cat > "$fakebin/opencode" <<'SH'
@@ -91,13 +120,14 @@ make_spawn_case() {
   proj="$case_dir/project"
   wt="$case_dir/wt"
   launchlog="$case_dir/launch.log"
+  cursortrustlog="$case_dir/cursor-trust.log"
   fakebin=$(make_spawn_fakebin "$case_dir/fake")
   fm_test_spawn_home "$home" "$harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   for id in "$@"; do
     fm_test_spawn_brief "$home" "$id"
   done
-  printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog"
+  printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog|$cursortrustlog"
 }
 
 enable_dispatch_profile() {
@@ -141,6 +171,9 @@ run_spawn() {
     FM_OPENCODE_POLL_INTERVAL="${FM_TEST_OPENCODE_POLL_INTERVAL:-0.01}" \
     FM_FAKE_CURSOR_MODELS="${FM_TEST_CURSOR_MODELS:-}" \
     FM_FAKE_CURSOR_LIST_STATUS="${FM_TEST_CURSOR_LIST_STATUS:-0}" \
+    FM_FAKE_CURSOR_HELP_MODE="${FM_TEST_CURSOR_HELP_MODE:-headless}" \
+    FM_FAKE_CURSOR_TRUST_STATUS="${FM_TEST_CURSOR_TRUST_STATUS:-0}" \
+    FM_FAKE_CURSOR_TRUST_LOG="${FM_TEST_CURSOR_TRUST_LOG:-}" \
     GROK_HOME="$home/grok-home" \
     fm_test_run_spawn "$home" "$wt" "$fakebin" "$@"
 }
@@ -152,7 +185,7 @@ run_ship_spawn() {
 }
 
 read_case_record() {
-  IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG <<EOF
+  IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR LAUNCH_LOG CURSOR_TRUST_LOG <<EOF
 $1
 EOF
 }
@@ -843,14 +876,19 @@ test_cursor_threads_model_workspace_and_omits_effort_axis() {
   rec=$(make_spawn_case profile-cursor cursor "$id")
   read_case_record "$rec"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+  out=$(FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model cursor-grok-4.5-high --effort high)
   status=$?
   expect_code 0 "$status" "cursor spawn with a model-qualified reasoning class should succeed"
   assert_meta_profile "$HOME_DIR/state/$id.meta" cursor cursor-grok-4.5-high high
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "--trust --yolo --model 'cursor-grok-4.5-high' --workspace '$WT_DIR'" \
-    "cursor launch did not carry trust, autonomy, model, and exact workspace flags"
+  assert_contains "$launch" "--yolo --model 'cursor-grok-4.5-high' --workspace '$WT_DIR'" \
+    "cursor launch did not carry autonomy, model, and exact workspace flags"
+  assert_not_contains "$launch" "--trust" \
+    "headless-only Cursor builds reject interactive --trust; fm-spawn must pretrust headlessly and omit it from the TTY launch"
+  assert_contains "$(cat "$CURSOR_TRUST_LOG")" "--trust --workspace $WT_DIR create-chat" \
+    "cursor launch did not pretrust the exact task workspace through the current headless contract"
   # The executable is RESOLVED, never named: `cursor` is not the CLI, so a
   # literal `cursor agent` command cannot run on a machine that has only the
   # real installed names.
@@ -869,6 +907,51 @@ test_cursor_threads_model_workspace_and_omits_effort_axis() {
   assert_grep 'harness=cursor' "$HOME_DIR/state/$id.meta" "cursor harness was not recorded in meta"
   assert_grep 'model=cursor-grok-4.5-high' "$HOME_DIR/state/$id.meta" "cursor model was recorded as default"
   pass "cursor receives its model-qualified reasoning class and exact task workspace"
+}
+
+test_cursor_old_interactive_trust_contract_keeps_launch_flag() {
+  local rec id out status launch
+  id=profile-cursor-old-trust-z6c2
+  rec=$(make_spawn_case profile-cursor-old-trust cursor "$id")
+  read_case_record "$rec"
+
+  out=$(FM_TEST_CURSOR_HELP_MODE=interactive FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --model cursor-grok-4.5-high)
+  status=$?
+  expect_code 0 "$status" "cursor spawn on an old interactive-trust contract should succeed"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "--trust --yolo --model 'cursor-grok-4.5-high' --workspace '$WT_DIR'" \
+    "old Cursor builds still need the interactive --trust launch flag"
+  [ ! -s "$CURSOR_TRUST_LOG" ] \
+    || fail "old Cursor interactive-trust path should not run a headless preflight: $(cat "$CURSOR_TRUST_LOG")"
+  pass "cursor interactive trust contract keeps --trust on the TTY launch"
+}
+
+test_cursor_headless_trust_failure_refuses_launch() {
+  local rec id out status retry_out retry_status
+  id=profile-cursor-trust-fails-z6c3
+  rec=$(make_spawn_case profile-cursor-trust-fails cursor "$id")
+  read_case_record "$rec"
+
+  out=$(FM_TEST_CURSOR_TRUST_STATUS=42 FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --model cursor-grok-4.5-high)
+  status=$?
+  expect_code 1 "$status" "cursor spawn must refuse when the current headless trust path fails"
+  assert_contains "$out" "Cursor workspace trust preflight failed" \
+    "cursor trust failure did not name the failed preflight"
+  [ ! -s "$LAUNCH_LOG" ] || fail "cursor trust refusal must happen before the interactive launch is typed"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "cursor trust refusal must happen before task metadata is published"
+  [ ! -e "$HOME_DIR/state/$id.cursor-session" ] || fail "cursor trust refusal must happen before cursor transcript binding is published"
+  # The trust preflight runs before any task endpoint exists, so a refusal has
+  # no unrecorded endpoint to retract.
+  retry_out=$(FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+      --model cursor-grok-4.5-high)
+  retry_status=$?
+  expect_code 0 "$retry_status" "cursor trust refusal must leave the same task id retryable"$'\n'"$retry_out"
+  pass "cursor refuses unsafe trust states before launch"
 }
 
 test_cursor_refuses_model_absent_from_live_catalog() {
@@ -895,8 +978,8 @@ test_cursor_failed_catalog_probe_does_not_block_spawn() {
   rec=$(make_spawn_case profile-cursor-catalog-unreachable cursor "$id")
   read_case_record "$rec"
 
-  FM_TEST_CURSOR_LIST_STATUS=124 \
-    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
+  out=$(FM_TEST_CURSOR_LIST_STATUS=124 FM_TEST_CURSOR_TRUST_LOG="$CURSOR_TRUST_LOG" \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
       --model cursor-catalog-unreachable)
   status=$?
   expect_code 0 "$status" "cursor spawn should fail open when the bounded catalog query fails"
@@ -2739,6 +2822,8 @@ test_grok_threads_model_and_reasoning_effort
 test_grok_omits_invalid_max_reasoning_effort
 test_grok_omits_invalid_xhigh_reasoning_effort
 test_cursor_threads_model_workspace_and_omits_effort_axis
+test_cursor_old_interactive_trust_contract_keeps_launch_flag
+test_cursor_headless_trust_failure_refuses_launch
 test_cursor_refuses_model_absent_from_live_catalog
 test_cursor_failed_catalog_probe_does_not_block_spawn
 test_opencode_threads_model_and_effort_variant

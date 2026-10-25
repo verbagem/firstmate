@@ -662,6 +662,54 @@
     {
       "path": ".agents/skills/validation-supervision/SKILL.md",
       "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/verification/jev-browser-shadow.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "evals/README.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/completeness-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/principles-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/publish-safety-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/task-definition-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/tov-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "evals/visual-asset-eval.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/jev-evidence-screening.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/verification/jev-context-replay.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/jev-evidence-screening.md",
+      "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/verification/proposal-cards.md",
+      "audience": "maintainer-verification"
     }
   ]
 }

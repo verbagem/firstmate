@@ -648,6 +648,7 @@ The generated prompt includes the [scout-completion](../.agents/skills/scout-com
 - The sequence-keyed processing request and its acknowledgement.
 - Suppression of empty or exact-repeat retry finals with differing replies preserved, preserved tool calls and user responses, the triggered-then-next-turn pacing, and session-start re-presentation.
 - Routine outcomes staying turn-free, task-level no-change notes staying hidden, absent-marker re-presentation, and malformed-age reporting without acknowledgement.
+- The captain-lane routine-delivery guard: routine notes request `triggerTurn: false` even in the `agent_end`-without-`agent_settled` gap, so a note never steers into a live captain turn.
 - Idle and busy main state, and incident-shaped compaction and unrelated-assistant context.
 - Cold-start post-lock recovery, crash-before-cursor reload recovery, and repeated-reload idempotency.
 - Mirroring.

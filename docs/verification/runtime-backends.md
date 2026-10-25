@@ -2720,13 +2720,18 @@ App-server partial methods and raw socket experiments do not satisfy that bridge
 ## Cursor Agent CLI
 
 Cursor runs crewmate, scout, secondmate, and primary work; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
-The evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
+The original identity, transcript, and launch evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
+The workspace trust contract was refreshed on 2026-09-25.
 
 - Binary: `~/.local/bin/cursor-agent`, canonicalizing into `~/.local/share/cursor-agent/versions/2026.08.11-e8db854/cursor-agent`.
 - Version: `cursor-agent --version` reported `2026.08.11-e8db854`, and `cursor-agent status` reported a logged-in account.
 - Both installed names, `cursor-agent` and the legacy alias `agent`, resolve into that same versioned install tree.
 
 Resolution prints the STABLE launcher rather than the canonical target, because the canonical path carries a version the CLI replaces on its own auto-update.
+The 2026-09-25 trust refresh observed two valid installed states during Cursor's own update window.
+The initiating launcher reported `cursor-agent --version` as `2026.07.09-a3815c0`, while the live interactive TUI banner already reported `v2026.09.23-86fc751` and rejected interactive `--trust` because help marked it print/headless-only.
+After the Cursor update completed, both `cursor-agent --version` and the TUI banner reported `2026.09.23-86fc751`, and help again advertised interactive `--trust`.
+Firstmate therefore gates Cursor workspace trust from `cursor-agent --help` and behavior, not from the version string alone.
 
 ### Process identity
 
@@ -2736,7 +2741,7 @@ Resolution prints the STABLE launcher rather than the canonical target, because 
 | --- | --- |
 | `#{pane_current_command}` | `node` |
 | `ps -o comm=` | `/Users/<user>/.local/bin/cursor-agent` |
-| child argv | `.../bin/cursor-agent --use-system-ca .../versions/2026.08.11-e8db854/index.js --trust --yolo` |
+| child argv, 2026-08-11 | `.../bin/cursor-agent --use-system-ca .../versions/2026.08.11-e8db854/index.js --trust --yolo` |
 
 `node` matches no harness name pattern, so a cursor pane is identified from Cursor's own name or install tree in the path or argv[0].
 An unrelated `node` or `agent` matches neither and classifies `other`, which the liveness callers fold into `ambiguous` rather than `dead`.
@@ -2840,7 +2845,7 @@ This row is a delivery guard for submit acknowledgement only; recorded worker st
 
 | Fact | Observed |
 | --- | --- |
-| Workspace trust | `--trust` suppressed the prompt; `--yolo` alone did NOT, and the prompt blocks a fresh worktree |
+| Workspace trust | Help-probed: builds whose help allows interactive trust launch with `--trust`; builds whose help says `--trust` is print/headless-only reject it in a TTY and accept `cursor-agent --trust --workspace <worktree> create-chat` as the no-prompt headless trust grant before an interactive no-`--trust` launch |
 | Autonomy | `--yolo` (alias of `--force`); the footer renders `Run Everything` |
 | Worktree | `-w/--worktree` allocates a SECOND worktree under `~/.cursor/worktrees` and is never passed |
 | Effort | no effort flag exists; requested effort stays in task metadata |
@@ -2860,6 +2865,38 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --backend tmux` o
 5. `bin/fm-control.sh <id> interrupt` cancelled a running turn;
 6. `bin/fm-control.sh <id> exit` stopped the agent;
 7. `bin/fm-teardown.sh` refused until the scout's report and decision gate were satisfied, then removed the session record.
+
+The 2026-09-25 refresh used these exact commands on the installed Cursor launcher:
+
+```bash
+cursor-agent --version
+# 2026.07.09-a3815c0
+
+cursor-agent --help
+# --trust ... (only works with --print/headless mode)
+
+cursor-agent --trust --yolo --workspace "$PWD" 'Firstmate trust contract smoke: say hi and stop'
+# Error: --trust can only be used with --print/headless mode
+
+cursor-agent --print --trust --workspace "$PWD" --mode ask 'Reply exactly: trust-headless-ok'
+# trust-headless-ok
+
+cursor-agent --trust --workspace "$TMP_WORKSPACE" create-chat
+# <chat-id>
+
+cursor-agent --version
+# 2026.09.23-86fc751
+
+cursor-agent --help
+# --trust ... Trust the current workspace without prompting
+
+cursor-agent --trust --yolo --workspace "$PWD" 'Firstmate trust contract smoke: say hi and stop'
+# entered the interactive TTY and processed the prompt
+```
+
+On the headless-only contract, after the headless trust grant, a tmux-hosted interactive launch without `--trust` entered the task workspace, displayed `Run Everything`, accepted the positional prompt, and began a turn without a workspace-trust prompt.
+On the interactive contract, a real `bin/fm-spawn.sh --scout --backend tmux --harness cursor` launch entered `/Users/temp/.treehouse/project-797f88/1/project`, displayed `Run Everything`, accepted the positional prompt, wrote `cursor-smoke-result.txt`, accepted a follow-up through `bin/fm-send.sh`, and the transcript source returned `idle cursor-transcript` after the follow-up.
+`tests/fm-spawn-dispatch-profile.test.sh` now pins both supported contracts through `bin/fm-spawn.sh`: interactive `--trust`, headless preflight plus interactive no-`--trust`, and fail-closed refusal when the preflight fails.
 
 ### Herdr backend
 
@@ -3039,8 +3076,36 @@ The current portable regression proves that only consecutive provider errors cou
 
 Scope of the earlier evidence: the installed signed `pi` CLI (0.82.0 at verification time) is a compiled binary whose bundled SDK is not importable from Node, so the importable npm package is the only surface the guard and the typecheck can pin.
 The extension executes inside the signed CLI's own runtime, so a CLI upgrade can drift ahead of the npm surface; refresh the SDK construction, picker, and renderer evidence after every Pi upgrade by rerunning the applicable live guard probes and picker regression with `FM_PI_PACKAGE_DIR` pointing at a matching npm install when one exists.
-The [strict production-consumer typecheck](../../tests/fm-pi-primary-types.test.sh) owns its dependency contract; historical typecheck commands and outputs here do not describe its current SDK selection.
-The [live-guard contract](../pi-supervision-branch.md#live-guards) owns the current fallback observations and fixture limits; rerun it against the matching importable Pi package to refresh SDK fallback evidence.
+
+### 2026-09-25 captain-lane guard (firstmate-user-lane-guard-5248)
+
+The guard's operative invariant and SDK-dispatch rationale are owned by `.pi/extensions/fm-branch-supervision.ts` in `deliverRoutineOutcome`.
+This verification record pins the installed-SDK behavior and the affected-integration review for that invariant.
+
+Evidence produced 2026-09-25 on macOS 25.4.0 arm64, Node v24.14.0, against the installed `@earendil-works/pi-coding-agent` 0.85.1:
+
+```sh
+bin/fm-test-run.sh tests/fm-pi-primary-types.test.sh
+FM_PI_BRANCH_LIVE_E2E=1 bin/fm-test-run.sh tests/fm-pi-branch-live-e2e.test.sh
+bin/fm-test-run.sh tests/fm-pi-branch-extension.test.sh tests/fm-branch-supervision.test.sh
+```
+
+```text
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 0.85.1
+ok - real Pi SDK 0.85.1 accepts the branch session construction and preserves an unpromptable wake
+ok - real Pi SDK 0.85.1 applies an explicit branch model on create and over a reopened session's recorded model
+ok - real Pi SDK 0.85.1 reports its own supported effort levels and applies an explicit branch effort over a reopened session's recorded level
+ok - real Pi SDK 0.85.1 delivers a custom message to the provider as user text carrying only content, so the captain outcome's typed envelope is what reaches the model
+ok - real Pi SDK 0.85.1 steers a no-options custom message into a live turn but never does with triggerTurn:false, proving the captain-lane guard (firstmate-user-lane-guard-5248) against the installed SDK
+```
+
+The fifth live-guard case is the load-bearing proof for the installed SDK: it starts a real `AgentSession` against a never-contacted local fake provider, waits until `isStreaming` is genuinely true, spies on `session.agent.steer` and `session.agent.followUp`, then compares the pre-fix call shape (`{}`), the fixed routine call shape (`{ triggerTurn: false }`), and the unchanged captain call shape (`{ triggerTurn: true, deliverAs: "followUp" }`).
+It also confirms the deferred routine note reaches session state after the turn settles.
+`tests/fm-pi-branch-extension.test.sh` pins the extension-side regression portably by exercising an `agent_end`-without-`agent_settled` event sequence and requiring the routine merge to use `{ triggerTurn: false }`.
+
+Scope of this fix: `.pi/extensions/fm-branch-supervision.ts` is Pi-only by construction ([docs/pi-supervision-branch.md](../pi-supervision-branch.md)) - no other verified harness (`claude`, `codex`, `opencode`, `cursor`, `grok`, `kimi`, `muse`) loads a background actor that can deliver a message into the primary session's live turn, so this class of bug cannot occur there.
+Every harness's *other* path into an active primary session - the away-mode sub-supervisor's pane injection (`bin/fm-supervise-daemon.sh`'s `inject_msg`, backend-abstracted over tmux/herdr) and the ordinary watcher wake delivery (`pi.sendUserMessage`/each harness's equivalent, always `deliverAs: "followUp"` with Pi's own streaming-behavior validation) - was reviewed for the same preemption class and already gates on a live, non-mirrored signal (a fresh pane busy/composer-empty read, or Pi's own `isStreaming` check inside `prompt()`), so neither needed a change.
+`fm-control.sh`'s `interrupt`/`exit`/`relaunch` verbs and `fm-send.sh`'s steering inbox are unaffected: they target crewmate/secondmate tasks by their `state/<id>.meta` record and structurally cannot resolve to the primary session, which carries no such record.
 
 ### 2026-09-02 streaming-time watcher delivery
 
@@ -3156,6 +3221,41 @@ ok - under the away-posture record the wake carries the verbatim read-back tail,
 ```
 
 The merge suite and the security suite dominate the wall time.
+
+## Pi task recap
+
+The captain-facing task recap for a Pi ship/scout crewmate (`.pi/extensions/fm-task-recap.ts`, loaded by `bin/fm-spawn.sh` via `-e` alongside the per-task busy-state extension, ship/scout only) is Pi's own native `ctx.ui.setWidget(key, lines, { placement: "belowEditor" })` extension API - the same mechanism the captain's personal `pai-bq-statusline` extension (`~/.pi/agent/extensions/pai-bq-statusline.ts`, a separate `local-only` project, never edited by Firstmate) already uses. No terminal-overlay machinery, no typed input, no Herdr-side rendering: Pi renders the widget itself, inside its own TUI, below the editor pane.
+
+Evidence produced 2026-08-25 on macOS 26.4.0 arm64 (Darwin 25.4.0), installed `pi` 0.82.1 (protocol client only - no `--tui-mode` flag in this version's `--help`, confirming `pi_supports_tui_mode` in `bin/fm-spawn.sh` correctly omits it rather than passing an option this build rejects), Herdr 0.7.4 protocol 16, Node v24.12.0:
+
+- Isolated Herdr lab session (`bin/fm-herdr-lab.sh`, session `fm-lab-pi-recap-*`, torn down and tripwire-confirmed after every run below) hosted every live Pi launch; no default session or live fleet pane was touched.
+- `pi -e <extension>` in a scratch working directory (no positional prompt, real Herdr pane, real `bin/fm-busy-event.sh`-shaped sibling extension) still renders `pai-bq-statusline`'s own widget - explicit `-e` paths do not disable Pi's global extension discovery, disproving the naive "the extension is never loaded" hypothesis before any code was written.
+- The same launch in a workspace created with `--no-focus` (Herdr's ordinary placement for a newly spawned, not-yet-attended task pane) still rendered the widget, ruling out an unfocused-pane rendering gap.
+- Two independently-authored extensions calling `ctx.ui.setWidget` with distinct keys (`pai-bq-statusline` and a test `fm-task-recap` key) rendered simultaneously in one pane with no collision or replacement - captured via `herdr pane read` on the real pane:
+  ```
+  FM-RECAP-LINE-1 task foo
+  FM-RECAP-LINE-2 phase bar
+  ◆ BH1VE · gpt-5.6-sol · medium
+  ▸ pi-recap-lab
+  ⬡ ...
+  ```
+  This is the fact `fm-task-recap.ts`'s distinct `fm-task-recap` widget key depends on: it never overwrites or is overwritten by the captain's own statusline.
+- `pane.report_metadata` (`herdr pane report-metadata`) confirmed separately: `title`/`display_agent`/`state_labels`/`tokens` persist on the pane record across calls but do NOT survive a Herdr server restart (a fresh `pane get` after `herdr server` restarts returns none of them). `fm-task-recap.ts` does not depend on this - it re-renders from `bin/fm-pi-recap.sh`'s durable inputs (`state/<id>.status`, `state/<id>.meta`, `data/backlog.md`) on every `session_start`/`turn_start`/`turn_end`, so a restart is a non-event: the next event re-populates the widget from scratch.
+- Full end-to-end launch: the real tracked extension, the real `bin/fm-pi-recap.sh`, and the exact `FM_RECAP_TASK_ID`/`FM_RECAP_STATE_DIR`/`FM_RECAP_DATA_DIR` shape `bin/fm-spawn.sh` sets (proven separately by `tests/fm-task-recap-extension.test.sh`'s captured-launch-command assertions) against a synthetic `state/<id>.status` + `data/backlog.md` fixture, attached from a wide (200-column) client so Pi's own onboarding banner had room to render, produced:
+  ```
+  Fix the checkout timeout bug
+  In progress: reproduced the timeout under load
+  ◆ BH1VE · gpt-5.6-sol · medium
+  ▸ temp
+  ⬡ ⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡⬡ 0% 0/1050.0k
+  ↑0 ↓0 │ Codex —
+  ```
+  the task title and current phase rendering cleanly above the captain's own statusline, both visible, neither disturbed. Unrelated finding, out of this feature's scope: the same launch crashed once against a narrower (53-column) pane - Pi's own onboarding ASCII-art banner (unrelated to any Firstmate extension) rendered a line wider than the terminal and threw inside `pi-tui`'s `doRender`. Worth a line here because a future narrow-pane investigation should know this reproduces with zero Firstmate wiring loaded at all, not assume it is this feature's fault.
+
+Executable coverage: `tests/fm-pi-recap.test.sh` (the pure render step - title, phase translation, open-decision dedup, PR inclusion, truncation, path/secret redaction, absent-input fallbacks) and `tests/fm-task-recap-extension.test.sh` (the real `bin/fm-spawn.sh` launch-command wiring for ship/scout vs. secondmate vs. non-Pi harnesses, and the tracked extension's `setWidget` dedup, `ctx.hasUI` gate, absent-env-var safety, and cross-home isolation, driven through its public `pi.on()`/`ctx.ui.setWidget()` interface exactly like `tests/fm-busy-adapter-wiring.test.sh` drives the sibling busy-state extension). `tests/fm-pi-primary-types.test.sh` typechecks `fm-task-recap.ts` under the same strict no-emit contract as the other tracked Pi extensions.
+Refresh this record after a Pi or Herdr upgrade by repeating the lab-session widget-coexistence and unfocused-pane checks above; a version that stops rendering `ctx.ui.setWidget` below the editor, or that starts colliding same-session widget keys, invalidates this evidence.
+The [strict production-consumer typecheck](../../tests/fm-pi-primary-types.test.sh) owns its dependency contract; historical typecheck commands and outputs here do not describe its current SDK selection.
+The [live-guard contract](../pi-supervision-branch.md#live-guards) owns the current fallback observations and fixture limits; rerun it against the matching importable Pi package to refresh SDK fallback evidence.
 
 ## Native Codex through Pi
 

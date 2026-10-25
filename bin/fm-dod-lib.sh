@@ -448,6 +448,19 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
+# The crewmate self-grading step (evals/README.md owns the eval set). The path
+# is FM_ROOT's (else this checkout's) evals/run_eval.sh, single-quoted for copy-paste.
+fm_dod_eval_step() {
+  local run_eval
+  run_eval="${FM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/evals/run_eval.sh"
+  run_eval="'$(printf '%s' "$run_eval" | sed "s/'/'\\\\''/g")'"
+  cat <<EOF
+Before reporting done, run the relevant eval(s) against your deliverable, e.g. \`$run_eval completeness <path>\`.
+\`completeness\` applies to every task before Done; add \`tov\` for anything written in Brandon's voice, \`principles\` for a plan/research/recommendation deliverable, \`visual-asset\` for generated imagery, and \`publish-safety\` (last) for anything customer-facing or public.
+A FAIL means loop and fix - never report done anyway.
+EOF
+}
+
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>]
   local mode=$1 id=$2 forge=${4:-none} base=${5:-} consent=${6:-}
   local branch=${3:-fm/$id} pr_base='' nm_base='' base_q contract_forge='' contract_consent='' forge_cli=gh-axi draft_check adapter
@@ -481,6 +494,7 @@ Ship branch: $branch
 This task ships **direct-PR** to a Gerrit review server: you publish the change yourself, without the no-mistakes pipeline.
 Gerrit has no pull requests, so there is nothing to open; publishing creates the change.
 The task is complete only when committed on your branch.
+$(fm_dod_eval_step)
 When it is implemented and committed, publish it.
 EOF
       fm_gerrit_publish_block
@@ -497,6 +511,7 @@ This project's review server is Gerrit: it has no pull requests and no forge CI 
 Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, and \`lint\` are the whole point of the run.
 Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
 The task is complete only when committed on your branch.
+$(fm_dod_eval_step)
 When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate.
 That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
@@ -529,6 +544,7 @@ Delivery contract: mode=direct-PR forge=external$contract_consent
 Ship branch: $branch
 This task ships **direct-PR** through an external review tool: the tool uploads a snapshot of your local commits itself, so you never push a branch to publish, and there is no pull request to open.
 The task is complete only when committed on your branch.
+$(fm_dod_eval_step)
 EOF
       if [ -n "$FM_REVIEW_BACKUP_REMOTE" ]; then
         printf '%s\n' "Before uploading, push a durable copy to the backup remote as your first rule names; your done is accepted only when that copy holds your HEAD."
@@ -557,6 +573,7 @@ Delivery contract: mode=direct-PR$contract_forge$contract_consent
 Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
+$(fm_dod_eval_step)
 When it is implemented and committed, push your branch and open a PR with \`$forge_cli\` that is ready for review, not a draft$pr_base.
 Before you report done, read the PR back from the forge and confirm it is not a draft $draft_check
 A draft cannot be merged, so a done report on one leaves the merge unasked.
@@ -573,6 +590,7 @@ Delivery contract: mode=local-only
 Ship branch: $branch
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`$branch\`. Do NOT push, do NOT open a PR, do NOT merge.
+$(fm_dod_eval_step)
 A \`done:\` is accepted when the named head is on this project's shared local branch, not only on a detached copy; the check tests that head, not merely that a branch moved.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch\` to the status file and stop.
@@ -585,6 +603,7 @@ EOF
 Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
 The task is complete only when committed on your branch.
+$(fm_dod_eval_step)
 When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.

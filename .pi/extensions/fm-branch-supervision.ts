@@ -623,7 +623,6 @@ export default function (pi: ExtensionAPI) {
   // never named is never stored or delivered. Null outside a wake prompt and
   // during a heartbeat review, which is not scoped by task.
   let wakeTaskScope: { rows: string[]; tasks: Set<string> } | null = null;
-  let mainStreaming = false;
   let shuttingDown = false;
   // Bumps at every session replacement so a stale chain continuation from the
   // prior generation cannot act into the new one.
@@ -728,8 +727,7 @@ export default function (pi: ExtensionAPI) {
 
   function deliverBranchHealthNote(text: string): void {
     const message = { customType: "fm-branch-merge", content: `${MERGE_NOTE_BOAT} ${text}`, display: true };
-    if (mainStreaming) pi.sendMessage(message, { deliverAs: "nextTurn" });
-    else pi.sendMessage(message, {});
+    pi.sendMessage(message, { triggerTurn: false });
   }
 
   function recordSettledProviderError(detail: string): void {
@@ -1020,14 +1018,22 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  // Routine delivery never sets triggerTurn true, so Pi's own AgentSession -
+  // not an extension-side mirror of it - decides queue-versus-append. This
+  // extension used to mirror main's busy state from agent_start/agent_end, but
+  // agent_end fires on every intermediate step of a multi-step turn, so the
+  // mirror could read idle while Pi's real AgentSession.isStreaming was still
+  // true; sendCustomMessage's dispatch on `{}` in that gap is a live steer into
+  // the captain's active turn (tests/fm-pi-branch-live-e2e.test.sh proves it
+  // against the installed SDK). With `triggerTurn: false` Pi defers the note
+  // while streaming and appends it with no new turn while idle.
   function deliverRoutineOutcome(row: OutcomeRow): void {
     const message = {
       customType: "fm-branch-merge",
       content: `${MERGE_NOTE_BOAT} ${row.task}: ${row.summary}`,
       display: !row.silent,
     };
-    if (mainStreaming) pi.sendMessage(message, { deliverAs: "nextTurn" });
-    else pi.sendMessage(message, {});
+    pi.sendMessage(message, { triggerTurn: false });
   }
 
   // Captain rows that are read (their visible entry exists) but not yet
@@ -1720,7 +1726,6 @@ ${context.command}
   });
 
   pi.on?.("agent_start", () => {
-    mainStreaming = true;
     // Pi delivers a queued nextTurn copy with the prompt that starts this run,
     // so a fresh copy may be queued again once this run settles unacknowledged.
     if (processing) processing.nextTurnQueued = false;
@@ -1776,9 +1781,6 @@ ${context.command}
     if (processingOpenedThisRun) ctx?.abort?.();
     return { messages: kept };
   });
-  pi.on?.("agent_end", () => {
-    mainStreaming = false;
-  });
   // The run boundary is where an ignored processing request is detected: every
   // presentation sent before this point has been consumed by the run that just
   // settled (a follow-up joins the running turn, a triggered send opens its
@@ -1786,7 +1788,6 @@ ${context.command}
   // other than its acknowledgement - an unrelated reply, an empty reply, or a
   // reply that only paraphrased it - and is presented again.
   pi.on?.("agent_settled", async () => {
-    mainStreaming = false;
     queuedProcessingContent = null;
     processingOpenedThisRun = false;
     activeProcessing = null;

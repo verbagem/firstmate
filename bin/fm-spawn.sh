@@ -1553,6 +1553,9 @@ SPAWN_META_PUBLISH_STARTED=0
 SPAWN_FRESH_COMMIT_PENDING=0
 SPAWN_TASK_SET_LOCK=
 SPAWN_TASK_SET_LOCK_HELD=0
+SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
+SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
@@ -1655,6 +1658,14 @@ spawn_abort_cleanup() {
   if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ]; then
     HERDR_PRESENTATION_ORDER_LOCK_HELD=0
     fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
+  fi
+  if [ "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP" = 1 ]; then
+    SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+    if [ -n "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND" ] \
+       && [ -n "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET" ]; then
+      fm_backend_kill "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND" \
+        "$SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET" || true
+    fi
   fi
   if [ "$ORCA_ABORT_CLEANUP" = 1 ]; then
     ORCA_ABORT_CLEANUP=0
@@ -2718,19 +2729,19 @@ launch_template() {
   # launch command - it is a Stop-event hook installed below (global hook +
   # per-task pointer), so the template is identical for ship/scout/secondmate.
   grok) printf '%s' 'grok --always-approve __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
-  # Cursor Agent CLI. --trust suppresses the workspace-trust prompt, which
-  # --yolo does NOT cover and which would otherwise block every spawn, since
-  # each task gets a fresh worktree path cursor has never seen. --yolo is the
-  # --force alias whose TUI label is "Run Everything". --workspace pins the
-  # exact worktree. -w/--worktree is deliberately never passed: it allocates a
-  # SECOND worktree under ~/.cursor/worktrees and would break firstmate's
-  # isolation contract. The binary is resolved rather than named because
-  # `cursor` is not the CLI (the installed names are cursor-agent and the
-  # legacy alias agent), and the foreign primary markers are cleared so an
+  # Cursor Agent CLI. Workspace trust is resolved from the installed CLI's
+  # current help: some builds accept interactive --trust, while headless-only
+  # trust builds require a preflight and reject --trust in a TTY. --yolo is
+  # the --force alias whose TUI label is "Run Everything". --workspace pins
+  # the exact worktree. -w/--worktree is deliberately never passed: it
+  # allocates a SECOND worktree under ~/.cursor/worktrees and would break
+  # firstmate's isolation contract. The binary is resolved rather than named
+  # because `cursor` is not the CLI (the installed names are cursor-agent and
+  # the legacy alias agent), and the foreign primary markers are cleared so an
   # inherited CLAUDECODE cannot outrank cursor's own marker in a process that
   # only reads the environment. Cursor exposes no effort flag, so the shared
   # effort axis is deliberately omitted and stays in task metadata only.
-  cursor) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u GEMINI_CLI -u CURSOR_INVOKED_AS __CURSORBIN__ --trust --yolo __MODELFLAG__--workspace __WORKTREE__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+  cursor) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS -u GEMINI_CLI -u CURSOR_INVOKED_AS __CURSORBIN__ __CURSORTRUST__--yolo __MODELFLAG__--workspace __WORKTREE__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
   # gemini (Google Gemini CLI): a positional query starts the supervised
   # interactive session and auto-submits it, so the brief rides the launch
   # command exactly as it does for claude and grok (verified: a multi-line
@@ -3031,6 +3042,7 @@ cursor)
   # missing install a loud spawn refusal instead of a pane that dies with a
   # command-not-found the supervisor would read as a wedged worker.
   CURSOR_BIN=$(fm_cursor_resolve_binary) || exit 1
+  CURSOR_TRUST_CONTRACT=$(fm_cursor_trust_contract "$CURSOR_BIN") || exit 1
   if [ -n "$MODEL" ] && [ "$MODEL" != default ]; then
     if CURSOR_MODELS=$(fm_cursor_list_models "$CURSOR_BIN"); then
       if ! printf '%s\n' "$CURSOR_MODELS" | fm_cursor_catalog_has_model "$MODEL"; then
@@ -5047,6 +5059,30 @@ spawn_assert_agent_worktree() {
   exit 1
 }
 
+spawn_cursor_preflight_endpoint_cleanup_arm() {
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
+  [ "$RELAUNCH" -ne 1 ] || return 0
+  case "$BACKEND" in
+    orca) return 0 ;;
+    herdr)
+      [ "${HERDR_PROJECTED:-0}" -ne 1 ] || return 0
+      ;;
+  esac
+  # A fresh spawn may not have created its endpoint yet; nothing to retract.
+  [ -n "${T:-}" ] || return 0
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=$BACKEND
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=$T
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=1
+}
+
+spawn_cursor_preflight_endpoint_cleanup_disarm() {
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_CLEANUP=0
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_BACKEND=
+  SPAWN_CURSOR_PREFLIGHT_ENDPOINT_TARGET=
+}
+
 kimi_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
@@ -5706,6 +5742,25 @@ exclude_path() {
   mkdir -p "$(dirname "$EXCL")"
   grep -qxF "$rel" "$EXCL" 2>/dev/null || echo "$rel" >>"$EXCL"
 }
+case "$HARNESS" in
+  cursor)
+    case "${CURSOR_TRUST_CONTRACT:-}" in
+      interactive)
+        LAUNCH=${LAUNCH//__CURSORTRUST__/--trust }
+        ;;
+      headless)
+        spawn_cursor_preflight_endpoint_cleanup_arm
+        fm_cursor_trust_workspace_headless "$CURSOR_BIN" "$WT" || exit 1
+        spawn_cursor_preflight_endpoint_cleanup_disarm
+        LAUNCH=${LAUNCH//__CURSORTRUST__/}
+        ;;
+      *)
+        echo "error: unsupported Cursor workspace-trust contract '${CURSOR_TRUST_CONTRACT:-unknown}'; refusing to launch without a verified trust path" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 # spawn_t3code_env_install <harness> NAME=VALUE... - the t3code channel for the
 # exports a pane shell would receive before launch. T3 sets environment per
 # provider instance, never per thread, but each harness reads its own

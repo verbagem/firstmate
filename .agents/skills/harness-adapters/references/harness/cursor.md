@@ -1,6 +1,6 @@
 # Cursor Agent
 
-Verified for crew and scout work on tmux on 2026-08-11 and Herdr on 2026-08-12, and for secondmate and primary work on 2026-08-13, with Cursor Agent CLI 2026.08.11-e8db854.
+Verified for crew and scout work on tmux on 2026-09-25 and Herdr on 2026-08-12, and for secondmate and primary work on 2026-08-13; the trust contract was help-probed with Cursor Agent CLI 2026.09.23-86fc751.
 Cross-harness provider and credential identity is owned by `references/common/model-and-effort.md`.
 
 ## Operating facts
@@ -8,7 +8,7 @@ Cross-harness provider and credential identity is owned by `references/common/mo
 | Fact | Value |
 |---|---|
 | Binary | `fm_cursor_resolve_binary` in `../../../bin/fm-cursor-lib.sh` resolves stable launcher `cursor-agent` or legacy `agent`, never `cursor`, and accepts each candidate only after that owner's bounded launch probe (via `fm_run_timed`, so coreutils `timeout` is not required) so a broken preferred name falls through; both names normally symlink into `~/.local/share/cursor-agent/versions/<version>/cursor-agent`, whose target auto-update replaces. |
-| Launch | Positional instructions with `--trust`, `--yolo`, optional `--model <model>`, and `--workspace <absolute-task-worktree>`, after clearing foreign primary markers. |
+| Launch | Positional instructions with a help-probed workspace trust path, `--yolo`, optional `--model <model>`, and `--workspace <absolute-task-worktree>`, after clearing foreign primary markers. Builds whose help allows interactive trust keep `--trust` on the TTY launch; builds whose help says `--trust` is print/headless-only first run `cursor-agent --trust --workspace <worktree> create-chat` and then omit `--trust` from the interactive launch. |
 | Attribution | Cursor can append a Co-authored-by trailer after the typed message. Unless the home sets `config/keep-ai-trailers` (`../../../../../docs/configuration.md` "Commit attribution"), every fleet launch installs the pane-scoped commit-msg strip in `../../../bin/fm-git-strip-ai-trailers.sh`, which removes known AI trailers and leaves human co-authors and the author identity untouched. |
 | Models | Use current-account `cursor-agent --list-models` or legacy `agent --list-models`; the drifting observed list had only `cursor-grok-4.5-high` and `cursor-grok-4.5-high-fast` for Grok plus several `xhigh` ids, so choose a returned reasoning id and never assume low or medium Grok. |
 | Busy state | `../../../bin/fm-busy-lib.sh` folds the per-conversation transcript as `cursor-transcript`: `role:user` opens and typed `turn_ended` closes success or abort, covering manual interrupt; nothing is armed or seeded, and this backend-agnostic source was identical on tmux and Herdr. |
@@ -17,7 +17,7 @@ Cross-harness provider and credential identity is owned by `references/common/mo
 | Skill invocation | `/<skill>`, for example `/no-mistakes`; Cursor discovers Firstmate's user skills. |
 | Resume | No verified native pane resume; use deterministic relaunch. |
 | Autonomy | `--yolo`, documented alias for `--force`; footer `Run Everything`. |
-| Trust | `--trust` suppresses the dialog; `--yolo` does not, and every task has a fresh path. |
+| Trust | Repository trust suppresses the dialog; `--yolo` does not, and every task has a fresh path, so `../../../bin/fm-spawn.sh` refuses when it cannot prove either the interactive `--trust` contract or the headless preflight contract. |
 | Marker | `CURSOR_INVOKED_AS=cursor-agent` on agent and children, plus `CURSOR_AGENT=1` on child or tool processes; other `CURSOR_*` variables are not identity markers. |
 | Effort | No verified flag; `references/common/model-and-effort.md` owns unsupported-value handling. |
 | Composer | Bare borderless row with `→` (U+2192); de-emphasized placeholders `Plan, search, build anything` when fresh and `Add a follow-up` later. |
@@ -68,7 +68,7 @@ Example: `../../../bin/fm-spawn.sh <task-id> <project> --scout --harness cursor 
 
 ## Primary integration
 
-Primary supervision is the stop-hook park in `../../../docs/supervision-protocols/cursor.md` through tracked `.cursor/hooks.json`; primary and secondmate launches require `--trust` or hooks do not load.
+Primary supervision is the stop-hook park in `../../../docs/supervision-protocols/cursor.md` through tracked `.cursor/hooks.json`; primary and secondmate launches must start from a trusted project workspace or hooks do not load.
 In a home with `config/supervision-host` and no `config/supervision-host-off` the park runs the supervision host instead of `../../../bin/fm-watch-arm.sh`, with Claude's print mode as its headless engine; [`supervision-host.md`](../../../../../docs/supervision-host.md) owns the host.
 Cursor exposes 20 project events plus a Claude-Code compatibility map that loads `.claude/settings.json`.
 Tracked hooks register `stop`, `sessionStart`, and two `preToolUse` seatbelts through `$CURSOR_PROJECT_DIR`; Claude entries stand down on Cursor payloads under `../../../docs/turnend-guard.md`.

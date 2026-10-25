@@ -343,7 +343,7 @@ Cursor is a run-tier harness for session open.
 `.cursor/hooks.json` registers `sessionStart`, anchored through `$CURSOR_PROJECT_DIR` with a 180s timeout, invoking `bin/fm-sessionstart-cursor.sh`.
 Cursor's payload has no `source` field, so the registration supplies `--source` itself.
 The adapter returns the digest as `additional_context`.
-Project hooks load only when the workspace is launched with `--trust`.
+Project hooks load only when the workspace satisfies Cursor's help-probed trust contract.
 
 Cursor's `sessionStart` fires at every session open with no source distinction, including a resumed session.
 So a resume re-runs the full digest.

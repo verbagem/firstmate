@@ -47,6 +47,7 @@ A retirement failure makes the command fail without reversing the already-durabl
 Never use `answer` for an evidence-only moot call: `answer` records what the captain said, while `reconcile close` records verified evidence.
 A captain-held task closed outside this owner leaves no durable answer, so the completion gate keeps failing until `answer` records the decision the captain actually gave.
 Resolved findings, recommendations that need no captain choice, and prose that merely sounds decision-like do not create held tasks.
+An agent-initiated recommendation that becomes or accompanies a captain-held task should cite a proposal card validated by `bin/fm-proposal-card.sh`; that script owns its decision-time vocabulary and optional rejection path.
 Bearings reads the resulting structured state and must never compensate by scraping historical reports, visual-review artifacts, terminal output, chat, or other prose.
 
 A captain call can be written down twice - as the keyed status decision the fold reads, and as the backlog task held for the captain - and those two records can disagree without either surface saying so.

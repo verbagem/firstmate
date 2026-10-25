@@ -145,6 +145,8 @@
 # regular file, or text carrying its own "Delivery contract: mode=" line (which
 # a later scout promotion could not outrank), stops the scaffold before
 # anything is written. Secondmate charters never take it.
+# Ship tasks also include a compact code-writing inner-loop checklist between
+# project memory and Definition of done; scout and secondmate scaffolds omit it.
 # Refuses to overwrite an existing brief.
 set -eu
 
@@ -745,6 +747,17 @@ fi
 # The block opens with the fixed "Delivery contract: mode=<mode>" line that
 # bin/fm-spawn.sh checks against its own explicit --mode and the project's
 # registered forge before launching.
+IFS= read -r -d '' SHIP_INNER_LOOP_SECTION <<'EOF' || true
+# Code-writing inner loop
+For code-writing work, run this checklist before you change code and again before Done.
+- Simplify or subtract before adding machinery.
+- Name the intended blast radius and keep the change inside it.
+- Map or walk the system when the task crosses an unfamiliar/shared boundary, changes architecture, or diagnoses a bug; for ordinary local edits in known files, you may skip that walk only if you can say why.
+- Prove the real artifact with the strongest executable evidence available, not a proxy claim.
+- Preserve Firstmate as dispatcher, isolation owner, supervisor, and delivery coordinator; preserve the selected delivery path, including no-mistakes when selected.
+EOF
+SHIP_INNER_LOOP_SECTION=${SHIP_INNER_LOOP_SECTION%$'\n'}
+
 case "$MODE" in
   direct-PR)
     SETUP2=""
@@ -810,6 +823,8 @@ $WAIT_BLOCK$INBOX_SECTION
 # Project memory
 A project's \`AGENTS.md\` or \`CLAUDE.md\` is loaded into every agent session in that project, so edit it only to correct information that is factually wrong - including information your own change made wrong - and never to add knowledge because it is missing.
 A correction edits only the wrong text: do not run \`$FM_ROOT/bin/fm-ensure-agents-md.sh\`, create either file, or add sections, headings, or pointers alongside it.
+
+$SHIP_INNER_LOOP_SECTION
 
 $DOD
 EOF

@@ -26,6 +26,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-cursor-lib.sh
+. "$ROOT/bin/fm-cursor-lib.sh"
 
 fm_live_gate opt-in FM_CURSOR_PRIMARY_LIVE_E2E tmux jq
 
@@ -52,6 +54,12 @@ cleanup_all() {
   [ -n "${LAB:-}" ] && rm -rf "$LAB"
 }
 trap cleanup_all EXIT
+
+shell_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
 
 # A plain (non-worktree) checkout of the CURRENT working tree, so the guard
 # tests the code under review rather than whatever is committed.
@@ -83,8 +91,24 @@ window=fm-probe
 EOF
 printf 'blocked: fixture needs a decision\n' > "$HOME_DIR/state/probe.status"
 
+CURSOR_TRUST_ARGS=
+CURSOR_TRUST_CONTRACT=$(fm_cursor_trust_contract "$CURSOR_BIN") \
+  || harness_fail "could not determine Cursor workspace-trust contract"
+case "$CURSOR_TRUST_CONTRACT" in
+  interactive)
+    CURSOR_TRUST_ARGS=' --trust'
+    ;;
+  headless)
+    fm_cursor_trust_workspace_headless "$CURSOR_BIN" "$HOME_DIR" \
+      || harness_fail "could not pretrust the Cursor primary workspace"
+    ;;
+  *)
+    harness_fail "unsupported Cursor workspace-trust contract '$CURSOR_TRUST_CONTRACT'"
+    ;;
+esac
+
 "$REAL_TMUX" -L "$SOCKET" new-session -d -s primary -x 220 -y 60 -c "$HOME_DIR" \
-  "cd '$HOME_DIR' && FM_HOME='$HOME_DIR' FM_HEARTBEAT=30 FM_HEARTBEAT_MAX=30 exec '$CURSOR_BIN' --trust --yolo --workspace '$HOME_DIR'" \
+  "cd $(shell_quote "$HOME_DIR") && FM_HOME=$(shell_quote "$HOME_DIR") FM_HEARTBEAT=30 FM_HEARTBEAT_MAX=30 exec $(shell_quote "$CURSOR_BIN")$CURSOR_TRUST_ARGS --yolo --workspace $(shell_quote "$HOME_DIR")" \
   || harness_fail "could not start the private tmux server"
 
 pane_text() {
