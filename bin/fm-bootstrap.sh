@@ -13,6 +13,7 @@
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
+#                 "TOOL_AUTOUPDATE: <diagnostic>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
 #                 "BACKLOG_RECONCILE: <id>: <what this home could not reconcile>",
@@ -111,10 +112,26 @@
 #          The `code-root <file>` variant is a detect-only local check that runs
 #          even in a read-only session; detect_code_root_backlog_fork owns what
 #          it reports.
+#          TOOL AUTO-UPDATE (opt-in, default off). A config/tool-autoupdate
+#          presence flag (any content, including empty) turns on an unattended
+#          `npm install -g <pkg>@<version>`, pinned to the exact registry version
+#          checked, for whichever of gh-axi, chrome-devtools-axi, lavish-axi,
+#          tasks-axi, quota-axi, acpx, backpass, and gnhf are already on PATH
+#          and sort strictly below the registry's version (never a downgrade,
+#          never a first install). treehouse and no-mistakes are never
+#          auto-updated. It runs only in the network phase, only when this
+#          session still holds the fleet lock, at most once per 24h
+#          (state/.tool-autoupdate-checked), bounded by FM_TOOL_AUTOUPDATE_TIMEOUT
+#          (default 60s); FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS (default 0) holds a
+#          younger release. Success prints one "BOOTSTRAP_INFO: tool-autoupdate
+#          updated <pkg>@<version> ..." line; any failure prints
+#          "TOOL_AUTOUPDATE: <diagnostic>". Absent the flag nothing changes:
+#          the detect-then-consent contract above is the only behavior
+#          (docs/configuration.md "Tool auto-update").
 #          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the six MUTATING sweeps
 #          (backlog_record_reconcile, secondmate_sync,
 #          secondmate_liveness_sweep, secondmate_handoff_resume, x_mode_setup,
-#          fleet_sync) while still
+#          fleet_sync) and the opt-in tool_autoupdate_sweep while still
 #          printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
@@ -132,7 +149,8 @@
 #                 must never silently skip a safety sweep.
 #            skip - every LOCAL step, and none of the network ones. Skips
 #                 `gh auth status`, secondmate_liveness_sweep, secondmate_sync,
-#                 secondmate_handoff_resume, and fleet_sync.
+#                 secondmate_handoff_resume, fleet_sync, and the opt-in
+#                 tool_autoupdate_sweep.
 #            only - ONLY those network steps and nothing else. No tool detection,
 #                 no version floors, no tangle check, no backlog
 #                 reconciliation, no x_mode_setup: those already ran on the
@@ -386,6 +404,179 @@ fleet_sync() {
   [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
 
   fleet_sync_relay_filtered_output "$tmp"
+  rm -f "$tmp"
+}
+
+# Opt-in npm auto-update sweep (default off). treehouse and no-mistakes are
+# deliberately absent: both gate active use on their own version and carry their
+# own update flow, so an unattended `npm install -g` on either is never safe.
+TOOL_AUTOUPDATE_PACKAGES="gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi acpx backpass gnhf"
+
+tool_autoupdate_timeout() {
+  local timeout=${FM_TOOL_AUTOUPDATE_TIMEOUT:-60}
+  case "$timeout" in ''|*[!0-9]*) timeout=60 ;; esac
+  echo "$timeout"
+}
+
+tool_autoupdate_min_age_seconds() {
+  local days=${FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS:-0}
+  case "$days" in ''|*[!0-9]*) days=0 ;; esac
+  echo $((days * 86400))
+}
+
+tool_autoupdate_enabled() {
+  [ -f "$CONFIG/tool-autoupdate" ] && [ ! -L "$CONFIG/tool-autoupdate" ]
+}
+
+# The marker is stamped before the sweep runs, so a slow, timed-out, or partly
+# failed run still throttles the next attempt instead of retrying immediately.
+tool_autoupdate_due() {
+  local marker="$STATE/.tool-autoupdate-checked" now last
+  now=$(date +%s)
+  if [ -f "$marker" ] && [ ! -L "$marker" ]; then
+    last=$(cat "$marker" 2>/dev/null) || last=0
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+    [ $((now - last)) -ge 86400 ] || return 1
+  fi
+  return 0
+}
+
+tool_autoupdate_stamp() {
+  local marker="$STATE/.tool-autoupdate-checked" tmp
+  [ -d "$STATE" ] || return 0
+  tmp=$(mktemp "$STATE/.tool-autoupdate-checked.XXXXXX" 2>/dev/null) || return 0
+  if ! date +%s > "$tmp" 2>/dev/null || ! mv -f "$tmp" "$marker" 2>/dev/null; then
+    rm -f "$tmp"
+  fi
+}
+
+npm_global_installed_version() {  # <pkg>
+  npm list -g "$1" --depth=0 2>/dev/null \
+    | sed -nE "s/.*[[:space:]]$1@([0-9][^[:space:]]*)\$/\1/p" | head -n 1
+}
+
+npm_registry_latest_version() {  # <pkg>
+  npm view "$1" version 2>/dev/null | head -n 1
+}
+
+# Parses `npm view <pkg> time` for one version's ISO 8601 publish timestamp.
+npm_registry_version_publish_iso() {  # <pkg> <version>
+  local escaped
+  escaped=$(printf '%s' "$2" | sed 's/[.[\*^$]/\\&/g')
+  npm view "$1" time 2>/dev/null \
+    | sed -nE "s/.*'${escaped}': '([^']+)'.*/\1/p" | head -n 1
+}
+
+iso8601_to_epoch() {  # <YYYY-MM-DDTHH:MM:SS(.fff)?Z>
+  local clean
+  clean=$(printf '%s' "$1" | sed -E 's/\.[0-9]+Z$/Z/')
+  if [ "$(uname)" = Darwin ]; then
+    date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$clean" +%s 2>/dev/null
+  else
+    date -u -d "$clean" +%s 2>/dev/null
+  fi
+}
+
+# Numeric major.minor.patch comparison of two version strings (no `sort -V`:
+# unavailable on macOS). Prints -1, 0, or 1; fails when either is unparseable.
+version_cmp() {  # <a> <b>
+  local a b a1 a2 a3 b1 b2 b3 x y
+  a=$(printf '%s\n' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1) || return 1
+  b=$(printf '%s\n' "$2" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n 1) || return 1
+  [ -n "$a" ] && [ -n "$b" ] || return 1
+  IFS=. read -r a1 a2 a3 <<< "$a"
+  IFS=. read -r b1 b2 b3 <<< "$b"
+  for x in "$a1:$b1" "$a2:$b2" "$a3:$b3"; do
+    y=${x#*:}; x=${x%%:*}
+    if [ "$x" -lt "$y" ]; then echo -1; return 0; fi
+    if [ "$x" -gt "$y" ]; then echo 1; return 0; fi
+  done
+  echo 0
+}
+
+# Runs inside tool_autoupdate_sweep's bounded background job. Prints DIAG:<text>
+# and UPDATED:<pkg>@<version> lines for the caller to relay.
+tool_autoupdate_body() {
+  local pkg installed latest cmp publish_iso publish_epoch now min_age
+  min_age=$(tool_autoupdate_min_age_seconds)
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "DIAG:npm not found on PATH, cannot check for updates"
+    return 0
+  fi
+  for pkg in $TOOL_AUTOUPDATE_PACKAGES; do
+    command -v "$pkg" >/dev/null 2>&1 || continue
+    installed=$(npm_global_installed_version "$pkg")
+    [ -n "$installed" ] || continue
+    latest=$(npm_registry_latest_version "$pkg")
+    if [ -z "$latest" ]; then
+      echo "DIAG:registry lookup failed for $pkg (network unavailable?)"
+      continue
+    fi
+    if ! cmp=$(version_cmp "$installed" "$latest"); then
+      echo "DIAG:cannot compare $pkg versions (installed $installed, latest $latest), holding"
+      continue
+    fi
+    [ "$cmp" -lt 0 ] || continue
+    # An unverifiable publish date is held, never installed on unchecked evidence.
+    publish_iso=$(npm_registry_version_publish_iso "$pkg" "$latest")
+    publish_epoch=""
+    [ -z "$publish_iso" ] || publish_epoch=$(iso8601_to_epoch "$publish_iso")
+    if [ -z "$publish_epoch" ]; then
+      echo "DIAG:publish date for $pkg@$latest could not be verified, holding"
+      continue
+    fi
+    now=$(date +%s)
+    [ $((now - publish_epoch)) -ge "$min_age" ] || continue
+    if npm install -g "$pkg@$latest" >/dev/null 2>&1; then
+      echo "UPDATED:$pkg@$latest"
+    else
+      echo "DIAG:npm install -g $pkg@$latest failed (was $installed)"
+    fi
+  done
+}
+
+tool_autoupdate_relay_output() {
+  local tmp=$1 line updated=""
+  while IFS= read -r line; do
+    case "$line" in
+      DIAG:*) echo "TOOL_AUTOUPDATE: ${line#DIAG:}" ;;
+      UPDATED:*) updated="$updated ${line#UPDATED:}" ;;
+    esac
+  done < "$tmp"
+  [ -z "$updated" ] || echo "BOOTSTRAP_INFO: tool-autoupdate updated$updated"
+}
+
+# Bounded exactly like fleet_sync: one background job under a wall-clock
+# timeout; whatever it already wrote is relayed whether it finishes or is killed.
+tool_autoupdate_sweep() {
+  tool_autoupdate_enabled || return 0
+  tool_autoupdate_due || return 0
+  local tmp timeout monitor_was_on pid start elapsed
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tool-autoupdate.XXXXXX" 2>/dev/null) || return 0
+  timeout=$(tool_autoupdate_timeout)
+  tool_autoupdate_stamp
+  monitor_was_on=0
+  case $- in *m*) monitor_was_on=1 ;; esac
+  set -m 2>/dev/null || true
+  tool_autoupdate_body >"$tmp" 2>/dev/null &
+  pid=$!
+  start=$SECONDS
+  while jobs -r -p | grep -qx "$pid"; do
+    elapsed=$((SECONDS - start))
+    if [ "$elapsed" -ge "$timeout" ]; then
+      kill -TERM "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+      tool_autoupdate_relay_output "$tmp"
+      echo "TOOL_AUTOUPDATE: check timed out (timeout=${timeout}s elapsed=${elapsed}s)"
+      rm -f "$tmp"
+      return 0
+    fi
+    sleep 1
+  done
+  wait "$pid" 2>/dev/null || true
+  [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
+  tool_autoupdate_relay_output "$tmp"
   rm -f "$tmp"
 }
 
@@ -869,6 +1060,7 @@ install_cmd() {
     cmux) echo "brew install --cask cmux  # or see https://cmux.com" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
+    backpass) echo "npm install -g backpass" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     tasks-axi|quota-axi) echo "npm install -g $1" ;;
     *) return 1 ;;
@@ -912,7 +1104,7 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi"
+COMMON_TOOLS="node git gh no-mistakes backpass gh-axi chrome-devtools-axi tasks-axi quota-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
@@ -1531,6 +1723,9 @@ detect_local_tools() {
   if command -v no-mistakes >/dev/null 2>&1 && ! tool_version_at_least no-mistakes "$NO_MISTAKES_MIN"; then
     echo "OUTDATED: no-mistakes (installed: $(tool_version no-mistakes); requires $NO_MISTAKES_MIN; upgrade: $(upgrade_cmd no-mistakes))"
   fi
+  if command -v backpass >/dev/null 2>&1 && ! tool_version_at_least backpass "$BACKPASS_MIN"; then
+    echo "OUTDATED: backpass (installed: $(tool_version backpass); requires $BACKPASS_MIN; upgrade: $(upgrade_cmd backpass))"
+  fi
   if command -v gh-axi >/dev/null 2>&1 && ! tool_version_at_least gh-axi "$GH_AXI_MIN"; then
     echo "OUTDATED: gh-axi (installed: $(tool_version gh-axi); requires $GH_AXI_MIN; upgrade: $(upgrade_cmd gh-axi))"
   fi
@@ -1726,6 +1921,11 @@ if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
     wait "$fleet_sync_pid" || true
     cat "$fleet_sync_out"
     rm -f "$fleet_sync_out"
+  fi
+  if network_phase && tool_autoupdate_enabled && network_sweep_authorized 'tool auto-update'; then
+    __fm_timing_stamp=$(fm_timing_now_ms)
+    tool_autoupdate_sweep
+    fm_timing_record phase tool-autoupdate "$__fm_timing_stamp"
   fi
 fi
 local_phase && secondmate_handoff_detect
