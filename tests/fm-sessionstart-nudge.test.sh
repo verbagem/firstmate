@@ -599,6 +599,14 @@ const pi = {
   on(event, handler) { handlers.set(event, handler); },
   sendMessage(message) { sent.push(message); },
 };
+import { readFileSync as readDigestSlot } from "node:fs";
+// The digest travels as a pointer to a private slot (docs/sessionstart-nudge.md
+// "Digest delivery is a pointer, not inline content"); read through it.
+const payloadOf = (message) => {
+  const content = message?.content ?? "";
+  const slot = /Session-start digest written to (\S+) \(/.exec(content);
+  return slot ? content + "\n" + readDigestSlot(slot[1], "utf8") : content;
+};
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?generation=${Date.now()}`);
 extension.default(pi);
 process.argv.splice(1, process.argv.length, "pi");
@@ -657,7 +665,7 @@ await delay(100);
 assert(providerCalls.length === 0, "provider call escaped before the startup prerequisite settled");
 release(1);
 const immediateResult = await immediateCall;
-assert(immediateResult?.message?.content.includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
+assert(payloadOf(immediateResult?.message).includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
 assert(launchLines().length === 1, "immediate generation executed more than once");
 assert((await handlers.get("before_agent_start")({ prompt: "second prompt" }, immediate)) === undefined,
   "one generation delivered startup context more than once");
@@ -670,8 +678,8 @@ plan(2, "success");
 const proven = begin("new", "session-proven");
 await waitFor(() => existsSync(`${state}/completed-2`), "proven generation never completed");
 const provenResult = await providerCall(proven, "proven prompt");
-assert(provenResult?.message?.content.includes("GENERATION_DIGEST_2"), "proven path lost startup context");
-assert(!provenResult.message.content.includes("Run `bin/fm-session-start.sh`"), "proven path used manual fallback");
+assert(payloadOf(provenResult?.message).includes("GENERATION_DIGEST_2"), "proven path lost startup context");
+assert(!payloadOf(provenResult?.message).includes("Run `bin/fm-session-start.sh`"), "proven path used manual fallback");
 const provenSupervisor = supervisorFor(2);
 assert(alive(provenSupervisor), "completed generation lost its stable supervisor owner");
 const originalKill = process.kill;
@@ -707,10 +715,10 @@ const staleCall = handlers.get("before_agent_start")({ prompt: "stale" }, stale)
 begin("new", "session-replaced-once");
 const newest = begin("new", "session-replaced-twice");
 const newestResult = await providerCall(newest, "newest");
-assert(newestResult?.message?.content.includes("GENERATION_DIGEST_5"), "newest replacement lost its context");
+assert(payloadOf(newestResult?.message).includes("GENERATION_DIGEST_5"), "newest replacement lost its context");
 assert((await staleCall) === undefined, "stale generation delivered after replacement");
 assert(launchLines().length === 5, "rapid replacements launched the cancelled middle generation");
-assert(!startupMessages().some((message) => message.content.includes("STALE_DIGEST_4")),
+assert(!startupMessages().some((message) => payloadOf(message).includes("STALE_DIGEST_4")),
   "stale completion reached model context");
 const events = readFileSync(`${state}/events`, "utf8");
 assert(events.indexOf("stale-close:4") < events.indexOf("launch:5"),
@@ -722,14 +730,14 @@ plan(6, "empty");
 const empty = begin("new", "session-empty");
 const emptyResult = await providerCall(empty, "empty");
 assert(existsSync(`${state}/completed-6`), "empty attempt had not settled before fallback delivery");
-assert(emptyResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions."),
+assert(payloadOf(emptyResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions."),
   "empty output lost the exact manual fallback");
 
 renameSync(runner, `${runner}.missing`);
 const spawnError = begin("new", "session-spawn-error");
 const spawnErrorResult = await providerCall(spawnError, "spawn error");
 renameSync(`${runner}.missing`, runner);
-assert(spawnErrorResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(spawnErrorResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "spawn error lost the manual fallback");
 
 plan(7, "ineligible");
@@ -740,19 +748,19 @@ assert((await providerCall(ineligible, "ineligible")) === undefined,
 plan(8, "error");
 const failed = begin("new", "session-failed");
 const failedResult = await providerCall(failed, "failed");
-assert(failedResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(failedResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "failed eligible attempt lost the manual fallback");
 
 plan(9, "error");
 const failedResume = begin("resume", "session-failed-resume");
 const failedResumeResult = await providerCall(failedResume, "failed resume");
-assert(failedResumeResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(failedResumeResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "failed eligible resume lost the manual fallback");
 
 plan(10, "error");
 const failedFork = begin("fork", "session-failed-fork");
 const failedForkResult = await providerCall(failedFork, "failed fork");
-assert(failedForkResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(failedForkResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "failed eligible fork lost the manual fallback");
 
 plan(11, "empty");
@@ -775,22 +783,22 @@ await delay(100);
 assert(!providerCalls.some((call) => call.prompt === "timeout"), "timeout provider call escaped before settlement");
 release(13);
 const timedResult = await timedCall;
-assert(timedResult?.message?.content.includes("STARTUP TRUNCATED - stage=bootstrap"), "timeout banner was lost");
-assert(!timedResult.message.content.includes("Run `bin/fm-session-start.sh`"), "bounded timeout incorrectly used manual fallback");
+assert(payloadOf(timedResult?.message).includes("STARTUP TRUNCATED - stage=bootstrap"), "timeout banner was lost");
+assert(!payloadOf(timedResult?.message).includes("Run `bin/fm-session-start.sh`"), "bounded timeout incorrectly used manual fallback");
 
 plan(14, "truncate");
 const truncated = begin("new", "session-truncated");
 const truncatedResult = await providerCall(truncated, "truncated");
-assert(truncatedResult?.message?.content.includes("TRUNCATION_PREFIX_14"), "truncated digest lost its prefix");
-assert(truncatedResult.message.content.includes("PI SESSION-START DELIVERY TRUNCATED"), "truncated digest was not loud");
-assert(!truncatedResult.message.content.includes("TRUNCATION_SUFFIX_14"), "truncated digest exceeded its bound");
+assert(payloadOf(truncatedResult?.message).includes("TRUNCATION_PREFIX_14"), "truncated digest lost its prefix");
+assert(payloadOf(truncatedResult?.message).includes("PI SESSION-START DELIVERY TRUNCATED"), "truncated digest was not loud");
+assert(!payloadOf(truncatedResult?.message).includes("TRUNCATION_SUFFIX_14"), "truncated digest exceeded its bound");
 
 // Compaction keeps its supported asynchronous transport for retry-without-
 // preflight, but it shares the same generation cancellation and exactly-once claim.
 plan(15, "success");
 const compactContext = ctx("session-truncated");
 await handlers.get("session_compact")({}, compactContext);
-assert(sent.length === 1 && sent[0].content.includes("GENERATION_DIGEST_15"),
+assert(sent.length === 1 && payloadOf(sent[0]).includes("GENERATION_DIGEST_15"),
   "compaction lost its existing persistent delivery");
 assert((await handlers.get("before_agent_start")({ prompt: "post compact" }, compactContext)) === undefined,
   "compaction delivered the same context twice");
@@ -983,13 +991,23 @@ const pi = {
   on(event, handler) { handlers.set(event, handler); },
   sendMessage() { throw new Error("session start must use provider preflight"); },
 };
+import { readFileSync as readDigestSlot } from "node:fs";
+// The digest travels as a pointer to a private slot (docs/sessionstart-nudge.md
+// "Digest delivery is a pointer, not inline content"); read through it.
+const payloadOf = (message) => {
+  const content = message?.content ?? "";
+  const slot = /Session-start digest written to (\S+) \(/.exec(content);
+  return slot ? content + "\n" + readDigestSlot(slot[1], "utf8") : content;
+};
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?large=${Date.now()}`);
 extension.default(pi);
 const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "large-digest" } };
 handlers.get("session_start")({ reason: "startup" }, ctx);
 const result = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
 if (!result?.message) throw new Error("expected one persistent preflight message");
-const content = result.message.content;
+const content = payloadOf(result.message);
+if (result.message.content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("digest was inlined instead of delivered by pointer");
+if (Buffer.byteLength(result.message.content, "utf8") > 1024) throw new Error("pointer message exceeded 1 KiB");
 if (!content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("digest prefix was lost");
 if (!content.includes("PI SESSION-START DELIVERY TRUNCATED")) throw new Error("truncation marker was lost");
 if (content.includes("PI_LARGE_DIGEST_SUFFIX")) throw new Error("delivery exceeded its declared bound");
