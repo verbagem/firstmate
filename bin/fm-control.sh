@@ -139,8 +139,11 @@
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts (a Rex `unreadable` first goes through the absence
 #     proof `exit` describes, and refuses unless that proof settles it).
-#   - A composer that visibly holds pending text refuses before an exit command
-#     is typed, so existing text is preserved instead of being concatenated.
+#   - `exit` and `relaunch` refuse while the worker's composer holds queued,
+#     unreadable, or ambiguous input - before any interrupt, and again before
+#     the exit command is typed - so a lifecycle command can never concatenate
+#     with pending text; relaunch takes that proof before its checkpoint
+#     (docs/agent-control.md owns the contract).
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -406,6 +409,67 @@ agent_state() {
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
+}
+
+composer_state() {
+  : > "$FM_COMPOSER_DIALOG_SINK" \
+    || die "task $ID's dialog check could not be recorded"
+  fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null || printf unknown
+}
+
+# A queued instruction must survive lifecycle control. Every caller runs on a
+# state-verified stop backend, so an unreadable composer is refused outright:
+# cancel may clear input the plane could not prove was absent.
+require_empty_composer_before_interrupt() {
+  local state
+  state=$(composer_state)
+  case "$state" in
+    empty) ;;
+    pending|pending-unproven)
+      die "task $ID's composer holds a queued instruction; refusing lifecycle control until the worker consumes it"
+      ;;
+    *)
+      die "task $ID's composer reads '$state' before interrupt handling; refusing to risk clearing unverified input"
+      ;;
+  esac
+}
+
+# Textual lifecycle commands are safe only in a positively empty composer.
+# `after-interrupt` re-reads through SETTLE_WAIT so a TUI still redrawing from
+# the interrupt key cannot fail an empty composer; `pending` refuses at once.
+# A recognised blocking dialog refuses first, since a further Enter would answer it.
+require_empty_composer() {  # <idle|after-interrupt>
+  local phase=$1 state elapsed=0 when
+  while :; do
+    state=$(composer_state)
+    # The classify that filled the sink ran in a subshell, so read the file.
+    if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
+      refuse_blocking_prompt "$(cat "$FM_COMPOSER_DIALOG_SINK")"
+    fi
+    case "$phase:$state" in
+      *:empty) return 0 ;;
+      idle:*|*:pending) break ;;
+    esac
+    awk -v e="$elapsed" -v t="$SETTLE_WAIT" 'BEGIN{exit !(e < t)}' || break
+    sleep "$POLL"
+    elapsed=$(awk -v e="$elapsed" -v p="$POLL" 'BEGIN{printf "%.3f", e + p}')
+  done
+  case "$phase" in
+    idle) when="with no interrupt sent" ;;
+    *) when="after interrupt handling" ;;
+  esac
+  die "task $ID's composer reads '$state' $when; refusing to type a lifecycle command into unverified input"
+}
+
+# The same composer proof do_exit demands, taken on the pre-stop side of a
+# relaunch so a queued-input refusal happens before any journal or agent is
+# touched instead of surfacing as a failed stop.
+require_exit_composer_preflight() {
+  [ "$(agent_state)" = alive ] || return 0
+  case "$(busy_verdict)" in
+    busy*) require_empty_composer_before_interrupt ;;
+    *) require_empty_composer idle ;;
+  esac
 }
 
 # wait_agent_state <wanted...> <timeout>: poll until agent_state prints one of
@@ -696,7 +760,7 @@ retire_busy_incarnation() {
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
-  local state cmd hazard verdict composer_state cancel absence interrupt_result=not-needed dialog
+  local state cmd hazard verdict cancel absence interrupt_result=not-needed dialog
   require_state_verified_backend exit
   fm_control_backend_exit_supported "$BACKEND" \
     || die "task $ID runs on the $BACKEND backend, whose T3 Orchestrator V2 tools have no session stop, so 'exit' cannot stop its agent; 'interrupt' ends the running turn and teardown archives the thread"
@@ -747,6 +811,7 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      require_empty_composer_before_interrupt
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -766,24 +831,9 @@ do_exit() {
   if [ -n "$hazard" ] && rendered_matches "$hazard"; then
     die "task $ID shows the $HARNESS revert picker, where typed text becomes a search and Enter reverts file changes; refusing to type the $cmd exit command. Close it with $(fm_control_interrupt_key "$HARNESS"), never Enter, then retry '$VERB'"
   fi
-  : > "$FM_COMPOSER_DIALOG_SINK" \
-    || die "task $ID's dialog check could not be recorded"
-  composer_state=$(fm_backend_composer_state "$BACKEND" "$T" "$LABEL" 2>/dev/null) \
-    || composer_state=unknown
-  # The classify that filled the sink ran in a subshell, so read the file
-  # rather than a function that subshell sourced.
-  if [ -s "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
-    dialog=$(cat "$FM_COMPOSER_DIALOG_SINK")
-    refuse_blocking_prompt "$dialog"
-  fi
-  case "$composer_state" in
-    empty) ;;
-    pending)
-      die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
-      ;;
-    *)
-      die "task $ID's composer state is '$composer_state', not proven empty; refusing to type the $cmd exit command because it could concatenate onto existing text. Clear the composer, then retry '$VERB'"
-      ;;
+  case "$interrupt_result" in
+    not-needed) require_empty_composer idle ;;
+    *) require_empty_composer after-interrupt ;;
   esac
   # The submit verdict is NOT the postcondition here: a successful exit command
   # destroys the composer the verdict is read from, so a post-exit read can
@@ -1209,6 +1259,7 @@ do_relaunch() {
   else
     note_line="note=none"
   fi
+  require_exit_composer_preflight
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" || die "could not preserve task $ID's durable record before relaunching"
   RELAUNCH_ACTIVE=1

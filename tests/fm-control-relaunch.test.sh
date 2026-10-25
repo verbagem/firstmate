@@ -400,8 +400,10 @@ test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
   out=$(run_control "$dir" rl43 relaunch --note "preserve the pending draft"); rc=$?
 
   expect_code 1 "$rc" "a relaunch must refuse before typing an exit command into pending composer text"
-  assert_contains "$out" "composer visibly holds pending text" \
+  assert_contains "$out" "composer reads 'pending' with no interrupt sent" \
     "the refusal should name the pending composer text"
+  [ ! -e "$dir/home/state/rl43.control-relaunch" ] \
+    || fail "a queued-input refusal must happen before any relaunch journal write"
   [ "$(cat "$dir/fake/command")" = claude ] \
     || fail "a pending composer refusal must leave the old agent running"
   assert_no_grep "/exit" "$dir/fake/literal" \
@@ -418,10 +420,12 @@ test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven() {
     run_control "$dir" rl44 relaunch --note "preserve on an unreadable composer"); rc=$?
 
   expect_code 1 "$rc" "a relaunch must refuse before typing an exit command when the composer state cannot be proven empty"
-  assert_contains "$out" "not proven empty" \
+  assert_contains "$out" "composer reads 'unknown' with no interrupt sent" \
     "the refusal should name the unproven composer state, not claim pending text"
-  assert_not_contains "$out" "visibly holds pending text" \
+  assert_not_contains "$out" "reads 'pending'" \
     "an unreadable composer is not the same claim as observed pending text"
+  [ ! -e "$dir/home/state/rl44.control-relaunch" ] \
+    || fail "an unproven-composer refusal must happen before any relaunch journal write"
   [ "$(cat "$dir/fake/command")" = claude ] \
     || fail "an unproven composer refusal must leave the old agent running"
   assert_no_grep "/exit" "$dir/fake/literal" \
