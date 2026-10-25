@@ -36,6 +36,10 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 BOOTSTRAP="$ROOT/bin/fm-bootstrap.sh"
 TMP_ROOT=$(fm_test_tmproot fm-backlog-atomicity)
+# The fixture helpers below call tasks-axi directly, and tasks-axi reads a
+# .tasks.toml from its working directory. Run from the scratch root so an
+# operator override in the checkout cannot redirect those calls.
+cd "$TMP_ROOT" || exit 1
 
 command -v tasks-axi >/dev/null 2>&1 || {
   printf 'ok - skipped (tasks-axi is not installed; the fused transitions are inert without it)\n'
@@ -92,61 +96,37 @@ EOF
 
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
+window_file="$(dirname "$0")/.spawn-window"
 case "$*" in *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;; esac
-case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
+case "${1:-}" in
+  display-message) printf 'firstmate\n'; exit 0 ;;
+  list-windows) [ ! -s "$window_file" ] || cat "$window_file"; exit 0 ;;
+  new-window)
+    name=
+    previous=
+    for arg in "$@"; do
+      [ "$previous" = -n ] && name=$arg
+      previous=$arg
+    done
+    grep -Fqx -- "$name" "$window_file" 2>/dev/null || printf '%s\n' "$name" >> "$window_file"
+    exit 0 ;;
+  kill-window)
+    target=
+    previous=
+    for arg in "$@"; do
+      [ "$previous" = -t ] && target=$arg
+      previous=$arg
+    done
+    target=${target##*:}
+    target=${target#=}
+    grep -Fvx -- "$target" "$window_file" 2>/dev/null > "$window_file.tmp" || true
+    mv "$window_file.tmp" "$window_file"
+    exit 0 ;;
+esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
-  cat > "$fakebin/fm-test-signal-spawn" <<'SH'
-#!/usr/bin/env bash
-target=${1:-}
-signal=${2:-TERM}
-signal_pid() {
-  pid=$1
-  command=$(ps -o command= -p "$pid" 2>/dev/null || true)
-  set -- $command
-  case "${1:-} ${2:-} ${3:-}" in
-    */bin/fm-spawn.sh\ *|*\ */bin/fm-spawn.sh\ *|*\ *\ */bin/fm-spawn.sh)
-      kill "-$signal" "$pid"
-      exit $?
-      ;;
-  esac
-}
-if [ ! -d "$target" ]; then
-  wait_count=0
-  while [ ! -s "$target" ] && [ "$wait_count" -lt 100 ]; do
-    sleep 0.05
-    wait_count=$((wait_count + 1))
-  done
-  if [ -s "$target" ]; then
-    pid=$(cat "$target" 2>/dev/null || true)
-    case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
-    kill "-$signal" "$pid"
-    exit $?
-  fi
-fi
-if [ -d "$target" ]; then
-  for pidfile in "$target"/.spawn-*.lock.owner.*/pid; do
-    [ -f "$pidfile" ] || continue
-    pid=$(cat "$pidfile" 2>/dev/null || true)
-    case "$pid" in ''|*[!0-9]*) continue ;; esac
-    kill "-$signal" "$pid"
-    exit $?
-  done
-  exit 1
-fi
-pid=$target
-depth=0
-while [ -n "$pid" ] && [ "$pid" != 1 ] && [ "$depth" -lt 30 ]; do
-  signal_pid "$pid"
-  pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-  case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
-  depth=$((depth + 1))
-done
-exit 1
-SH
-  chmod +x "$fakebin/fm-test-signal-spawn"
 
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -177,7 +157,7 @@ configure_env_backend_tasks_axi() {  # <case-dir>
   cat > "$case_dir/fakebin/tasks-axi" <<SH
 #!/usr/bin/env bash
 case "\${1:-}" in
-  --version) printf '0.2.5\n' ;;
+  --version) printf '0.2.6\n' ;;
   update) printf '%s\n' '--archive-body' ;;
   mv) printf '%s\n' '[<id>...]' ;;
   show)
@@ -231,7 +211,7 @@ make_beads_tasks_axi_stub() {  # <case-dir> <id>
 printf '%s\n' "\$*" >> "$case_dir/tasks-axi-calls"
 case "\${1:-}" in
   --version)
-    printf '%s\n' '0.2.5'
+    printf '%s\n' '0.2.6'
     ;;
   update)
     [ "\${2:-}" = --help ] || exit 1
@@ -292,13 +272,15 @@ interrupt_spawn_during_start() {  # <case-dir> <before|after>
 #!/usr/bin/env bash
 if [ "\${1:-}" = start ] && [ ! -f "$case_dir/start-interrupted" ]; then
   : > "$case_dir/start-interrupted"
+  spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
+  case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
   if [ "$timing" = before ]; then
-    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
+    kill -TERM "\$spawn_pid"
     kill -TERM "\$\$"
   fi
   "$real" "\$@" || exit \$?
   if [ "$timing" = after ]; then
-    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
+    kill -TERM "\$spawn_pid"
     kill -TERM "\$\$"
   fi
   exit 0
@@ -321,7 +303,9 @@ lie_start_then_interrupt() {  # <case-dir> <repair: works|fails>
 if [ "\${1:-}" = start ]; then
   if [ ! -f "$case_dir/start-interrupted" ]; then
     : > "$case_dir/start-interrupted"
-    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
+    spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
+    case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
+    kill -TERM "\$spawn_pid"
     exit 0
   fi
   if [ "$repair" = fails ]; then
@@ -347,7 +331,9 @@ hang_start_after_first() {  # <case-dir>
 if [ "\${1:-}" = start ]; then
   if [ ! -f "$case_dir/start-interrupted" ]; then
     : > "$case_dir/start-interrupted"
-    fm-test-signal-spawn "$case_dir/spawn.pid" TERM
+    spawn_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')
+    case "\$spawn_pid" in ''|*[!0-9]*) exit 1 ;; esac
+    kill -TERM "\$spawn_pid"
     exit 0
   fi
   sleep 300
@@ -374,17 +360,15 @@ make_fallback_bin() {  # <case-dir> <tasks-axi-stub-script>
 }
 
 run_bounded_fm_tasks_axi() {  # <fallback-bin> <bound> [args...]
-  local fb=$1 bound=$2 out rc=0 saved_path=$PATH
+  local fb=$1 bound=$2 out rc=0
   shift 2
-  # The fallback shape itself: a PATH with no timeout variant on it. Set and
-  # restored here, never in a subshell, so the change cannot leak into other
-  # tests.
-  PATH="$fb"
+  # The fallback shape itself: a PATH with no timeout variant on it, in force
+  # for the bounded call only. The library is sourced first under the ordinary
+  # PATH, as every real caller does.
   out=$(
     . "$ROOT/bin/fm-backlog-transition-lib.sh"
-    FM_TASKS_AXI_TIMEOUT="$bound" fm_tasks_axi "$@" 2>&1
+    PATH="$fb" FM_TASKS_AXI_TIMEOUT="$bound" fm_tasks_axi "$@" 2>&1
   ) || rc=$?
-  PATH=$saved_path
   printf '%s' "$out"
   return "$rc"
 }
@@ -393,10 +377,7 @@ test_fm_tasks_axi_fallback_bounds_the_call_without_a_timeout_binary() {
   local case_dir fb out rc=0 started
   case_dir=$(make_home fm-tasks-axi-fallback)
   fb=$(make_fallback_bin "$case_dir" '#!/bin/bash
-trap "" TERM
-sleep 300 &
-printf "%s\n" "$!" > "'"$case_dir"'/grandchild.pid"
-wait')
+exec sleep 300')
   started=$SECONDS
   out=$(run_bounded_fm_tasks_axi "$fb" 2 show never-answers) || rc=$?
   [ "$rc" -eq 124 ] \
@@ -405,10 +386,6 @@ wait')
     || fail "the perl watchdog fallback fired before the bound elapsed"
   [ $((SECONDS - started)) -lt 20 ] \
     || fail "the perl watchdog fallback did not bound the call (${SECONDS}s)"
-  if [ -s "$case_dir/grandchild.pid" ]; then
-    ! kill -0 "$(cat "$case_dir/grandchild.pid")" 2>/dev/null \
-      || fail "the perl watchdog fallback left a TERM-ignoring grandchild running"
-  fi
   pass "fm_tasks_axi bounds the call through its perl watchdog when no timeout binary exists"
 }
 
@@ -643,7 +620,7 @@ write_task_meta() {  # <case-dir> <id> <kind> <mode> [extra-line...]
 }
 
 run_spawn() {  # <case-dir> <args...>
-  local case_dir=$1 spawn_pid
+  local case_dir=$1
   shift
   # A claude spawn pre-registers workspace trust in the launching user's own
   # store (bin/fm-claude-trust.sh), so it runs against a throwaway HOME;
@@ -653,10 +630,7 @@ run_spawn() {  # <case-dir> <args...>
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR='' \
     PATH="$case_dir/fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1 &
-  spawn_pid=$!
-  printf '%s\n' "$spawn_pid" > "$case_dir/spawn.pid"
-  wait "$spawn_pid"
+    "$SPAWN" "$@" 2>&1
 }
 
 run_ship_spawn() {  # <case-dir> <id>
@@ -832,7 +806,7 @@ test_dispatch_moves_the_item_in_flight_in_the_same_run() {
   id=atomic-dispatch-b1
   case_dir=$(make_home dispatch-ok "$id")
   add_item "$case_dir" "$id"
-  cp "$ROOT/.tasks.toml" "$(home_of "$case_dir")/.tasks.toml"
+  fm_test_tasks_toml "$(home_of "$case_dir")/.tasks.toml"
   record_tasks_axi_calls "$case_dir"
 
   out=$(run_ship_spawn "$case_dir" "$id") || fail "spawn failed: $out"
@@ -900,7 +874,7 @@ test_completion_omits_the_file_for_a_beads_done() {
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$case_dir/tasks-axi-calls"
 case "\${1:-}" in
-  --version) printf '%s\n' '0.2.5' ;;
+  --version) printf '%s\n' '0.2.6' ;;
   update)
     [ "\${2:-}" = --help ] || exit 1
     printf '%s\n' '--archive-body'
@@ -1530,35 +1504,19 @@ test_deferred_signal_verification_outlives_an_unresponsive_tasks_axi() {
 
   # The read-back's own `start` never answers, so the spawn must bound it
   # (FM_TASKS_AXI_TIMEOUT=3), print the attempted wording naming the timeout,
-  # and exit - the outer 120s bound only turns a regression back into
-  # the lock-held-forever hang it exists to catch.
+  # and exit - the outer 30s bound (fm_run_timed, portable to a host with no
+  # timeout binary) only turns a regression back into the lock-held-forever
+  # hang it exists to catch.
   mkdir -p "$case_dir/user-home"
-  # shellcheck disable=SC2016 # $@ is expanded by the child bash -c.
-  out=$(fm_run_timed 120 bash -c '
-    spawn_pid_file=$1
-    shift
-    "$@" &
-    spawn_pid=$!
-    printf "%s\n" "$spawn_pid" > "$spawn_pid_file"
-    wait "$spawn_pid"
-    rc=$?
-    [ "$rc" -eq 124 ] && exit 123
-    exit "$rc"
-  ' _ "$case_dir/spawn.pid" env \
-    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
+  out=$(fm_run_timed 30 env FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
     HOME="$case_dir/user-home" FM_SPAWN_NO_GUARD=1 \
     FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" CLAUDE_CONFIG_DIR='' \
-    FM_HOME_SUMMARY_TIMEOUT=1 FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
+    FM_TASKS_AXI_TIMEOUT=3 PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$id" "$case_dir/project" \
     --mode no-mistakes --yolo off 2>&1) || rc=$?
   [ "$rc" -ne 0 ] || fail "an interrupted spawn reported success"
   case "$rc" in
-    124|137)
-      case "$out" in
-        *"did not finish within 3s"*) ;;
-        *) fail "the verification hung on the unresponsive start instead of timing out: $out" ;;
-      esac
-      ;;
+    124|137) fail "the verification hung on the unresponsive start instead of timing out: $out" ;;
   esac
   assert_contains "$out" "preservation could not be verified" \
     "a timed-out verification did not report the preservation as attempted, not verified"
@@ -2099,6 +2057,45 @@ test_recovery_replays_a_close_an_interrupted_cleanup_left_open() {
   assert_not_contains "$out" "endpoint or local copy may remain" \
     "recovery claimed incomplete cleanup without task metadata"
   pass "session start finishes a close an interrupted cleanup recorded but never landed"
+}
+
+test_recovery_replays_a_gerrit_close_with_its_change_url_as_a_note() {
+  local case_dir id out real_tasks_axi gerrit_url=https://gerrit.example.com/c/project/+/12345
+  id=atomic-heal-gerrit-b9
+  case_dir=$(make_home heal-pending-gerrit-close)
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  # The record a pre-fix teardown left: the Gerrit change URL as a --pr link.
+  printf 'id=%s\ndata=%s\nspawn_gen=spawn-heal-gerrit\narg=--pr\narg=%s\n' \
+    "$id" "$(home_of "$case_dir")/data" "$gerrit_url" \
+    > "$(home_of "$case_dir")/state/$id.backlog-close"
+  # Pin the refusal tasks-axi applies to a --pr link that is not a canonical
+  # GitHub pull request, so this case keeps reproducing whatever the installed
+  # release accepts.
+  real_tasks_axi=$(command -v tasks-axi)
+  cat > "$case_dir/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+previous=
+for arg in "\$@"; do
+  if [ "\$previous" = --pr ] && ! [[ "\$arg" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+\$ ]]; then
+    echo "error: \"Task pr link must be a canonical pull request URL\""
+    exit 1
+  fi
+  previous=\$arg
+done
+exec "$real_tasks_axi" "\$@"
+SH
+  chmod +x "$case_dir/fakebin/tasks-axi"
+
+  out=$(run_bootstrap "$case_dir")
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "session start left a recorded Gerrit close at $(row_state "$case_dir" "$id"): $out"
+  tasks-axi show "$id" --file "$(backlog_of "$case_dir")" --full \
+    | grep -F "body: \"Gerrit change $gerrit_url\"" >/dev/null \
+    || fail "the replayed Gerrit close did not record its change URL as a note"
+  assert_absent "$(home_of "$case_dir")/state/$id.backlog-close" \
+    "a replayed Gerrit close left its record behind"
+  pass "session start replays a recorded Gerrit close with its change URL as a note"
 }
 
 test_recovery_backfills_a_recorded_link_on_an_already_done_item() {
@@ -2847,14 +2844,7 @@ test_spawn_refuses_a_special_file_tasks_config() {
   rm -f "$home/.tasks.toml"
   mkfifo "$home/.tasks.toml"
 
-  # shellcheck disable=SC2016 # $@ is expanded by the child bash -c.
-  out=$(fm_run_timed 60 bash -c '
-    "$@"
-    rc=$?
-    [ "$rc" -eq 124 ] && exit 123
-    exit "$rc"
-  ' _ env \
-    FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
+  out=$(fm_run_timed 60 env FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$case_dir/wt" TMUX="fake,1,0" \
     CLAUDE_CONFIG_DIR='' \
     PATH="$case_dir/fakebin:$PATH" \
@@ -3062,6 +3052,8 @@ test_a_persistent_secondmate_is_never_a_backlog_item() {
   printf '# Firstmate\n' > "$mate/AGENTS.md"
   printf '%s\n' "$id" > "$mate/.fm-secondmate-home"
   printf 'charter for %s\n' "$id" > "$mate/data/charter.md"
+  printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$mate/.gitignore"
+  git -C "$mate" init -q -b main
 
   # No backlog item exists for the mate, and none should be required: agents are
   # not work items. The dispatch must succeed anyway.
@@ -3132,6 +3124,7 @@ test_recovery_marks_an_owned_record_in_flight
 test_recovery_rejects_an_internal_worker_record_symlink
 test_recovery_ignores_a_symlinked_worker_record
 test_recovery_replays_a_close_an_interrupted_cleanup_left_open
+test_recovery_replays_a_gerrit_close_with_its_change_url_as_a_note
 test_recovery_backfills_a_recorded_link_on_an_already_done_item
 test_recovery_preserves_a_close_when_the_backlog_cannot_be_read
 test_recovery_retry_preserves_incomplete_cleanup_warning

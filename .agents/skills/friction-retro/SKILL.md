@@ -1,9 +1,7 @@
 ---
 name: friction-retro
 description: >-
-  Agent-only procedure for turning one task's repeated friction into bounded durable owner updates, at most one per distinct repeatable failure.
-  Load before recording completion on a task whose own evidence shows two or more corrective steers, a costly failed validation loop, a verified safety or quality incident, or an explicit captain postmortem request.
-  Distinguishes one-off judgment from repeatable failure and routes only the repeatable part to an existing owner.
+  Load before recording completion on a task whose own evidence shows two or more corrective steers, a costly failed validation loop, a verified safety or quality incident, or an explicit captain postmortem request; never for an ordinary task with no such evidence.
 user-invocable: false
 metadata:
   internal: true
