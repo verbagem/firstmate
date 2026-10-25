@@ -151,8 +151,14 @@ wt="$case_dir/wt"
 fm_test_spawn_home "$home" commandcode
 fm_git_worktree "$proj" "$wt" commandcode-test
 spawn_case() {  # <id> <model> <effort>
+  local slot=$wt
+  # A task's copy stays reserved for it, so each later task gets its own slot.
+  if [ -e "$home/state/cc-low.meta" ]; then
+    slot="$case_dir/wt-$1"
+    git -C "$proj" worktree add -q -b "wt-$1" "$slot"
+  fi
   fm_test_spawn_brief "$home" "$1"
-  FM_FAKE_LAUNCH_LOG="$case_dir/$1.launch" fm_test_run_spawn "$home" "$wt" "$fakebin" "$1" "$proj" \
+  FM_FAKE_LAUNCH_LOG="$case_dir/$1.launch" fm_test_run_spawn "$home" "$slot" "$fakebin" "$1" "$proj" \
     --scout --harness commandcode --model "$2" --effort "$3" 2>&1
 }
 out=$(spawn_case cc-low deepseek/deepseek-v4.1-flash low) || fail "spawn failed: $out"

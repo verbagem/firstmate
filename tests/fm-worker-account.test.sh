@@ -98,6 +98,12 @@ signed_in_claude_root() {
 spawn_ship() {
   local id=$1
   shift
+  # A copy another task still records stays reserved for it, so a later task
+  # in the same case is handed its own copy, as the pool would.
+  if grep -lFx "worktree=$WT" "$HOME_DIR"/state/*.meta >/dev/null 2>&1; then
+    WT="$CASE/wt-$id"
+    git -C "$PROJ" worktree add -q -b "wt-$id" "$WT"
+  fi
   fm_test_spawn_brief "$HOME_DIR" "$id"
   signed_in_claude_root "$CASE/ambient-claude"
   : > "$CASE/launch.log"

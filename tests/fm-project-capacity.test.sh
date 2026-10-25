@@ -122,9 +122,39 @@ case "${1:-}" in
 esac
 exit 0
 SH
+  # The pool lists the pane's slot and every live record's copy, and keeps the
+  # durable leases spawn takes on them (the #35 reservation boundary).
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
+leases="$0.leases"
+rows() {
+  { printf '%s\n' "${FM_FAKE_PANE_PATH:-}"
+    sed -n 's/^worktree=//p' "$(dirname "$FM_FAKE_CALL_LOG")"/home/state/*.meta 2>/dev/null
+  } | awk 'NF && !seen[$0]++'
+}
+case "${1:-}:${2:-}" in
+  lease:--help) exit 0 ;;
+  status:--json)
+    rows | while IFS= read -r p; do
+      n=$((${n:-0} + 1))
+      h=$(awk -F '\t' -v p="$p" '$1 == p { print $2; exit }' "$leases" 2>/dev/null)
+      if [ -n "$h" ]; then
+        jq -cn --arg n "$n" --arg p "$p" --arg h "$h" '{name:$n,path:$p,status:"leased",lease_id:("lease-" + $h),lease_holder:$h}'
+      else
+        jq -cn --arg n "$n" --arg p "$p" '{name:$n,path:$p,status:"in-use",lease_id:"",lease_holder:""}'
+      fi
+    done | jq -s '.'
+    exit 0
+    ;;
+esac
+if [ "${1:-}" = lease ]; then
+  p=$(rows | sed -n "${2}p")
+  h=
+  while [ $# -gt 0 ]; do [ "$1" = --lease-holder ] && h=$2; shift; done
+  printf '%s\t%s\n' "$p" "$h" >> "$leases"
+  jq -cn --arg p "$p" --arg h "$h" '{path:$p,lease_id:("lease-" + $h),lease_holder:$h}'
+  exit 0
+fi
 printf 'treehouse %s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 exit 0
 SH
@@ -403,7 +433,9 @@ test_occupancy_counts_only_this_projects_workers() {
   declare_capacity "$home" "project 3"
   write_live "$home" scout-a "$case_dir/project"
   sed -i.bak 's/^kind=ship$/kind=scout/' "$home/state/scout-a.meta" && rm -f "$home/state/scout-a.meta.bak"
-  fm_write_meta "$home/state/legacy-b.meta" "window=firstmate:fm-legacy-b" "project=$case_dir/project"
+  # Legacy means no kind=; it still records the copy spawn must keep reserved.
+  fm_write_meta "$home/state/legacy-b.meta" "window=firstmate:fm-legacy-b" "project=$case_dir/project" \
+    "worktree=$home/absent-worktree-legacy-b"
   write_live "$home" other-c "$case_dir/other-project"
   fm_write_meta "$home/state/mate-d.meta" "window=remote:mate-d" "project=$case_dir/project" "kind=secondmate"
   out=$(spawn_ship "$case_dir" task-c) || rc=$?
