@@ -933,6 +933,16 @@ tests/fm-watch-wedge-cap-live.test.sh 74
 tests/fm-watcher-lock.test.sh 72022
 tests/fm-worker-account-live-e2e.test.sh 3179
 tests/fm-worker-account.test.sh 37445
+tests/fm-exceptional-worker-graph.test.sh 698
+tests/fm-exec-council.test.sh 32750
+tests/fm-jev-browser-shadow.test.sh 23066
+tests/fm-jev-context-replay.test.sh 2485
+tests/fm-jev-evidence-screen.test.sh 20764
+tests/fm-linear-scripts.test.sh 393
+tests/fm-local-inference.test.sh 3814
+tests/fm-pi-recap.test.sh 9010
+tests/fm-task-recap-extension.test.sh 3000
+tests/run-eval.test.sh 11036
 EOF
 }
 
