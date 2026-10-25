@@ -414,6 +414,11 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
+# Due paused-stale rechecks found in one stale scan are queued individually but
+# woken once (record_paused_stale_recheck / flush_paused_stale_rechecks).
+PAUSED_STALE_RECHECK_COUNT=0
+PAUSED_STALE_RECHECK_WINDOWS=
+PAUSED_STALE_RECHECK_REASON=
 # A declared wait that names WHEN it clears (`paused: ... until <UTC ISO 8601>`,
 # status_paused_until in fm-classify-lib.sh) is condition-aware: it is not
 # rechecked before that time, and it is rechecked once as soon as that time
@@ -1456,9 +1461,10 @@ _wedge_cap_rollback() {
 # window; wake() itself exits the cycle, exactly as it does inline. An optional
 # <min-age> replaces the cadence as the absorb-age gate for one call (0 lets a
 # declared `until` time that has just passed re-surface at once), while the
-# throttle keeps the cadence between repeats.
-resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age]
-  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS}
+# throttle keeps the cadence between repeats. The optional <batch> word queues the
+# wake into the paused-recheck batch instead of exiting the cycle.
+resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age] [batch]
+  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS} batch=${7-}
   if [ -z "$scope" ] || [ ! -e "$throttle" ] \
     || [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
     [ "$age" -ge "$min_age" ] || return 0
@@ -1466,6 +1472,8 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
   fi
   fm_wake_append stale "$win" "$reason" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
+  # batch: the caller flushes one wake for every recheck due in this scan.
+  if [ "$batch" = batch ]; then record_paused_stale_recheck "$win" "$reason"; return 0; fi
   wake "$reason"
 }
 
@@ -2223,7 +2231,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         # The ladder's own step, not an episode end: this pane is still wedged,
         # so the idle timer restarts for the next rung of the same escalation
         # count and the cap that fired stays exactly where it is.
-        rm -f "$since_file"
+        rm -f "$since_file" "$STATE/.run-state-probed-terminal-$_wkey"
         clear_write_tracking "$_wkey"
         wake "$reason"
       fi
@@ -2279,13 +2287,32 @@ busy_turn_over_age() {  # <task>
 # clock, a token counter) cannot keep resetting the cadence the way a hash-tied
 # timer would. The bounded re-surface itself is the shared resurface_absorbed
 # above, throttled by this window's own .paused-resurfaced-<key> marker. Advances
-# the stale suppressor to <hash> and flags the key paused.
+# the stale suppressor to <hash> and flags the key paused. A due recheck is queued
+# durably but its wake is batched by the stale scan (flush_paused_stale_rechecks),
+# so several unchanged paused panes interrupt the cycle once.
 #
 # The recheck distinguishes the declared dependency from a captain decision:
 # the legacy external-wait wording for paused: (bin/fm-classify-lib.sh), and the
 # captain themself for a verified hold. Only the captain-held verb takes the second
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
+record_paused_stale_recheck() {  # <window> <reason>
+  local win=$1 reason=$2
+  PAUSED_STALE_RECHECK_COUNT=$((PAUSED_STALE_RECHECK_COUNT + 1))
+  PAUSED_STALE_RECHECK_WINDOWS="$PAUSED_STALE_RECHECK_WINDOWS${PAUSED_STALE_RECHECK_WINDOWS:+, }$win"
+  [ -n "$PAUSED_STALE_RECHECK_REASON" ] || PAUSED_STALE_RECHECK_REASON=$reason
+}
+
+# Every due recheck already has its own durable queue row; this is the one wake.
+flush_paused_stale_rechecks() {
+  [ "$PAUSED_STALE_RECHECK_COUNT" -gt 0 ] || return 0
+  if [ "$PAUSED_STALE_RECHECK_COUNT" -eq 1 ]; then
+    wake "$PAUSED_STALE_RECHECK_REASON"
+    return 0
+  fi
+  wake "stale: paused recheck batch (${PAUSED_STALE_RECHECK_COUNT}): $PAUSED_STALE_RECHECK_WINDOWS"
+}
+
 handle_paused_stale() {  # <window> <task> <hash>
   local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
   key=$(window_key "$win")
@@ -2327,7 +2354,7 @@ handle_paused_stale() {  # <window> <task> <hash>
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age" batch
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -2402,7 +2429,8 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
 
 clear_pause_state() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key"
+  rm -f "$STATE/.paused-$key" "$STATE/.paused-rechecked-$key" "$STATE/.paused-resurfaced-$key" \
+    "$STATE/.run-state-probed-$key"
 }
 
 # The hash-scoped half of clear_pause_tracking: the stale suppressor, its wedge
@@ -2453,6 +2481,7 @@ clear_pause_tracking() {  # <window-key>
   local key=$1
   clear_pause_state "$key"
   clear_stale_hash_tracking "$key"
+  rm -f "$STATE/.run-state-probed-terminal-$key"
 }
 
 # Reconcile a declared pause or captain-held status with authoritative crew state.
@@ -3075,6 +3104,102 @@ mark_all_captain_relevant_surfaced() {
 $FM_HEARTBEAT_SURFACE_ENDPOINTS
 EOF
   return "$rc"
+}
+
+# Record <task>'s whole status log as classified, through the endpoint a fresh
+# span read captured, so a wake that reports it is not re-reported by the backstop.
+mark_task_status_surfaced() {  # <task>
+  local task=$1 record rest end='' ident=''
+  record=$(status_span_first_actionable_record "$STATE/$task.status" 0)
+  case $? in
+    0|1) end=${record%%$'\t'*}; rest=${record#*$'\t'}; ident=${rest%%$'\t'*} ;;
+  esac
+  mark_surfaced "$STATE/$task.status" "$end" "$ident"
+}
+
+# 0 when <task>'s latest status event is captain-relevant and a wake already
+# carried every actionable event in its log (the heartbeat marker has caught up),
+# so a stale pane-hash drift is no new information to the captain.
+terminal_status_already_surfaced() {  # <task>
+  local task=$1 f last
+  f="$STATE/$task.status"
+  last=$(last_status_line "$f")
+  [ -n "$last" ] || return 1
+  status_is_captain_relevant "$last" || return 1
+  # A status this watcher's own stale wake surfaced keeps alarming per new pane
+  # hash (the stale path records it below); only a status surfaced some other way,
+  # a signal wake, makes later hash drift redundant.
+  [ "$(cat "$(stale_terminal_surfaced_path "$task")" 2>/dev/null || true)" \
+    != "$(fm_wake_signal_sig "$f" || true)" ] || return 1
+  status_span_first_actionable_record "$f" "$(hb_surfaced_offset "$task")" >/dev/null
+  [ $? -eq 1 ]
+}
+
+stale_terminal_surfaced_path() {  # <task>
+  printf '%s/.stale-terminal-surfaced-%s' "$STATE" "$(printf '%s' "$1" | tr ':/.' '___')"
+}
+
+# An actionable validation-run outcome (parked, done, failed) surfaces once per
+# run generation: the marker holds the identity bin/fm-classify-lib.sh derives
+# from the run-generation tokens bin/fm-crew-state.sh prints.
+actionable_run_state_surfaced_path() {  # <task>
+  printf '%s/.run-state-surfaced-%s' "$STATE" "$(printf '%s' "$1" | tr ':/.' '___')"
+}
+
+clear_actionable_run_state_surfaced() {  # <task>
+  rm -f "$(actionable_run_state_surfaced_path "$1")"
+}
+
+surface_actionable_run_state_if_new() {  # <window> <task> <hash> <crew-state-line> [pause-throttle]
+  local win=$1 task=$2 h=$3 crew_state=$4 mode=${5-} line marker key reason
+  line=$(crew_actionable_run_state_line_from_state_line "$crew_state" || true)
+  [ -n "$line" ] || return 1
+  marker=$(crew_actionable_run_state_marker_from_state_line "$crew_state" || true)
+  [ -n "$marker" ] || return 1
+  [ "$(cat "$(actionable_run_state_surfaced_path "$task")" 2>/dev/null || true)" != "$marker" ] || return 1
+  key=$(window_key "$win")
+  reason="stale: $win"
+  if [ "$mode" = pause-throttle ] && afk_present; then
+    reason="stale: $win (validation run outcome: $line)"
+  fi
+  fm_wake_append stale "$win" "$reason" || exit 1
+  printf '%s' "$h" > "$STATE/.stale-$key"
+  # Pre-cap shape kept the count here (keep-count contract).
+  wedge_episode_end "$key" 0 1
+  mark_task_status_surfaced "$task"
+  printf '%s' "$marker" > "$(actionable_run_state_surfaced_path "$task")"
+  if [ "$mode" = pause-throttle ]; then
+    : > "$STATE/.paused-$key"
+    date +%s > "$STATE/.paused-rechecked-$key"
+    stale_wait_declaration "$task" > "$STATE/.paused-resurfaced-$key"
+  fi
+  wake "$reason"
+}
+
+# The cost gate for every crew_state_line probe the stale loop can reach on a pane
+# it revisits each poll. crew_state_line spawns fm-crew-state.sh - a bounded
+# no-mistakes CLI read for a ship crew with a branch - which bin/fm-classify-lib.sh
+# runs on first-sighting paths, never every poll; a steady-state pane (a held
+# pause, a surfaced terminal status, a running validation) would otherwise pay it
+# every poll, fleet-wide. 0 (and stamps) when a probe may run, 1 while the cap
+# holds. The stamp lands on every ATTEMPT whatever it finds, so a newly PR-ready or
+# failed run still surfaces the moment the cap expires. Each <marker> belongs to
+# the one probe site that names it and follows that site's own reset lifecycle.
+claim_run_state_probe() {  # <marker> <window-key>
+  local f="$STATE/.$1-$2"
+  [ "$(age_of "$f")" -ge "$STALE_ESCALATE_SECS" ] || return 1
+  date +%s > "$f"
+}
+
+# The declared-wait probe; its cap rides the pause lifecycle (cleared where a pane
+# stops declaring a wait and through clear_pause_state).
+surface_paused_actionable_run_state_if_new() {  # <window> <task> <hash>
+  local win=$1 task=$2 h=$3 key crew_state
+  status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")" || return 1
+  key=$(window_key "$win")
+  claim_run_state_probe run-state-probed "$key" || return 1
+  crew_state=$(crew_state_line "$task" || true)
+  surface_actionable_run_state_if_new "$win" "$task" "$h" "$crew_state" pause-throttle
 }
 
 # Cheap heartbeat fleet-scan (the always-on twin of the daemon's catch-all). 0 if
@@ -3885,6 +4010,9 @@ EOF
   # stale hash is surfaced, absorbed, or timed toward escalation once (.stale-*
   # remembers the hash already classified, or the declaration a busy pane's
   # crossed turn bound already handed to the away-mode daemon).
+  PAUSED_STALE_RECHECK_COUNT=0
+  PAUSED_STALE_RECHECK_WINDOWS=
+  PAUSED_STALE_RECHECK_REASON=
   while IFS= read -r w; do
     kind=$(window_kind "$w")
     task=$(window_to_task "$w" "$STATE")
@@ -3893,8 +4021,11 @@ EOF
     [ -z "$task" ] || inbox_steer_check "$w" "$task"
     key=$(window_key "$w")
     last=$(status_declared_wait_line "$STATE/$task.status")
-    if ! status_is_paused_or_captain_held "$last" && [ -e "$STATE/.paused-$key" ]; then
-      clear_pause_tracking "$key"
+    if ! status_is_paused_or_captain_held "$last"; then
+      rm -f "$STATE/.run-state-probed-$key"
+      if [ -e "$STATE/.paused-$key" ]; then
+        clear_pause_tracking "$key"
+      fi
     fi
     # An idle secondmate endpoint is healthy by design, so a mate is admitted to
     # the pane-stale path ONLY to serve a status-declared wait's bounded
@@ -3932,7 +4063,9 @@ EOF
       if [ "$n" -ge 2 ] && [ "$busy_now" -ne 0 ]; then
         # The pane is idle/stale at hash $h. Triage decides whether this wakes
         # firstmate. Detection itself is unchanged from above.
-        if [ "$kind" = secondmate ]; then
+        if surface_paused_actionable_run_state_if_new "$w" "$task" "$h"; then
+          :
+        elif [ "$kind" = secondmate ]; then
           case "$(pause_state_class "$w" "$task")" in
             paused) handle_paused_stale "$w" "$task" "$h" ;;
             *)      clear_pause_tracking "$key" ;;
@@ -3966,14 +4099,27 @@ EOF
           # line. On a NEW hash, give an active run/busy pane (the same
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
+          # If this exact terminal status was already surfaced through a signal,
+          # pane-hash drift is no new captain-facing information and is absorbed;
+          # a new actionable run outcome still surfaces once per run generation.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            crew_state=$(crew_state_line "$task" || true)
+            if [ "$(crew_absorb_class_from_state_line "$crew_state")" = working ]; then
               printf '%s' "$h" > "$sf"
               # Pre-cap shape kept the count here (keep-count contract).
               wedge_episode_end "$key" 0 1
               date +%s > "$ssf"
               clear_write_tracking "$key"
+              clear_actionable_run_state_surfaced "$task"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+            elif surface_actionable_run_state_if_new "$w" "$task" "$h" "$crew_state"; then
+              :
+            elif terminal_status_already_surfaced "$task" && ! task_captain_call_open "$task"; then
+              # (An open captain call keeps its own bounded re-surface cadence below.)
+              printf '%s' "$h" > "$sf"
+              wedge_episode_end "$key" 0 1
+              clear_write_tracking "$key"
+              triage_log "absorbed stale (captain-relevant status already surfaced): $w"
             elif captain_call_stale_bound "$key" "$task"; then
               # The line is captain-relevant and stays so, but the backlog says
               # the captain already holds this work: further NEW pane hashes with
@@ -4002,6 +4148,7 @@ EOF
                 *) stale_end=''; stale_ident='' ;;
               esac
               mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
+              fm_wake_signal_sig "$stale_status" > "$(stale_terminal_surfaced_path "$task")" 2>/dev/null || true
               wake "$stale_reason"
             fi
           elif [ -e "$ssf" ] \
@@ -4021,11 +4168,28 @@ EOF
             # ordinary escalation ladder through this same gate. The cap being
             # configured is what keeps a leftover marker from holding a window
             # here once the operator has turned the cap back off.
-            wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf" "$task" "$h" "$dialog"
+            crew_state=
+            if claim_run_state_probe run-state-probed-terminal "$key"; then
+              crew_state=$(crew_state_line "$task" || true)
+            fi
+            surface_actionable_run_state_if_new "$w" "$task" "$h" "$crew_state" \
+              || wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf" "$task" "$h" "$dialog"
+          elif claim_run_state_probe run-state-probed-terminal "$key"; then
+            # Surfaced as genuinely terminal on a prior poll of this same hash:
+            # one capped probe per STALE_ESCALATE_SECS lets a run that has since
+            # resumed be absorbed, or a new run outcome surface.
+            crew_state=$(crew_state_line "$task" || true)
+            if [ "$(crew_absorb_class_from_state_line "$crew_state")" = working ]; then
+              printf '%s' "$h" > "$sf"
+              wedge_episode_end "$key" 0 1
+              date +%s > "$ssf"
+              clear_write_tracking "$key"
+              clear_actionable_run_state_surfaced "$task"
+              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+            else
+              surface_actionable_run_state_if_new "$w" "$task" "$h" "$crew_state" || true
+            fi
           fi
-          # else: already surfaced as genuinely terminal on a prior poll of
-          # this same hash - nothing left to do (matches the original,
-          # unmodified terminal-status behavior).
         else
           # Non-terminal stale: a crew gone quiet without a captain-relevant status.
           # Decided once per distinct stale hash (the costly state reads run only
@@ -4051,6 +4215,7 @@ EOF
                 # clear_pause_tracking, so this route is not a keep-count site.
                 wedge_episode_end "$key"
                 date +%s > "$ssf"
+                clear_actionable_run_state_surfaced "$task"
                 triage_log "absorbed non-terminal stale (provably working): $w"
                 ;;
               paused)
@@ -4109,7 +4274,9 @@ EOF
         clear_write_tracking "$key"
       fi
       task=$(window_to_task "$w" "$STATE")
-      if ! afk_present && status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")" && [ "$busy_now" -ne 0 ]; then
+      if [ "$busy_now" -ne 0 ] && surface_paused_actionable_run_state_if_new "$w" "$task" "$h"; then
+        :
+      elif ! afk_present && status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")" && [ "$busy_now" -ne 0 ]; then
         case "$(pause_state_class "$w" "$task")" in
           paused) handle_paused_stale "$w" "$task" "$h" ;;
           # Inconclusive, but the declared wait itself still stands, so only the
@@ -4130,6 +4297,7 @@ EOF
       fi
     fi
   done < <(recorded_windows)
+  flush_paused_stale_rechecks
 
   # Heartbeat: the watcher runs a cheap fleet-scan at a regular cadence no matter
   # what. Time-based via .last-heartbeat mtime; interval doubles per consecutive

@@ -460,6 +460,85 @@ test_unresolvable_relative_overrides_fail_loudly() {
   pass "unresolvable relative spawn overrides fail with named diagnostics"
 }
 
+# Write a typed dispatch receipt the way bin/fm-dispatch-resolve.sh does for the
+# task's current brief (bin/fm-dispatch-receipt-lib.sh owns the format).
+write_dispatch_receipt() {  # <home> <id> <status> <harness> <model> <effort>
+  (
+    . "$ROOT/bin/fm-dispatch-receipt-lib.sh"
+    fm_dispatch_receipt_write "$(fm_dispatch_receipt_path "$1/state" "$2")" \
+      "$1/data/$2/brief.md" "$3" "$4" "$5" "$6"
+  ) || fail "could not write the dispatch receipt fixture"
+}
+
+test_clear_receipt_supplies_an_omitted_profile() {
+  local rec id out status
+  id=profile-receipt-realize-z21
+  rec=$(make_spawn_case profile-receipt-realize claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  mkdir -p "$HOME_DIR/state"
+  write_dispatch_receipt "$HOME_DIR" "$id" clear codex gpt-5 medium
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "a clear receipt should supply the omitted profile: $out"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 medium
+  assert_grep "dispatch_receipt=realized" "$HOME_DIR/state/$id.meta" "meta did not record the realized receipt"
+  pass "a clear typed dispatch receipt supplies an omitted profile without a second resolution"
+}
+
+test_divergent_profile_needs_an_override_reason() {
+  local rec id out status
+  id=profile-receipt-diverge-z22
+  rec=$(make_spawn_case profile-receipt-diverge claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  mkdir -p "$HOME_DIR/state"
+  write_dispatch_receipt "$HOME_DIR" "$id" clear codex gpt-5 medium
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude)
+  status=$?
+  expect_code 1 "$status" "a divergent explicit profile must be refused without a reason"
+  assert_contains "$out" "diverges from the clear typed dispatch receipt" "divergence refusal did not name the receipt"
+  assert_absent "$HOME_DIR/state/$id.meta" "divergence refusal must happen before metadata is written"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude \
+    --dispatch-override-reason not_a_reason)
+  expect_code 1 $? "an unknown override reason must be refused"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude \
+    --dispatch-override-reason captain_override)
+  status=$?
+  expect_code 0 "$status" "a divergent profile with a known reason should launch: $out"
+  assert_grep "dispatch_receipt=overridden" "$HOME_DIR/state/$id.meta" "meta did not record the override"
+  assert_grep "dispatch_override_reason=captain_override" "$HOME_DIR/state/$id.meta" "meta did not record the reason"
+  pass "an explicit profile diverging from the clear receipt needs a known override reason"
+}
+
+test_stale_or_missing_receipt_is_never_enforced() {
+  local rec id out status
+  id=profile-receipt-stale-z23
+  rec=$(make_spawn_case profile-receipt-stale claude "$id")
+  read_case_record "$rec"
+  enable_dispatch_profile "$HOME_DIR"
+  mkdir -p "$HOME_DIR/state"
+  write_dispatch_receipt "$HOME_DIR" "$id" clear codex gpt-5 medium
+  printf '\nA later edit.\n' >> "$HOME_DIR/data/$id/brief.md"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 1 "$status" "a stale receipt must not supply a profile"
+  assert_contains "$out" "resolved from a different brief" "stale receipt was not reported"
+  assert_contains "$out" "config/crew-dispatch.json is active - pass an explicit harness" \
+    "a stale receipt must fall back to the explicit-profile backstop"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude \
+    --dispatch-override-reason captain_override)
+  expect_code 1 $? "an override reason without a current clear receipt must be refused"
+  assert_contains "$out" "needs a current clear typed dispatch receipt" "reason-without-receipt refusal was not explained"
+  pass "a stale or missing receipt is never enforced and an orphan override reason is refused"
+}
+
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   local rec id out status
   id=profile-required-ship-z11
@@ -2833,6 +2912,9 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
 test_unresolvable_relative_overrides_fail_loudly
 test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_clear_receipt_supplies_an_omitted_profile
+test_divergent_profile_needs_an_override_reason
+test_stale_or_missing_receipt_is_never_enforced
 test_active_dispatch_profile_requires_explicit_harness_for_scout
 test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness

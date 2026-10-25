@@ -26,6 +26,11 @@
 #
 #   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
+# A run-step detail also carries a stable run-generation token when the run exposes
+# one (run-id=/run-head=, or runs-row= on the coarse fallback), so a watcher can tell
+# one run outcome from the next without re-reading the run; bin/fm-classify-lib.sh
+# parses it.
+#
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
 #      recording remote_host= is a remote secondmate: its worktree and endpoint
@@ -1115,6 +1120,32 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
   fi
 fi
 
+# A stable run-generation token lets a watcher tell one run outcome from the next
+# without re-reading the run (bin/fm-classify-lib.sh parses it): run-id=/run-head=
+# from the selected run's own record, or runs-row= (the branch's newest runs-list
+# row, sanitized) on the coarse fallback, whose only other evidence is a status word.
+run_generation_token() {  # <value>
+  printf '%s' "$1" | LC_ALL=C tr -cs 'A-Za-z0-9._/@:-' '_'
+}
+
+run_generation_detail() {
+  local run_id run_head row detail=''
+  case "$RUN_SOURCE" in
+    full)
+      run_id=$(strip_quotes "$(nm_field id)")
+      run_head=$(strip_quotes "$(nm_field head)")
+      [ -n "$run_id" ] && detail="run-id=$(run_generation_token "$run_id")"
+      [ -n "$run_head" ] && detail="${detail}${detail:+ }run-head=$(run_generation_token "$run_head")"
+      ;;
+    coarse)
+      row=$(nm_runs_list | awk -v b="$CREW_BRANCH" '$2 == b { print; exit }')
+      [ -n "$row" ] && detail="runs-row=$(run_generation_token "$row")"
+      ;;
+  esac
+  [ -n "$detail" ] && printf '%s' "$detail"
+  return 0
+}
+
 # --- run-step authoritative path -------------------------------------------
 
 if [ "$HAVE_RUN" = 1 ]; then
@@ -1299,6 +1330,12 @@ if [ "$HAVE_RUN" = 1 ]; then
   esac
 
   [ -z "$SELECTED_RUN_ID" ] || RUN_DETAIL="$RUN_DETAIL${SEP}run: $SELECTED_RUN_ID"
+  case "$RUN_STATE" in
+    parked|done|failed)
+      run_generation=$(run_generation_detail)
+      [ -z "$run_generation" ] || RUN_DETAIL="$RUN_DETAIL${RUN_DETAIL:+$SEP}$run_generation"
+      ;;
+  esac
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi
 

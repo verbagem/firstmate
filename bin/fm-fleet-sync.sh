@@ -328,11 +328,20 @@ sync_project() {
     echo "$label: skipped: not a clone root (git would act on $proj_top)"
     return 0
   fi
-  if ! mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" "$label" 2>/dev/null); then
-    echo "$label: skipped: registry entry does not resolve to a delivery posture (run bin/fm-project-mode.sh $label for the refusal)"
+  mode_err=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync-mode.XXXXXX") || mode_err=/dev/null
+  if ! mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$proj_abs" 2>"$mode_err"); then
+    [ "$mode_err" = /dev/null ] || rm -f "$mode_err"
+    echo "$label: skipped: registry entry does not resolve to a delivery posture (run bin/fm-project-mode.sh --path $proj_abs for the refusal)"
     return 0
   fi
-  mode=${mode_line%% *}
+  # "<name> <mode> <yolo>": the registry name may contain spaces, so peel the last two words.
+  mode_rest=${mode_line% *}
+  mode=${mode_rest##* }
+  # A registered project reports under its registry name; an unregistered path keeps its full label.
+  if ! grep -q -e 'no project registered for path' -e 'no registry at' "$mode_err" 2>/dev/null; then
+    label=${mode_rest% *}
+  fi
+  [ "$mode_err" = /dev/null ] || rm -f "$mode_err"
   if [ "$mode" = "local-only" ]; then
     echo "$label: skipped: local-only project"
     return 0

@@ -617,7 +617,8 @@ clear_pause_tracking() {  # <window> <state>
     "$state/.wedge-rollback-failed-$watcher_key" \
     "$state/.writing-since-$watcher_key" "$state/.writing-resurfaced-$watcher_key" \
     "$state/.validating-since-$watcher_key" "$state/.validating-resurfaced-$watcher_key" \
-    "$state/.waiting-resurfaced-$watcher_key" "$state/.guard-deferrals-$watcher_key"
+    "$state/.waiting-resurfaced-$watcher_key" "$state/.guard-deferrals-$watcher_key" \
+    "$state/.run-state-probed-$watcher_key" "$state/.run-state-probed-terminal-$watcher_key"
 }
 
 reconcile_pause_tracking() {  # <window> <state> <last-status-line>
@@ -1815,6 +1816,12 @@ handle_wake() {  # <reason> <state>
                          || decision="escalate|${reason#stale: }"
                        ;;
                    esac ;;
+              esac
+              # An actionable validation run outcome (parked, done, failed) that the
+              # watcher surfaced on a paused pane is new information, not the pause
+              # itself, so it escalates whatever the pause classification said.
+              case "$stale_detail" in
+                validation\ run\ outcome:*) decision="escalate|${reason#stale: }" ;;
               esac ;;
     check:*)  decision=$(classify_check "$reason") ;;
     heartbeat|heartbeat:*) decision=$(classify_heartbeat) ;;
@@ -1835,7 +1842,12 @@ handle_wake() {  # <reason> <state>
   if [ "$kind" = stale ] && [ "$action" = escalate ]; then
     task=$(window_to_task "$arg" "$state")
     last=$(status_declared_wait_line "$state/$task.status")
-    reconcile_pause_tracking "$arg" "$state" "$last"
+    # A validation run outcome is news about the run, not a declared-wait recheck,
+    # so it leaves the pause bookkeeping exactly as it found it.
+    case "$stale_detail" in
+      validation\ run\ outcome:*) ;;
+      *) reconcile_pause_tracking "$arg" "$state" "$last" ;;
+    esac
   fi
   case "$action" in
     escalate)

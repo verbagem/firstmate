@@ -9,6 +9,13 @@
 # With --forge it prints one word instead: the project's registered forge,
 # none|gerrit|forgejo|external. The forge is asked for explicitly, so the
 # default output stays the same two words for every project, bound or not.
+# With --with-name the default (or --raw) output is prefixed by the resolved
+# registry name, "<name> <mode> <yolo>"; the name may contain spaces, so read
+# the mode and yolo as the LAST two words.
+# With --path <project-path> the project is resolved by canonical directory
+# instead of by name (see "Path lookups" below), so a project registered outside
+# projects/ gets its real posture and two projects sharing a basename cannot pick
+# each other's entry.
 #
 # MECHANICAL CONSUMERS ONLY. This answers "what posture did the captain register
 # for this project", never "how does this task ship". A task's delivery mode,
@@ -30,6 +37,10 @@
 #   - <name> [<mode> forge=gerrit] - <desc> (added <date>)           -> <mode> off, --forge gerrit
 #   - <name> [<mode> forge=forgejo] - <desc> (added <date>)          -> <mode> <yolo>, --forge forgejo
 #   - <name> [direct-PR forge=external] - <desc> (added <date>)      -> direct-PR off, --forge external
+#   - <name> [<mode> path=/absolute/project] - <desc> (added <date>) -> the entry's identity is that path
+#   path= runs to the closing ] so the path may contain spaces; it must be the last
+#   token (a mode, +yolo, or key=value token written after it is refused), appears
+#   once, and is absolute. It is never read as a mode, +yolo, branch, or forge token.
 #   <name> may contain spaces; it ends at the literal " [" or " - " that follows it.
 #   Bracket tokens are order-independent: +yolo, branch=<prefix>, and forge=<value>
 #   are recognized by their own shape wherever they appear, and whichever token is
@@ -91,6 +102,12 @@
 # tell a conditional policy apart from a flat mode sees "no-mistakes-prod-only"
 # itself. Not combined with --branch-prefix, which has no conditional-policy leg.
 #
+# Path lookups (--path) match structured identities only: one path= token inside
+# the registry annotation, or else the canonical in-home <projects>/<name> path.
+# They never parse descriptions, backticks, or prose such as "at <path>". An
+# unknown path keeps the protective default ("no-mistakes off", "fm/", or "none")
+# and warns; a malformed or ambiguous registered identity is refused (exit 2).
+#
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" (or
 # "fm/" under --branch-prefix) and warns to stderr, so a typo never silently
 # drops the gate. Other annotation tokens are ignored, as they always were, keyed
@@ -109,29 +126,141 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>
+# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] [--with-name] [--path <project-path>] [<project-name>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
-case "${1:-}" in
-  --raw) RAW=1; shift ;;
-  --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
-  --forge) WANT_FORGE=1; shift ;;
-esac
-NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>}
+WITH_NAME=0
+PATH_ARG=
+NAME=
+USAGE="usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] [--with-name] [--path <project-path>] [<project-name>]"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --raw) RAW=1 ;;
+    --branch-prefix) BRANCH_PREFIX_QUERY=1 ;;
+    --forge) WANT_FORGE=1 ;;
+    --with-name) WITH_NAME=1 ;;
+    --path)
+      [ "$#" -ge 2 ] || { echo "$USAGE" >&2; exit 2; }
+      PATH_ARG=$2
+      shift
+      ;;
+    --path=*) PATH_ARG=${1#--path=} ;;
+    --*) echo "$USAGE" >&2; exit 2 ;;
+    *)
+      [ -z "$NAME" ] || { echo "$USAGE" >&2; exit 2; }
+      NAME=$1
+      ;;
+  esac
+  shift
+done
+[ -n "$NAME" ] || [ -n "$PATH_ARG" ] || { echo "$USAGE" >&2; exit 2; }
+[ -z "$NAME" ] || [ -z "$PATH_ARG" ] || { echo "$USAGE" >&2; exit 2; }
+
+emit_default() {  # <name>: the protective default in whichever form was asked for
+  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
+    echo "fm/"
+  elif [ "$WANT_FORGE" -eq 1 ]; then echo none
+  elif [ "$WITH_NAME" -eq 1 ]; then echo "$1 no-mistakes off"
+  else echo "no-mistakes off"; fi
+}
+
+normalize_path() {  # <path>: physical path of a directory, else the absolute spelling
+  local p=$1
+  [ -n "$p" ] || return 1
+  if [ -d "$p" ]; then ( cd "$p" && pwd -P ); return; fi
+  case "$p" in
+    /*) ;;
+    *) p="$(pwd -P)/$p" ;;
+  esac
+  while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p=${p%/}; done
+  printf '%s\n' "$p"
+}
+
+# Path lookup resolves the registry NAME (and its line, so duplicate names cannot
+# cross) before the ordinary name-based parse below.
+SEL_LINE=0
+if [ -n "$PATH_ARG" ]; then
+  NAME=$(basename -- "$PATH_ARG")
+  if [ ! -f "$REG" ]; then
+    echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
+    emit_default "$NAME"
+    exit 0
+  fi
+  target=$(normalize_path "$PATH_ARG") || target=
+  case "$target" in
+    /*) ;;
+    *) echo "error: --path must be an absolute path or an existing directory: $PATH_ARG" >&2; exit 2 ;;
+  esac
+  idents=$(awk -v projects="$PROJECTS" '
+    function bail(msg) { print "err", msg; exit }
+    substr($0, 1, 2) != "- " { next }
+    {
+      rest = substr($0, 3);
+      i = index(rest, " [");
+      j = index(rest, " - ");
+      if (i > 0 && (j == 0 || i < j)) { nm = substr(rest, 1, i - 1); ann = substr(rest, i + 2); c = index(ann, "]"); ann = c ? substr(ann, 1, c - 1) : "" }
+      else if (j > 0) { nm = substr(rest, 1, j - 1); ann = "" }
+      else { nm = rest; ann = "" }
+      cand = projects "/" nm;
+      p = index(ann, "path=");
+      if (p > 0 && (p == 1 || substr(ann, p - 1, 1) == " ")) {
+        pv = substr(ann, p + 5);
+        if (index(pv, "path=") > 0) bail("malformed path identity for " nm ": multiple path= tokens");
+        sub(/[[:space:]]+$/, "", pv);
+        nt = split(pv, tk, " ");
+        for (t = 2; t <= nt; t++)
+          if (tk[t] ~ /^\+/ || tk[t] ~ /=/ || tk[t] ~ /^(no-mistakes|direct-PR|local-only|no-mistakes-prod-only)$/)
+            bail("malformed path identity for " nm ": path= must be the last annotation token; found trailing token(s) \"" tk[t] "\" after path= in registry line: " $0);
+        if (substr(pv, 1, 1) != "/") bail("malformed path identity for " nm ": path= must be an absolute path");
+        cand = pv;
+      }
+      print "ident", NR "\t" nm "\t" cand
+    }
+  ' "$REG")
+  matches=0
+  match_names=
+  while IFS= read -r row; do
+    case "$row" in
+      "err "*) echo "error: ${row#err }" >&2; exit 2 ;;
+      "ident "*)
+        row=${row#ident }
+        r_ln=${row%%$'\t'*}; row=${row#*$'\t'}
+        r_name=${row%%$'\t'*}; r_cand=${row#*$'\t'}
+        if [ "$(normalize_path "$r_cand")" = "$target" ]; then
+          matches=$((matches + 1))
+          SEL_LINE=$r_ln
+          NAME=$r_name
+          match_names="$match_names${match_names:+, }$r_name"
+        fi
+        ;;
+    esac
+  done <<PATHROWS
+$idents
+PATHROWS
+  if [ "$matches" -eq 0 ]; then
+    NAME=$(basename -- "$PATH_ARG")
+    echo "warn: no project registered for path \"$PATH_ARG\"; defaulting $NAME to no-mistakes off" >&2
+    emit_default "$NAME"
+    exit 0
+  fi
+  if [ "$matches" -gt 1 ]; then
+    echo "error: ambiguous path identity \"$PATH_ARG\" matches multiple projects: $match_names" >&2
+    exit 2
+  fi
+fi
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
-  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
-    echo "fm/"
-  elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
+  emit_default "$NAME"
   exit 0
 fi
 
@@ -141,7 +270,7 @@ fi
 # token, so an empty value survives the split), or nothing if the project is
 # absent. Every other token beside the mode is ignored, exactly as before either
 # annotation existed.
-parsed=$(awk -v n="$NAME" '
+parsed=$(awk -v n="$NAME" -v sel="$SEL_LINE" '
   function dist(x, y,   i, j, lx, ly, d, c, v) {
     lx = length(x); ly = length(y);
     for (i=0; i<=lx; i++) d[i,0] = i;
@@ -161,6 +290,7 @@ parsed=$(awk -v n="$NAME" '
     # with "- " n, and the text right after the name must be empty, or start
     # with " [" or " - ", so a name that is a leading prefix of a longer
     # registered name does not match that longer row.
+    if (sel + 0 > 0 && NR != sel + 0) next
     prefix = "- " n; plen = length(prefix);
     if (substr($0, 1, plen) != prefix) next
     after = substr($0, plen + 1);
@@ -178,6 +308,8 @@ parsed=$(awk -v n="$NAME" '
       # spelling), and the first token left over is the mode.
       mode_set = 0
       for (j=1; j<=k; j++) {
+        # path= is an identity, never a mode; it must be last and may hold spaces.
+        if (a[j] ~ /^path=/) break
         if (a[j]=="+yolo") { yolo="on"; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
@@ -199,9 +331,7 @@ parsed=$(awk -v n="$NAME" '
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
-  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
-    echo "fm/"
-  elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
+  emit_default "$NAME"
   exit 0
 fi
 
@@ -260,4 +390,4 @@ fi
 if [ "$RAW" -eq 0 ] && [ "$mode" = no-mistakes-prod-only ]; then
   mode=no-mistakes
 fi
-echo "$mode $yolo"
+if [ "$WITH_NAME" -eq 1 ]; then echo "$NAME $mode $yolo"; else echo "$mode $yolo"; fi

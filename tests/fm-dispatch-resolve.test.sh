@@ -1087,4 +1087,24 @@ expect_code 0 "$code" "--help exits 0"
 assert_contains "$out" 'Usage:' "--help prints usage"
 pass "configuration errors exit 2 before any network call"
 
+# --- single-resolution receipt for a task brief --------------------------------
+TASK_ID=receipt-task
+mkdir -p "$HOME_DIR/data/$TASK_ID" "$HOME_DIR/state"
+cp "$BRIEF" "$HOME_DIR/data/$TASK_ID/brief.md"
+RECEIPT="$HOME_DIR/state/$TASK_ID.dispatch-receipt"
+reset_log
+write_response "$RESPONSE" rule_4 0.9
+TYPESAFE_API_KEY=$KEY run code out err "$HOME_DIR/data/$TASK_ID/brief.md" --project pager
+expect_code 0 "$code" "task-brief resolution exits 0"
+assert_contains "$out" '  status: clear' "task-brief resolution is clear"
+assert_present "$RECEIPT" "a clear task-brief resolution records its receipt"
+grep -qx 'status=clear' "$RECEIPT" || fail "receipt records the clear status"
+grep -qx 'harness=cursor' "$RECEIPT" || fail "receipt records the chosen harness"
+grep -qx 'model=cursor-grok-4.6-medium' "$RECEIPT" || fail "receipt records the chosen model"
+grep -qx 'effort=' "$RECEIPT" || fail "receipt keeps an absent effort empty"
+[ "$(stat -f %Lp "$RECEIPT" 2>/dev/null || stat -c %a "$RECEIPT")" = 600 ] || fail "receipt must be private (0600)"
+run_without_curl code out err "$HOME_DIR/data/$TASK_ID/brief.md" --project pager
+assert_absent "$RECEIPT" "a later run that yields no answer drops the earlier receipt"
+pass "a task-brief resolution records exactly one private receipt for fm-spawn.sh to enforce"
+
 printf '# all fm-dispatch-resolve tests passed\n'

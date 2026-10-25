@@ -2542,10 +2542,8 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signal and first-sighting stale paths, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
-crew_absorb_class() {  # <id>
-  local id=$1 line state src
-  [ -n "$id" ] || { printf 'none'; return; }
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+crew_absorb_class_from_state_line() {  # <line>
+  local line=$1 state src
   case "$line" in state:*) ;; *) printf 'none'; return ;; esac
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
@@ -2554,6 +2552,52 @@ crew_absorb_class() {  # <id>
     case "$src" in run-step|pane) printf 'working'; return ;; esac
   fi
   printf 'none'
+}
+
+crew_state_line() {  # <id>
+  local id=$1
+  [ -n "$id" ] || return 1
+  # No stdin: callers read a while-read loop, and a probe must not eat its rows.
+  "$FM_CREW_STATE_BIN" "$id" 2>/dev/null </dev/null || true
+}
+
+crew_absorb_class() {  # <id>
+  local line
+  line=$(crew_state_line "$1" || true)
+  crew_absorb_class_from_state_line "$line"
+}
+
+crew_actionable_run_state_line_from_state_line() {  # <line>
+  local line=$1 state src
+  case "$line" in state:*) ;; *) return 1 ;; esac
+  state=${line#state: }; state=${state%% *}
+  src=${line#*source: }; src=${src%% *}
+  case "$state" in
+    parked|done|failed) [ "$src" = run-step ] || return 1 ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$line"
+}
+
+# The once-per-run-generation identity of an actionable run outcome: the state word
+# plus the run-generation tokens bin/fm-crew-state.sh appends (run-id=, run-head=,
+# runs-row=), so a change in the human-readable detail alone never re-surfaces it.
+# A line that carries no token is its own identity.
+crew_actionable_run_state_marker_from_state_line() {  # <line>
+  local line state tok toks='' parts
+  line=$(crew_actionable_run_state_line_from_state_line "$1") || return 1
+  state=${line#state: }; state=${state%% *}
+  read -ra parts <<< "$line"
+  for tok in "${parts[@]}"; do
+    case "$tok" in run-id=*|run-head=*|runs-row=*) toks="$toks $tok" ;; esac
+  done
+  if [ -n "$toks" ]; then printf '%s%s\n' "$state" "$toks"; else printf '%s\n' "$line"; fi
+}
+
+crew_actionable_run_state_line() {  # <id>
+  local line
+  line=$(crew_state_line "$1" || true)
+  crew_actionable_run_state_line_from_state_line "$line"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class

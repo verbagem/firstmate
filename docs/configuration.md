@@ -1652,6 +1652,16 @@ bin/fm-dispatch-resolve.sh data/<id>/brief.md --project <name>        # TOON blo
 
 Firstmate invokes the resolve path directly after writing the brief, without a preflight; the absent-key off line is handled exactly like every other non-clear outcome.
 
+**Single-resolution receipt**
+
+The resolver is the only model resolution for a task, so two model calls can never disagree about one intake.
+Run on a task's `data/<id>/brief.md`, it first drops any earlier `state/<id>.dispatch-receipt`, then records this run's status and chosen profile there, private and bound to the brief's SHA-256; off, error, and no-rules outcomes leave no receipt.
+`bin/fm-dispatch-receipt-lib.sh` owns the receipt format.
+A fresh crewmate or scout `fm-spawn.sh` never resolves again: a current `clear` receipt supplies the profile when no profile flags are passed, a matching explicit profile launches as given, and a profile that diverges on any of harness, model, or effort is refused unless `--dispatch-override-reason` names one of `adapter_unavailable`, `catalog_rejection`, `credential_failure`, `privacy_veto`, `quota_runway_veto`, `captain_override`, or `supported_manual_override`.
+The reason is refused without a current clear receipt to diverge from, when the profile already matches the receipt, and on relaunch or secondmate spawns.
+A receipt whose brief hash no longer matches is stale and never enforced; spawn says so and falls back to the explicit-profile backstop.
+Task metadata records `dispatch_receipt=realized|matched|overridden|absent|stale|<non-clear status>` and any `dispatch_override_reason=`, and teardown removes the receipt.
+
 **What the model receives**
 
 When on and at least one rule exists, the tool sends the project name and the brief's task-specific text as state and asks one Choice question whose options are every rule's `when` plus the fixed neutral option for no matching rule; the model never sees quota, catalogs, `why`, `use`, approvals, or confidence floors.
@@ -1822,9 +1832,30 @@ An absent required tool with an automated install path reports `MISSING:` with i
 - An absent `treehouse` reports `MISSING:` with its install command, while an installed build without `treehouse get --lease` support reports `OUTDATED:` with the `treehouse update` upgrade.
 - An absent `no-mistakes` reports `MISSING:` with its install command, while a version below 1.46.0 or an unparseable version reports `OUTDATED:` with the `no-mistakes update` upgrade.
 - An absent `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)` and a below-floor or feature-incompatible one reports `OUTDATED:` with its required version and any missing feature-probe capability, while retaining that same `npm install -g tasks-axi` upgrade; when `config/backlog-backend` is not `manual`, a home with a configured non-markdown adapter or a markdown backlog refuses lifecycle mutation until compatible `tasks-axi` is on `PATH`, while a manual-backend home keeps its backlog hand-edited.
+- An absent `backpass` reports `MISSING: backpass (install: npm install -g backpass)` and a version below 0.1.16 or an unparseable one reports `OUTDATED:` with that same `npm install -g backpass` upgrade, since it ships no self-updater; see "backpass" below.
 - An absent `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)` and an outdated one reports `OUTDATED:` with its `gh-axi update` upgrade.
 - An absent or board-incompatible `lavish-axi` reports `PRESENTATION_UNAVAILABLE` with the 0.1.77 compatibility floor, install command, and explicit text fallback; compatible versions below 0.1.80 retain legacy board replies and report an upgrade recommendation for synchronous acceptance, while [`bootstrap-diagnostics`](../.agents/skills/bootstrap-diagnostics/SKILL.md) owns diagnostic handling.
 - An absent `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)` and an incompatible one reports `OUTDATED:` with its `quota-axi update` upgrade; firstmate cannot resolve a profile array without a compatible binary.
+
+### backpass
+
+`backpass` reads a firstmate home's own local agent-session transcripts and proposes evidence-backed edits to `AGENTS.md`, `CLAUDE.md`, and skills.
+It never writes on its own, so `backpass apply` is the human gate that reviews and accepts or rejects each proposed edit.
+It requires `acpx` on `PATH`, since every model call it makes goes through an already-authenticated harness rather than its own API key.
+Run it periodically rather than on every session, for example after a notable batch of sessions.
+Firstmate presents `backpass`'s proposed edits to the captain for review and never runs `backpass apply` on its own.
+
+### Tool auto-update (config/tool-autoupdate, opt-in)
+
+The local, gitignored `config/tool-autoupdate` presence flag (any content, including empty, enables it) opts a home in to unattended updates of a fixed set of already-installed tools.
+Absent the flag, which is the default, nothing changes: bootstrap and `bin/fm-tool-update-check.sh` only report, and every install or upgrade still waits for captain consent.
+Once opted in, the deferred network stage of `bin/fm-bootstrap.sh` checks `gh-axi`, `chrome-devtools-axi`, `lavish-axi`, `tasks-axi`, `quota-axi`, `acpx`, `backpass`, and `gnhf` when each is already on `PATH`.
+For any whose installed version sorts strictly below the registry version it runs `npm install -g <pkg>@<version>`, pinned to the version it checked, and never downgrades a newer or pre-release install.
+It never installs a missing tool, never touches `treehouse` or `no-mistakes`, and never restarts a daemon or an active worker's tool.
+The sweep runs at most once per 24h (`state/.tool-autoupdate-checked`), only while the session still holds the fleet lock, and never in a read-only session.
+`FM_TOOL_AUTOUPDATE_TIMEOUT` (default 60 seconds) bounds it, and `FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS` (default 0) holds a release younger than that many days until a later run; non-numeric values fall back to the defaults.
+A completed update prints one `BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ...` line.
+A failed install, failed registry or publish-date lookup, missing `npm`, or timeout prints an actionable `TOOL_AUTOUPDATE: ...` line.
 
 **Checkout diagnostics**
 
@@ -3008,6 +3039,8 @@ FM_WORKTREE_WRITE_TIMEOUT=10       # wall-clock seconds that one walk may take, 
 FM_WATCH_TRIAGE_LOG_MAX_BYTES=262144   # size cap for the watcher's absorbed-wake debug log
 FM_FLEET_SYNC_BOOTSTRAP_TIMEOUT=     # optional seconds allowed for bootstrap's best-effort clone refresh; unset/blank defaults to max(20, 5 + 3 * origin-backed-project-count)
 FM_FLEET_PRUNE=1        # set to 0 to skip pruning local branches whose upstream is gone
+FM_TOOL_AUTOUPDATE_TIMEOUT=60   # seconds bounding the opt-in config/tool-autoupdate sweep; non-numeric falls back to 60
+FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=0   # days a registry release must age before that sweep installs it; non-numeric falls back to 0
 FM_STALE_WORKTREE_LOCK_AGE_SECS=30       # min mtime age before fm-teardown.sh treats a leftover worktree git index.lock as provably stale
 FM_TREEHOUSE_RETURN_LOCK_RETRIES=3        # retries after a treehouse return fails on the transient git index.lock signature
 FM_TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS=1 # seconds fm-teardown.sh waits before each retry after that signature

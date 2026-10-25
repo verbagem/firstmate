@@ -92,6 +92,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-timing-lib.sh"
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
+# shellcheck source=bin/fm-dispatch-receipt-lib.sh
+. "$SCRIPT_DIR/fm-dispatch-receipt-lib.sh"
 
 CONFIDENCE_FLOOR=0.6
 TS_MODEL=jev-latest
@@ -124,6 +126,23 @@ while [ $# -gt 0 ]; do
     *) [ -z "$BRIEF" ] || die "one brief file only"; BRIEF=$1; shift ;;
   esac
 done
+
+# Single-resolution receipt (bin/fm-dispatch-receipt-lib.sh): a task brief at
+# data/<id>/brief.md drops any earlier receipt now, so only this run's answer
+# can ever be enforced by fm-spawn.sh; off, error, and no-rules leave none.
+RECEIPT=''
+receipt_init() {
+  local data state brief_dir brief_parent
+  [ -n "$BRIEF" ] && [ "${BRIEF##*/}" = brief.md ] || return 0
+  case "$BRIEF" in */*) brief_parent=${BRIEF%/*} ;; *) brief_parent=. ;; esac
+  data=$(cd "${FM_DATA_OVERRIDE:-$FM_HOME/data}" 2>/dev/null && pwd -P) || return 0
+  state="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+  brief_dir=$(cd "$brief_parent" 2>/dev/null && pwd -P) || return 0
+  [ "${brief_dir%/*}" = "$data" ] && [ -d "$state" ] || return 0
+  RECEIPT=$(fm_dispatch_receipt_path "$state" "${brief_dir##*/}")
+  rm -f "$RECEIPT"
+}
+receipt_init
 
 # ---- opt-in gate ---------------------------------------------------------------
 DISPATCH_PROVIDER=${FM_DISPATCH_PROVIDER:-}
@@ -162,6 +181,7 @@ esac
 # ---- inputs --------------------------------------------------------------------
 [ -n "$BRIEF" ] || die "brief file required (see --help)"
 [ -r "$BRIEF" ] || die "brief file not readable: $BRIEF"
+
 [ -e "$RULES_PATH" ] || [ -L "$RULES_PATH" ] || no_rules
 [ -r "$RULES_PATH" ] || die "rules file not readable: $RULES_PATH"
 command -v jq >/dev/null 2>&1 || die "jq required"
@@ -558,4 +578,10 @@ TEXT=$(jq -r '
       + (if .chosen.profile.model then " --model \(.chosen.profile.model | shell_arg)" else "" end)
       + (if .chosen.profile.effort then " --effort \(.chosen.profile.effort | shell_arg)" else "" end) else empty end)' <<<"$RESULT") || emit_error "output rendering failed"
 printf '%s\n' "$TEXT"
+if [ -n "$RECEIPT" ]; then
+  RECEIPT_FIELDS=$(jq -r '[.status, (.chosen.profile.harness // ""), (.chosen.profile.model // ""), (.chosen.profile.effort // "")] | join("|")' <<<"$RESULT") \
+    && IFS='|' read -r R_STATUS R_HARNESS R_MODEL R_EFFORT <<<"$RECEIPT_FIELDS" \
+    && fm_dispatch_receipt_write "$RECEIPT" "$BRIEF" "$R_STATUS" "$R_HARNESS" "$R_MODEL" "$R_EFFORT" \
+    || printf 'dispatch-resolve: warning: could not record the dispatch receipt %s; fm-spawn.sh will require an explicit profile\n' "$RECEIPT" >&2
+fi
 exit 0

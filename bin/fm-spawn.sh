@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
-#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--dispatch-override-reason <reason>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--dispatch-override-reason <reason>] [--backend <name>] [--herdr-resume-lock-wait]
+#        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--dispatch-override-reason <reason>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -228,10 +228,22 @@
 #   A batch reports such a pair as `batch: DEFERRED` and exits 75 when nothing
 #   else failed. A relaunch and a --secondmate spawn are never counted against
 #   capacity.
+#   Typed dispatch receipt: bin/fm-dispatch-resolve.sh, run by firstmate on the
+#   task's data/<id>/brief.md, is the only model resolution and records
+#   state/<id>.dispatch-receipt (bin/fm-dispatch-receipt-lib.sh). A fresh
+#   crewmate/scout spawn never resolves again: a current clear receipt supplies
+#   an omitted profile, and an explicit profile that diverges from it on any
+#   axis is refused unless --dispatch-override-reason names one of
+#   adapter_unavailable, catalog_rejection, credential_failure, privacy_veto,
+#   quota_runway_veto, captain_override, or supported_manual_override. The flag
+#   is refused without a current clear receipt to diverge from, when the
+#   profile already matches it, and on relaunch or secondmate spawns. A receipt
+#   whose brief hash no longer matches is stale and never enforced.
 #   With no harness arg, a crewmate/scout spawn resolves the CREW harness only when
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
-#   spawns require an explicit harness so firstmate cannot silently skip dispatch
-#   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
+#   spawns require an explicit harness, or a current clear typed dispatch
+#   receipt (above), so firstmate cannot silently skip dispatch profile
+#   consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin|commandcode|cortex)
@@ -709,6 +721,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-dispatch-receipt-lib.sh
+. "$SCRIPT_DIR/fm-dispatch-receipt-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 
@@ -937,6 +951,9 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+DISPATCH_OVERRIDE_REASON=
+DISPATCH_OVERRIDE_REASON_SET=0
+DISPATCH_RECEIPT_STATUS=
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -972,6 +989,10 @@ for a in "$@"; do
     effort)
       EFFORT=$a
       EFFORT_SET=1
+      ;;
+    dispatch-override-reason)
+      DISPATCH_OVERRIDE_REASON=$a
+      DISPATCH_OVERRIDE_REASON_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -1031,6 +1052,11 @@ for a in "$@"; do
     MODEL_SET=1
     ;;
   --effort) want_value=effort ;;
+  --dispatch-override-reason) want_value=dispatch-override-reason ;;
+  --dispatch-override-reason=*)
+    DISPATCH_OVERRIDE_REASON=${a#--dispatch-override-reason=}
+    DISPATCH_OVERRIDE_REASON_SET=1
+    ;;
   --effort=*)
     EFFORT=${a#--effort=}
     EFFORT_SET=1
@@ -2458,6 +2484,74 @@ else
   ARG3=${POS[2]:-}
 fi
 [ -z "$HARNESS_ARG" ] || ARG3=$HARNESS_ARG
+
+# Enforce the single typed dispatch receipt (header: "Typed dispatch receipt").
+# Runs before harness resolution so a realized profile flows through the same
+# launch validation as an explicit one.
+dispatch_receipt_enforce() {
+  local receipt brief sha r_harness r_model r_effort
+  if [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 1 ]; then
+    case "$DISPATCH_OVERRIDE_REASON" in
+      adapter_unavailable|catalog_rejection|credential_failure|privacy_veto|quota_runway_veto|captain_override|supported_manual_override) ;;
+      *) echo "error: --dispatch-override-reason must be one of adapter_unavailable, catalog_rejection, credential_failure, privacy_veto, quota_runway_veto, captain_override, supported_manual_override" >&2; exit 1 ;;
+    esac
+  fi
+  if [ "$RELAUNCH" -eq 1 ] || [ "$KIND" = secondmate ] || [ ! -f "$CONFIG/crew-dispatch.json" ]; then
+    [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || {
+      echo "error: --dispatch-override-reason applies only to a fresh crewmate or scout spawn under an active config/crew-dispatch.json" >&2
+      exit 1
+    }
+    return 0
+  fi
+  receipt=$(fm_dispatch_receipt_path "$STATE" "$ID")
+  brief="$DATA/$ID/brief.md"
+  DISPATCH_RECEIPT_STATUS=absent
+  if [ -f "$receipt" ] && [ ! -L "$receipt" ]; then
+    sha=$(fm_dispatch_brief_sha "$brief" 2>/dev/null) || sha=
+    if [ -n "$sha" ] && [ "$(fm_dispatch_receipt_field "$receipt" brief_sha256)" = "$sha" ] \
+       && [ "$(fm_dispatch_receipt_field "$receipt" schema)" = "$FM_DISPATCH_RECEIPT_SCHEMA" ]; then
+      DISPATCH_RECEIPT_STATUS=$(fm_dispatch_receipt_field "$receipt" status) || DISPATCH_RECEIPT_STATUS=absent
+    else
+      DISPATCH_RECEIPT_STATUS=stale
+      echo "warning: the typed dispatch receipt for $ID was resolved from a different brief; ignoring it (rerun bin/fm-dispatch-resolve.sh on the current brief to enforce a typed selection)" >&2
+    fi
+  fi
+  if [ "$DISPATCH_RECEIPT_STATUS" != clear ]; then
+    [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || {
+      echo "error: --dispatch-override-reason needs a current clear typed dispatch receipt for $ID to diverge from (receipt: $DISPATCH_RECEIPT_STATUS)" >&2
+      exit 1
+    }
+    return 0
+  fi
+  r_harness=$(fm_dispatch_receipt_field "$receipt" harness) || r_harness=
+  r_model=$(fm_dispatch_receipt_field "$receipt" model) || r_model=
+  r_effort=$(fm_dispatch_receipt_field "$receipt" effort) || r_effort=
+  if [ -z "$ARG3" ] && [ "$MODEL_SET" -eq 0 ] && [ "$EFFORT_SET" -eq 0 ]; then
+    [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || {
+      echo "error: --dispatch-override-reason given without an explicit profile; the clear receipt for $ID is launched as recorded" >&2
+      exit 1
+    }
+    ARG3=$r_harness
+    MODEL=$r_model
+    EFFORT=$r_effort
+    DISPATCH_RECEIPT_STATUS=realized
+    return 0
+  fi
+  if [ "$ARG3" = "$r_harness" ] && [ "$MODEL" = "$r_model" ] && [ "$EFFORT" = "$r_effort" ]; then
+    [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 0 ] || {
+      echo "error: --dispatch-override-reason given but the explicit profile matches the clear receipt for $ID; drop the reason" >&2
+      exit 1
+    }
+    DISPATCH_RECEIPT_STATUS=matched
+    return 0
+  fi
+  [ "$DISPATCH_OVERRIDE_REASON_SET" -eq 1 ] || {
+    echo "error: the explicit profile (--harness ${ARG3:-<none>} --model ${MODEL:-<none>} --effort ${EFFORT:-<none>}) diverges from the clear typed dispatch receipt for $ID (--harness $r_harness --model ${r_model:-<none>} --effort ${r_effort:-<none>}); launch the receipt profile or pass --dispatch-override-reason with the concrete reason" >&2
+    exit 1
+  }
+  DISPATCH_RECEIPT_STATUS=overridden
+}
+dispatch_receipt_enforce
 
 shell_quote() {
   printf "'"
@@ -3983,7 +4077,24 @@ delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task 
 # would launch a worker whose instructions and whose recorded task delivery
 # differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
-  PROJ_NAME=$(basename "$PROJ_ABS")
+  # Resolve the registered project by canonical physical path (a symlinked prefix
+  # such as macOS /tmp must not hide a registered path=), so a project registered
+  # outside projects/ gets its real name and posture and a basename collision
+  # cannot pick the wrong entry. The lookup is advisory: a registry refusal
+  # degrades to the basename and the protective default instead of blocking.
+  PROJ_PHYS=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_PHYS=$PROJ_ABS
+  STANDING_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-mode.XXXXXX") || STANDING_ERR=/dev/null
+  if STANDING_LINE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$PROJ_PHYS" 2>"$STANDING_ERR"); then
+    # "<name> <mode> <yolo>": the name may contain spaces, so peel the last two words.
+    STANDING_REST=${STANDING_LINE% *}
+    STANDING_MODE=${STANDING_REST##* }
+    PROJ_NAME=${STANDING_REST% *}
+  else
+    PROJ_NAME=$(basename "$PROJ_ABS")
+    STANDING_MODE=no-mistakes
+    echo "warning: registered mode lookup failed: $(head -n 1 "$STANDING_ERR" 2>/dev/null); assuming the default standing posture ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
+  fi
+  [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
   # local-only) resolves to no posture at all, and launching on the silent
@@ -3995,7 +4106,6 @@ if [ "$KIND" = ship ]; then
     exit 1
   fi
   [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
-  STANDING_MODE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw "$PROJ_NAME" 2>/dev/null | cut -d' ' -f1) || STANDING_MODE=
   BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   BRIEF_FORGE=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]forge=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   [ -n "$BRIEF_FORGE" ] || BRIEF_FORGE=none
@@ -6654,6 +6764,8 @@ preserve_relaunch_meta() {
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
+  [ -z "$DISPATCH_RECEIPT_STATUS" ] || echo "dispatch_receipt=$DISPATCH_RECEIPT_STATUS"
+  [ -z "$DISPATCH_OVERRIDE_REASON" ] || echo "dispatch_override_reason=$DISPATCH_OVERRIDE_REASON"
   if [ "$RAW_LAUNCH" = 0 ]; then
     case "$HARNESS" in
       claude) echo "approval_mode=$CLAUDE_PERMISSION_MODE" ;;
