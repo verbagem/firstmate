@@ -39,7 +39,6 @@ BASE_PATH="$TOOLS:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # Real socket-owner holders for the Darwin birth check: python blocked on a fifo
 # this test keeps open, with exactly the marker environment each birth needs.
-JQ=$(command -v jq)
 HOLDER=$(command -v python3)
 HOLDER_FD=5
 hold() { # <marker-env...> -> HOLDER_PID
