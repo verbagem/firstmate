@@ -1987,8 +1987,8 @@ treehouse_listed_worktree_path() {  # <dir> <cd-dir>
 # firstmate:<task-id>; any other durable lease refuses. Lease state that cannot
 # be read refuses either way, so another owner's live copy is never touched.
 # The verified guard is exposed through TREEHOUSE_VERIFIED_LEASE_ID/_HOLDER.
-treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [<lease-id> <lease-holder>]
-  local dir=$1 cd_dir=$2 label=$3 task_id=$4 meta=$5 recorded_id=${6:-} recorded_holder=${7:-}
+treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [<lease-id> <lease-holder> <required-holder>]
+  local dir=$1 cd_dir=$2 label=$3 task_id=$4 meta=$5 recorded_id=${6:-} recorded_holder=${7:-} required_holder=${8:-}
   local want status entries rows name path lease_id lease_holder reason="" ownership found=0 matches=0
   local guard_name='' guard_holder result leased_path
   TREEHOUSE_VERIFIED_LEASE_ID=
@@ -2036,9 +2036,20 @@ treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [
   while IFS=$'\t' read -r path lease_id lease_holder; do
     [ -n "$path" ] || continue
     [ "$(canonical_existing_dir "$path" || printf '%s' "$path")" = "$want" ] || continue
+    if [ -n "$required_holder" ]; then
+      if [ "$lease_holder" = "$required_holder" ] && [ -n "$lease_id" ] \
+         && { [ -z "$recorded_id" ] || [ "$lease_id" = "$recorded_id" ]; } \
+         && { [ -z "$recorded_holder" ] || [ "$lease_holder" = "$recorded_holder" ]; }; then
+        TREEHOUSE_VERIFIED_LEASE_ID=$lease_id
+        TREEHOUSE_VERIFIED_LEASE_HOLDER=$lease_holder
+        return 0
+      fi
+      echo "error: $label '$dir' of task $task_id must hold a Treehouse lease with holder '$required_holder', but Treehouse reports lease '${lease_id:-none}' with holder '${lease_holder:-none}'; refusing to touch the copy. The copy, its lease, its work and this record were left untouched" >&2
+      return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+    fi
     if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
-      if { [ -n "$recorded_id" ] && [ "$lease_id" = "$recorded_id" ]; } \
-         || { [ -z "$recorded_id" ] && [ "$lease_holder" = "$recorded_holder" ]; }; then
+      if { [ -z "$recorded_id" ] || [ "$lease_id" = "$recorded_id" ]; } \
+         && { [ -z "$recorded_holder" ] || [ "$lease_holder" = "$recorded_holder" ]; }; then
         found=1
         continue
       fi
@@ -2054,6 +2065,10 @@ treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [
     echo "error: $label '$dir' of task $task_id is durably leased in Treehouse (lease '${lease_id:-none}', holder '${lease_holder:-none}'), but $ownership; refusing to touch another owner's copy. The copy, its lease, its work and this record were left untouched. Inspect '$meta' against 'treehouse status --json' in '$cd_dir'; if the holder is another owner, this record no longer owns the copy, so retire only the record by moving '$meta' aside once task $task_id's branch and work are confirmed safe elsewhere" >&2
     return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
   done <<<"$entries"
+  if [ -n "$required_holder" ]; then
+    echo "error: $label '$dir' of task $task_id is not listed under a Treehouse lease with required holder '$required_holder'; refusing to touch a released or unleased copy. The copy, its work and this record were left untouched" >&2
+    return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+  fi
   if [ -z "$recorded_id" ] && [ -z "$recorded_holder" ] && [ "$matches" -eq 1 ]; then
     # A legacy record's pooled copy that no lease holds yet: take this task's own
     # durable guard before anything destructive, so no other allocator can be
@@ -2084,7 +2099,7 @@ treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
 # stale git index.lock left by a killed crew process. See the script header.
 teardown_treehouse_return() {
-  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} lease_id=${5:-} lease_holder=${6:-}
+  local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-} lease_id=${5:-} lease_holder=${6:-} guard_mode=${7:-either}
   local out lock attempt=0 max_retries lock_desc
   local -a return_cmd
 
@@ -2097,7 +2112,8 @@ teardown_treehouse_return() {
 
   if [ -n "$lease_id" ]; then
     return_cmd+=(--if-lease-id "$lease_id")
-  elif [ -n "$lease_holder" ]; then
+  fi
+  if [ -n "$lease_holder" ] && { [ -z "$lease_id" ] || [ "$guard_mode" = both ]; }; then
     return_cmd+=(--if-lease-holder "$lease_holder")
   fi
 
@@ -2742,12 +2758,16 @@ require_exclusive_task_worktree_slot() {
 # would strand every task in flight across the change for no evidence at all.
 # Those keep exactly the record-scan protection they had before.
 TEARDOWN_SLOT_REASSIGNED_RC=3
-require_owned_worktree_slot_record() {  # <task-id> <worktree>
-  local record_id=$1 worktree=$2 marker
+require_owned_worktree_slot_record() {  # <task-id> <worktree> [<reassignment-policy>]
+  local record_id=$1 worktree=$2 reassignment_policy=${3:-records-only} marker
   fm_treehouse_slot_owner_state "$worktree" "$record_id"
   case "$FM_TREEHOUSE_SLOT_OWNER" in
     mine|absent) return 0 ;;
     other)
+      if [ "$reassignment_policy" = refuse ]; then
+        echo "REFUSED: task $record_id's recorded worktree $worktree was reassigned to task $FM_TREEHOUSE_SLOT_OWNER_ID${FM_TREEHOUSE_SLOT_OWNER_HOME:+ (home $FM_TREEHOUSE_SLOT_OWNER_HOME)}, so its exact Treehouse ownership cannot be proved; the endpoint, copy, work, claim and record were left untouched." >&2
+        return 1
+      fi
       echo "warning: task $record_id's recorded worktree $worktree was reassigned to task $FM_TREEHOUSE_SLOT_OWNER_ID${FM_TREEHOUSE_SLOT_OWNER_HOME:+ (home $FM_TREEHOUSE_SLOT_OWNER_HOME)}, which claimed that pool slot after this record was written; that slot is no longer $record_id's, so its processes, copy, and claim are left untouched and only $record_id's own cleanup runs." >&2
       return "$TEARDOWN_SLOT_REASSIGNED_RC"
       ;;
@@ -2765,9 +2785,10 @@ TEARDOWN_SLOT_REASSIGNED=0
 TEARDOWN_SLOT_REASSIGNED_TO=
 TEARDOWN_SLOT_REASSIGNED_HOME=
 require_owned_task_worktree_slot() {
-  local slot rc=0
+  local slot rc=0 reassignment_policy=records-only
   slot=$(teardown_live_slot_path) || return 0
-  require_owned_worktree_slot_record "$ID" "$slot" || rc=$?
+  [ "$BACKEND" != t3code ] || reassignment_policy=refuse
+  require_owned_worktree_slot_record "$ID" "$slot" "$reassignment_policy" || rc=$?
   case "$rc" in
     0) return 0 ;;
     "$TEARDOWN_SLOT_REASSIGNED_RC")
@@ -3281,7 +3302,7 @@ preflight_descendant_task_locks() {
 }
 
 preflight_descendant_treehouse_slots() {
-  local i state task_id meta kind backend target worktree project lock_path held owner_rc lease_id lease_holder pool_slot needs_lease
+  local i state task_id meta kind backend target worktree project lock_path held owner_rc lease_id lease_holder pool_slot needs_lease expected_holder reassignment_policy
   for ((i=0; i < ${#DESCENDANT_TASK_IDS[@]}; i++)); do
     state=${DESCENDANT_TASK_STATES[$i]}
     task_id=${DESCENDANT_TASK_IDS[$i]}
@@ -3299,7 +3320,7 @@ preflight_descendant_treehouse_slots() {
     pool_slot=0
     needs_lease=0
     fm_treehouse_pool_slot "$project" "$worktree" && pool_slot=1
-    if [ "$backend" != t3code ] && { [ -n "$lease_id" ] || [ -n "$lease_holder" ] \
+    if [ "$backend" = t3code ] || { [ -n "$lease_id" ] || [ -n "$lease_holder" ] \
        || { [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; }; }; then
       needs_lease=1
     fi
@@ -3341,7 +3362,7 @@ preflight_descendant_treehouse_slots() {
     pool_slot=0
     needs_lease=0
     fm_treehouse_pool_slot "$project" "$worktree" && pool_slot=1
-    if [ "$backend" != t3code ] && { [ -n "$lease_id" ] || [ -n "$lease_holder" ] \
+    if [ "$backend" = t3code ] || { [ -n "$lease_id" ] || [ -n "$lease_holder" ] \
        || { [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; }; }; then
       needs_lease=1
     fi
@@ -3352,15 +3373,19 @@ preflight_descendant_treehouse_slots() {
     owner_rc=0
     if [ "$pool_slot" -eq 1 ]; then
       require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" || return 1
-      require_owned_worktree_slot_record "$task_id" "$worktree" || owner_rc=$?
+      reassignment_policy=records-only
+      [ "$backend" != t3code ] || reassignment_policy=refuse
+      require_owned_worktree_slot_record "$task_id" "$worktree" "$reassignment_policy" || owner_rc=$?
       case "$owner_rc" in
         0|"$TEARDOWN_SLOT_REASSIGNED_RC") ;;
         *) return 1 ;;
       esac
     fi
     if [ "$owner_rc" -eq 0 ] && [ "$needs_lease" -eq 1 ]; then
+      expected_holder=
+      [ "$backend" != t3code ] || expected_holder=$task_id
       treehouse_verify_worktree_lease "$worktree" "$project" "child worktree" "$task_id" "$meta" \
-        "$lease_id" "$lease_holder" || return $?
+        "$lease_id" "$lease_holder" "$expected_holder" || return $?
     fi
   done
 }
@@ -3578,7 +3603,7 @@ endpoint_close_refusal() {  # <subject> <backend> <target> <honors-force>
 }
 
 cleanup_firstmate_home_children() {
-  local home=$1 archive_parent=${2:-$ID} sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_rex_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc child_pool_slot child_treehouse_lease_id child_treehouse_lease_holder
+  local home=$1 archive_parent=${2:-$ID} sub_state child_meta child_id child_t child_wt child_proj child_kind child_home child_rex_home child_backend child_orca_worktree_id child_return_rc child_busy_gen child_owner_rc child_pool_slot child_treehouse_lease_id child_treehouse_lease_holder child_expected_lease_holder child_reassignment_policy child_treehouse_guard_mode
   sub_state="$home/state"
   [ -d "$sub_state" ] || return 0
   for child_meta in "$sub_state"/*.meta; do
@@ -3595,6 +3620,29 @@ cleanup_firstmate_home_children() {
       child_t=$(meta_value "$child_meta" terminal)
     else
       child_t=$(fm_backend_target_of_meta "$child_meta")
+    fi
+    child_owner_rc=0
+    if [ "$child_kind" != secondmate ] && [ "$child_backend" != orca ] \
+       && [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
+      validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
+      if fm_treehouse_pool_slot "$child_proj" "$child_wt"; then
+        child_reassignment_policy=records-only
+        [ "$child_backend" != t3code ] || child_reassignment_policy=refuse
+        require_owned_worktree_slot_record "$child_id" "$child_wt" "$child_reassignment_policy" 2>/dev/null || child_owner_rc=$?
+        if [ "$child_owner_rc" -ne 0 ] && [ "$child_owner_rc" -ne "$TEARDOWN_SLOT_REASSIGNED_RC" ]; then
+          require_owned_worktree_slot_record "$child_id" "$child_wt" "$child_reassignment_policy" || return 1
+        fi
+      fi
+      if [ "$child_owner_rc" -eq 0 ] && { [ "$child_backend" = t3code ] \
+         || [ -n "$child_treehouse_lease_id" ] || [ -n "$child_treehouse_lease_holder" ] \
+         || { [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; }; }; then
+        child_expected_lease_holder=
+        [ "$child_backend" != t3code ] || child_expected_lease_holder=$child_id
+        treehouse_verify_worktree_lease "$child_wt" "$child_proj" "child worktree" "$child_id" "$child_meta" \
+          "$child_treehouse_lease_id" "$child_treehouse_lease_holder" "$child_expected_lease_holder" || return $?
+        child_treehouse_lease_id=$TREEHOUSE_VERIFIED_LEASE_ID
+        child_treehouse_lease_holder=$TREEHOUSE_VERIFIED_LEASE_HOLDER
+      fi
     fi
     if [ "$child_backend" = orca ] && [ "$child_kind" != secondmate ]; then
       child_orca_worktree_id=$(require_orca_worktree_id "$child_meta") || return 1
@@ -3652,23 +3700,9 @@ cleanup_firstmate_home_children() {
       # slot reassigned to another task is not this child's to kill, reset,
       # or return, so only its records are cleaned up. The preflight above
       # already named the reassignment on stderr under the same lock.
-      child_owner_rc=0
-      if fm_treehouse_pool_slot "$child_proj" "$child_wt"; then
-        require_owned_worktree_slot_record "$child_id" "$child_wt" 2>/dev/null || child_owner_rc=$?
-      fi
       if [ "$child_owner_rc" -eq "$TEARDOWN_SLOT_REASSIGNED_RC" ]; then
         :
-      elif [ "$child_owner_rc" -ne 0 ]; then
-        require_owned_worktree_slot_record "$child_id" "$child_wt" || return 1
       else
-        validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
-        if [ "$child_backend" != t3code ] && { [ -n "$child_treehouse_lease_id" ] || [ -n "$child_treehouse_lease_holder" ] \
-           || { [ -n "$child_proj" ] && [ -d "$child_proj" ] && command -v treehouse >/dev/null 2>&1; }; }; then
-          treehouse_verify_worktree_lease "$child_wt" "$child_proj" "child worktree" "$child_id" "$child_meta" \
-            "$child_treehouse_lease_id" "$child_treehouse_lease_holder" || return $?
-          child_treehouse_lease_id=$TREEHOUSE_VERIFIED_LEASE_ID
-          child_treehouse_lease_holder=$TREEHOUSE_VERIFIED_LEASE_HOLDER
-        fi
         rm -f "$child_wt/.claude/settings.local.json" "$child_wt/.opencode/plugins/fm-turn-end.js" \
           "$child_wt/.opencode/plugins/fm-busy-state.js" \
           "$child_wt/.fm-grok-turnend" "$child_wt/.fm-kimi-turnend"
@@ -3681,8 +3715,10 @@ cleanup_firstmate_home_children() {
           teardown_scrub_scratch_copy "$child_wt" || return 1
           child_pool_slot=0
           fm_treehouse_pool_slot "$child_proj" "$child_wt" && child_pool_slot=1
+          child_treehouse_guard_mode=either
+          [ "$child_backend" != t3code ] || child_treehouse_guard_mode=both
           if teardown_treehouse_return "$child_wt" "$child_proj" "child worktree" "" \
-            "$child_treehouse_lease_id" "$child_treehouse_lease_holder"; then
+            "$child_treehouse_lease_id" "$child_treehouse_lease_holder" "$child_treehouse_guard_mode"; then
             [ "$child_pool_slot" = 0 ] || teardown_note_dirty_return "$child_wt"
             fm_treehouse_slot_owner_release "$child_wt" "$child_id"
           else
@@ -3874,11 +3910,13 @@ fi
 # Treehouse confirms it still holds its recorded lease or, for a record without
 # one, that the copy is free or leased to this task's own firstmate holder.
 # A t3code slot holds its own `get --lease` reservation under the bare task id.
-if [ "$BACKEND" != orca ] && [ "$BACKEND" != t3code ] && [ "$KIND" != secondmate ] && teardown_owns_worktree && [ -d "$WT" ] \
-   && { [ -n "$TREEHOUSE_LEASE_ID" ] || [ -n "$TREEHOUSE_LEASE_HOLDER" ] \
+TREEHOUSE_EXPECTED_LEASE_HOLDER=
+[ "$BACKEND" != t3code ] || TREEHOUSE_EXPECTED_LEASE_HOLDER=$ID
+if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] && teardown_owns_worktree && [ -d "$WT" ] \
+   && { [ "$BACKEND" = t3code ] || [ -n "$TREEHOUSE_LEASE_ID" ] || [ -n "$TREEHOUSE_LEASE_HOLDER" ] \
         || { [ -n "$PROJ" ] && [ -d "$PROJ" ] && command -v treehouse >/dev/null 2>&1; }; }; then
   treehouse_verify_worktree_lease "$WT" "$PROJ" "worktree" "$ID" "$META" \
-    "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER" || {
+    "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER" "$TREEHOUSE_EXPECTED_LEASE_HOLDER" || {
     echo "error: teardown of $ID aborted before touching worktree $WT" >&2
     exit 1
   }
@@ -4074,8 +4112,10 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fi
   wt_pool_slot=0
   fm_treehouse_pool_slot "$PROJ" "$WT" && wt_pool_slot=1
+  TREEHOUSE_RETURN_GUARD_MODE=either
+  [ "$BACKEND" != t3code ] || TREEHOUSE_RETURN_GUARD_MODE=both
   teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" \
-    "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER" || {
+    "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER" "$TREEHOUSE_RETURN_GUARD_MODE" || {
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }

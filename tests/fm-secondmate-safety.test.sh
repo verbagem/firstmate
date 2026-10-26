@@ -2223,6 +2223,64 @@ EOF
   pass "secondmate force teardown preflights recursive child leases before endpoints"
 }
 
+test_secondmate_force_teardown_preflights_recursive_t3_lease() {
+  local home subhome nestedhome childproj childwt fakebin log node_log err rc worker
+  home="$TMP_ROOT/recursive-t3-lease-home"
+  subhome="$TMP_ROOT/recursive-t3-lease-subhome"
+  nestedhome="$TMP_ROOT/recursive-t3-lease-nestedhome"
+  childproj="$nestedhome/projects/alpha"
+  childwt="$TMP_ROOT/recursive-t3-lease-grandchild-worktree"
+  err="$TMP_ROOT/recursive-t3-lease.err"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$subhome/data" "$nestedhome/state"
+  fm_git_worktree "$childproj" "$childwt" recursive-t3-lease-grandchild
+  printf 'grandchild work\n' > "$childwt/work.txt"
+  mkdir -p "$childwt/.claude"
+  printf '{}\n' > "$childwt/.claude/settings.local.json"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'nested\n' > "$nestedhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  fm_write_secondmate_meta "$subhome/state/nested.meta" "$nestedhome"
+  fm_write_meta "$nestedhome/state/grandchild.meta" \
+    window=fm-grandchild endpoint_task_id=grandchild \
+    "worktree=$childwt" "project=$childproj" harness=claude kind=ship mode=no-mistakes yolo=off \
+    backend=t3code t3_thread_id=mcp:7d8e9f01-2a3b-4c5d-8e6f-7a8b9c0d1e2f t3_project_id=proj-1
+  cat > "$home/data/secondmates.md" <<EOF
+- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)
+- nested - nested domain (home: $nestedhome; scope: nested domain; projects: alpha; added 2026-06-22)
+EOF
+  fakebin=$(make_fake_tmux "$TMP_ROOT/recursive-t3-lease-fake")
+  log="$TMP_ROOT/recursive-t3-lease-fake/tmux.log"
+  node_log="$TMP_ROOT/recursive-t3-lease-fake/node.log"
+  cat > "$fakebin/node" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_FAKE_NODE_LOG"
+exit 1
+SH
+  chmod +x "$fakebin/node"
+  ( cd "$childwt" && exec sleep 30 ) &
+  worker=$!
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_NODE_LOG="$node_log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/recursive-t3-lease-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_STATUS_JSON="[{\"name\":\"1\",\"path\":\"$childwt\",\"status\":\"leased\",\"lease_id\":\"lease-other\",\"lease_holder\":\"other-task\"}]" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>"$err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "recursive T3 child lease conflict did not refuse forced teardown"
+  ! grep -F 'kill-window' "$log" >/dev/null || fail "recursive T3 child lease conflict closed a tmux endpoint before refusing: $(cat "$log")"
+  [ ! -s "$node_log" ] || fail "recursive T3 child lease conflict invoked the T3 endpoint before refusing: $(cat "$node_log")"
+  kill -0 "$worker" 2>/dev/null || fail "recursive T3 child lease conflict reaped a worktree process"
+  [ -f "$home/state/domain.meta" ] || fail "recursive T3 child lease conflict removed the parent record"
+  [ -f "$subhome/state/nested.meta" ] || fail "recursive T3 child lease conflict removed the nested secondmate record"
+  [ -f "$nestedhome/state/grandchild.meta" ] || fail "recursive T3 child lease conflict removed grandchild metadata"
+  [ "$(cat "$childwt/work.txt" 2>/dev/null)" = 'grandchild work' ] || fail "recursive T3 child lease conflict discarded grandchild work"
+  [ -f "$childwt/.claude/settings.local.json" ] || fail "recursive T3 child lease conflict removed environment wiring"
+  grep -F "holder 'other-task'" "$err" >/dev/null || fail "recursive T3 child lease refusal did not name the conflicting holder"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+  pass "secondmate force teardown preflights recursive T3 leases before every endpoint and copy effect"
+}
+
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails() {
   assert_secondmate_child_unrecorded_lease_refused child-stale-recorded-lease \
     '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:other-task"}]' \
@@ -3363,6 +3421,7 @@ test_secondmate_force_teardown_guards_unrecorded_child_leases
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails
 test_secondmate_force_teardown_guards_unleased_child_copies
 test_secondmate_force_teardown_preflights_recursive_child_lease
+test_secondmate_force_teardown_preflights_recursive_t3_lease
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_non_state_operational_dir_symlinks_inside_home
 test_secondmate_force_teardown_refuses_operational_dir_symlink_outside_home

@@ -1034,9 +1034,8 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   pass "fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes"
 }
 
-# A T3 task whose pool slot was reassigned still archives its own thread, but
-# T3's slot cleanup undoes a tracked Codex overlay, so only the slot's
-# ownership keeps it off the claimant's overlay.
+# A T3 task's thread and slot are one lease-bound lifecycle, so a reassigned
+# slot refuses before either side is changed.
 test_reassigned_pool_slot_keeps_claimant_codex_overlay_on_t3() {
   local dir id=stale-t3-task other=reassigned-task rc=0 mutations
   local thread=mcp:8c9d0e1f-2a3b-4c5d-8e6f-7a8b9c0d1e2f
@@ -1064,13 +1063,126 @@ test_reassigned_pool_slot_keeps_claimant_codex_overlay_on_t3() {
   mutations=$(t3_fake_mutations)
   t3_fake_stop
 
-  [ "$rc" -eq 0 ] || fail "teardown of a T3 task whose slot was reassigned failed: $(cat "$dir/stderr")"
-  [ "$mutations" = "t3_thread_organize" ] || fail "teardown must still archive the stale task's own T3 thread, got '$mutations'"
+  [ "$rc" -ne 0 ] || fail "teardown of a T3 task whose slot was reassigned unexpectedly succeeded"
+  [ -z "$mutations" ] || fail "teardown changed a T3 endpoint before proving slot ownership: '$mutations'"
   assert_present "$dir/worktree/sentinel" "teardown reset a pool slot another task had claimed"
   cmp -s "$dir/other-overlay.toml" "$dir/worktree/.codex/config.toml" || fail "teardown changed the other task's Codex overlay"
   [ "$(git -C "$dir/worktree" ls-files -v -- .codex/config.toml)" = "S .codex/config.toml" ] || fail "teardown cleared the other task's overlay protection"
-  assert_reassigned_slot_left_alone "$dir" "$id" "$other" "T3 task on a reassigned slot with --force"
-  pass "fm-teardown backend=t3code: a reassigned pool slot keeps its claimant's Codex overlay while the task's own thread is archived"
+  assert_present "$dir/home/state/$id.meta" "teardown removed the T3 task record after ownership refusal"
+  assert_present "$dir/pool/1/.fm-slot-owner" "teardown removed the reassigned slot claim"
+  assert_contains "$(cat "$dir/stderr")" "reassigned" "T3 ownership refusal did not name the reassignment"
+  pass "fm-teardown backend=t3code: a reassigned pool slot refuses before endpoint or copy mutation"
+}
+
+test_t3_lease_conflicts_refuse_before_every_lifecycle_effect() {
+  local dir id status label rc worker mutations thread=mcp:7d8e9f01-2a3b-4c5d-8e6f-7a8b9c0d1e2f
+  command -v node >/dev/null 2>&1 || { printf 'note: %s skipped: node absent\n' "${FUNCNAME[0]}"; return 0; }
+  t3_fake_start "$TMP_ROOT/t3-lease-conflicts-server"
+  for label in released foreign duplicate; do
+    id="t3-$label"
+    dir=$(make_case "t3-lease-$label")
+    mark_case_as_treehouse_pool "$dir"
+    git -C "$dir/worktree" switch -q -c "fm/$id"
+    printf 'uncommitted work\n' > "$dir/worktree/work.txt"
+    mkdir -p "$dir/worktree/.claude"
+    printf '{}\n' > "$dir/worktree/.claude/settings.local.json"
+    t3_fake_case "$dir/t3-case" "{\"threads\":{\"$thread\":{\"threadId\":\"$thread\",\"projectId\":\"proj-1\",\"status\":\"completed\",\"activeRunId\":null,\"archived\":false,\"worktreePath\":\"$dir/worktree\",\"pendingRequestCount\":0,\"items\":[],\"runs\":[]}}}"
+    t3_fake_credential "$dir/home/config/t3code-token"
+    fm_write_meta "$dir/home/state/$id.meta" \
+      "window=fm-$id" "endpoint_task_id=$id" \
+      "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+      backend=t3code "t3_thread_id=$thread" t3_project_id=proj-1 harness=claude
+    claim_pool_slot "$dir" "$id"
+    case "$label" in
+      released)
+        status="[{\"name\":\"1\",\"path\":\"$dir/worktree\",\"status\":\"available\",\"lease_id\":\"\",\"lease_holder\":\"\"}]" ;;
+      foreign)
+        status="[{\"name\":\"1\",\"path\":\"$dir/worktree\",\"status\":\"leased\",\"lease_id\":\"lease-other\",\"lease_holder\":\"other-task\"}]" ;;
+      duplicate)
+        status="[{\"name\":\"1\",\"path\":\"$dir/worktree\",\"status\":\"leased\",\"lease_id\":\"lease-$id\",\"lease_holder\":\"$id\"},{\"name\":\"2\",\"path\":\"$dir/worktree\",\"status\":\"leased\",\"lease_id\":\"lease-other\",\"lease_holder\":\"other-task\"}]" ;;
+    esac
+    cat > "$dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+printf 'treehouse <%s>' "$@" >> "${FM_RUNTIME_LOG:?}"
+printf '\n' >> "${FM_RUNTIME_LOG:?}"
+[ "${1:-}:${2:-}" != status:--json ] || { printf '%s\n' "${FM_T3_LEASE_STATUS:?}"; exit 0; }
+exit 0
+SH
+    chmod +x "$dir/fakebin/treehouse"
+    ( cd "$dir/worktree" && exec sleep 30 ) &
+    worker=$!
+    set +e
+    FM_T3_LEASE_STATUS="$status" run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+    rc=$?
+    set -e
+    mutations=$(t3_fake_mutations)
+    [ "$rc" -ne 0 ] || fail "$label T3 lease conflict unexpectedly allowed teardown"
+    [ -z "$mutations" ] || fail "$label T3 lease conflict changed the endpoint: '$mutations'"
+    kill -0 "$worker" 2>/dev/null || fail "$label T3 lease conflict reaped a worktree process"
+    assert_present "$dir/home/state/$id.meta" "$label T3 lease conflict removed the task record"
+    assert_present "$dir/worktree/work.txt" "$label T3 lease conflict scrubbed the worktree"
+    assert_present "$dir/worktree/.claude/settings.local.json" "$label T3 lease conflict removed environment wiring"
+    [ "$(git -C "$dir/worktree" branch --show-current)" = "fm/$id" ] || fail "$label T3 lease conflict removed the task branch"
+    assert_no_grep 'treehouse <return>' "$dir/runtime.log" "$label T3 lease conflict returned the copy"
+    kill "$worker" 2>/dev/null || true
+    wait "$worker" 2>/dev/null || true
+  done
+  t3_fake_stop
+  pass "fm-teardown backend=t3code: released, foreign and duplicate leases refuse before lifecycle mutation"
+}
+
+test_t3_return_requires_verified_bare_holder_and_lease_id() {
+  local dir id=t3-owned thread=mcp:6c7d8e9f-1a2b-4c5d-8e6f-7a8b9c0d1e2f rc=0 mutations proof_line close_line return_line real_node
+  command -v node >/dev/null 2>&1 || { printf 'note: %s skipped: node absent\n' "${FUNCNAME[0]}"; return 0; }
+  real_node=$(command -v node)
+  dir=$(make_case t3-owned-lease)
+  mark_case_as_treehouse_pool "$dir"
+  t3_fake_start "$dir/t3-server"
+  t3_fake_case "$dir/t3-case" "{\"threads\":{\"$thread\":{\"threadId\":\"$thread\",\"projectId\":\"proj-1\",\"status\":\"completed\",\"activeRunId\":null,\"archived\":false,\"worktreePath\":\"$dir/worktree\",\"pendingRequestCount\":0,\"items\":[],\"runs\":[]}}}"
+  t3_fake_credential "$dir/home/config/t3code-token"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    backend=t3code "t3_thread_id=$thread" t3_project_id=proj-1 harness=claude
+  claim_pool_slot "$dir" "$id"
+  cat > "$dir/fakebin/treehouse" <<SH
+#!/usr/bin/env bash
+case "\${1:-}:\${2:-}" in
+  status:--json)
+    printf 'lease-proof\n' >> "\${FM_RUNTIME_LOG:?}"
+    printf '%s\n' '[{"name":"1","path":"$dir/worktree","status":"leased","lease_id":"lease-$id","lease_holder":"$id"}]'
+    exit 0 ;;
+  return:--force)
+    printf 'treehouse' >> "\${FM_RUNTIME_LOG:?}"
+    printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
+    printf '\n' >> "\${FM_RUNTIME_LOG:?}"
+    exit 0 ;;
+esac
+exit 0
+SH
+  cat > "$dir/fakebin/node" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *'/fm-t3-mcp.mjs archive '*) printf 'endpoint-close\n' >> "\${FM_RUNTIME_LOG:?}" ;;
+esac
+exec '$real_node' "\$@"
+SH
+  chmod +x "$dir/fakebin/treehouse" "$dir/fakebin/node"
+
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" || rc=$?
+  mutations=$(t3_fake_mutations)
+  t3_fake_stop
+
+  [ "$rc" -eq 0 ] || fail "T3 teardown with its exact lease failed: $(cat "$dir/stderr")"
+  [ "$mutations" = t3_thread_organize ] || fail "T3 teardown did not archive exactly its own endpoint: '$mutations'"
+  assert_grep "treehouse <return> <--force> <$dir/worktree> <--if-lease-id> <lease-$id> <--if-lease-holder> <$id>" "$dir/runtime.log" \
+    "T3 return was not conditioned on both the verified lease id and bare task holder"
+  proof_line=$(grep -n -m 1 '^lease-proof$' "$dir/runtime.log" | cut -d: -f1)
+  close_line=$(grep -n -m 1 '^endpoint-close$' "$dir/runtime.log" | cut -d: -f1)
+  return_line=$(grep -n -m 1 '^treehouse <return>' "$dir/runtime.log" | cut -d: -f1)
+  [ "$proof_line" -lt "$close_line" ] && [ "$close_line" -lt "$return_line" ] \
+    || fail "T3 teardown did not prove lease, close endpoint, then conditionally return in order: $(cat "$dir/runtime.log")"
+  pass "fm-teardown backend=t3code: exact bare-holder lease gates endpoint close and conditional return"
 }
 
 # The reuse collision where BOTH records survive: the stale task's record still
@@ -1531,6 +1643,8 @@ test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_reassigned_pool_slot_keeps_claimant_codex_overlay_on_t3
+test_t3_lease_conflicts_refuse_before_every_lifecycle_effect
+test_t3_return_requires_verified_bare_holder_and_lease_id
 test_stale_record_on_claimed_slot_retires_then_claimant_tears_down
 test_own_and_absent_slot_claims_still_tear_down
 test_recorded_endpoint_that_changed_directory_still_tears_down
