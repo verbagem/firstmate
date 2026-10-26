@@ -1092,9 +1092,18 @@ TASK_ID=receipt-task
 mkdir -p "$HOME_DIR/data/$TASK_ID" "$HOME_DIR/state"
 cp "$BRIEF" "$HOME_DIR/data/$TASK_ID/brief.md"
 RECEIPT="$HOME_DIR/state/$TASK_ID.dispatch-receipt"
+MUTATED_BRIEF="$TMP_ROOT/mutated-brief.md"
+printf '%s\n' '# Task' 'A replacement written while resolution is in flight.' > "$MUTATED_BRIEF"
+if command -v shasum >/dev/null 2>&1; then
+  ORIGINAL_BRIEF_SHA=$(shasum -a 256 "$HOME_DIR/data/$TASK_ID/brief.md" | awk '{print $1}')
+else
+  ORIGINAL_BRIEF_SHA=$(sha256sum "$HOME_DIR/data/$TASK_ID/brief.md" | awk '{print $1}')
+fi
 reset_log
 write_response "$RESPONSE" rule_4 0.9
-TYPESAFE_API_KEY=$KEY run code out err "$HOME_DIR/data/$TASK_ID/brief.md" --project pager
+TYPESAFE_API_KEY=$KEY FAKE_CURL_MUTATE_SOURCE="$MUTATED_BRIEF" \
+  FAKE_CURL_MUTATE_TARGET="$HOME_DIR/data/$TASK_ID/brief.md" \
+  run code out err "$HOME_DIR/data/$TASK_ID/brief.md" --project pager
 expect_code 0 "$code" "task-brief resolution exits 0"
 assert_contains "$out" '  status: clear' "task-brief resolution is clear"
 assert_present "$RECEIPT" "a clear task-brief resolution records its receipt"
@@ -1102,6 +1111,12 @@ grep -qx 'status=clear' "$RECEIPT" || fail "receipt records the clear status"
 grep -qx 'harness=cursor' "$RECEIPT" || fail "receipt records the chosen harness"
 grep -qx 'model=cursor-grok-4.6-medium' "$RECEIPT" || fail "receipt records the chosen model"
 grep -qx 'effort=' "$RECEIPT" || fail "receipt keeps an absent effort empty"
+[ "$(sed -n 's/^brief_sha256=//p' "$RECEIPT")" = "$ORIGINAL_BRIEF_SHA" ] \
+  || fail "receipt digest did not remain bound to the immutable request snapshot"
+assert_contains "$(jq -r .state.task.brief "$LOG/body")" 'off-by-one in the pager' \
+  "resolver request did not use the immutable brief snapshot"
+assert_not_contains "$(jq -r .state.task.brief "$LOG/body")" 'replacement written while resolution is in flight' \
+  "resolver request observed a concurrent brief replacement"
 [ "$(stat -f %Lp "$RECEIPT" 2>/dev/null || stat -c %a "$RECEIPT")" = 600 ] || fail "receipt must be private (0600)"
 run_without_curl code out err "$HOME_DIR/data/$TASK_ID/brief.md" --project pager
 assert_absent "$RECEIPT" "a later run that yields no answer drops the earlier receipt"

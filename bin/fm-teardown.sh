@@ -562,9 +562,13 @@ if [ -f "$META" ] && [ ! -L "$META" ]; then
   [ -n "$TEARDOWN_LOCK_BACKEND" ] || TEARDOWN_LOCK_BACKEND=tmux
   TEARDOWN_LOCK_WT=$(fm_meta_get "$META" worktree)
   TEARDOWN_LOCK_PROJECT=$(fm_meta_get "$META" project)
+  TEARDOWN_LOCK_LEASE_ID=$(fm_meta_get "$META" treehouse_lease_id)
+  TEARDOWN_LOCK_LEASE_HOLDER=$(fm_meta_get "$META" treehouse_lease_holder)
   if [ "$TEARDOWN_LOCK_KIND" != secondmate ] \
      && [ "$TEARDOWN_LOCK_BACKEND" != orca ] \
-     && fm_treehouse_pool_slot "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT"; then
+     && { [ "$TEARDOWN_LOCK_BACKEND" = t3code ] \
+          || [ -n "$TEARDOWN_LOCK_LEASE_ID" ] || [ -n "$TEARDOWN_LOCK_LEASE_HOLDER" ] \
+          || fm_treehouse_pool_slot "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT"; }; then
     TREEHOUSE_SLOT_LOCK_REQUIRED=1
     TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$TEARDOWN_LOCK_PROJECT") || {
       echo "REFUSED: cannot resolve the shared Treehouse project lock for ${TEARDOWN_LOCK_PROJECT:-<missing>}; nothing was changed" >&2
@@ -1292,8 +1296,12 @@ TREEHOUSE_LEASE_HOLDER=$(fm_meta_get "$META" treehouse_lease_holder)
 KIND=$TEARDOWN_META_KIND
 TEARDOWN_POOL_SLOT_LOST=0
 EXPECTED_TREEHOUSE_PROJECT_LOCK=
+CURRENT_TREEHOUSE_SLOT_LOCK_REQUIRED=0
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] \
-   && fm_treehouse_pool_slot "$PROJ" "$WT"; then
+   && { [ "$BACKEND" = t3code ] \
+        || [ -n "$TREEHOUSE_LEASE_ID" ] || [ -n "$TREEHOUSE_LEASE_HOLDER" ] \
+        || fm_treehouse_pool_slot "$PROJ" "$WT"; }; then
+  CURRENT_TREEHOUSE_SLOT_LOCK_REQUIRED=1
   EXPECTED_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ") || {
     echo "REFUSED: cannot resolve the shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
     exit 1
@@ -3912,9 +3920,8 @@ fi
 # A t3code slot holds its own `get --lease` reservation under the bare task id.
 TREEHOUSE_EXPECTED_LEASE_HOLDER=
 [ "$BACKEND" != t3code ] || TREEHOUSE_EXPECTED_LEASE_HOLDER=$ID
-if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] && teardown_owns_worktree && [ -d "$WT" ] \
-   && { [ "$BACKEND" = t3code ] || [ -n "$TREEHOUSE_LEASE_ID" ] || [ -n "$TREEHOUSE_LEASE_HOLDER" ] \
-        || { [ -n "$PROJ" ] && [ -d "$PROJ" ] && command -v treehouse >/dev/null 2>&1; }; }; then
+if [ "$BACKEND" != orca ] && [ "$KIND" != secondmate ] && teardown_owns_worktree \
+   && [ "$CURRENT_TREEHOUSE_SLOT_LOCK_REQUIRED" = 1 ]; then
   treehouse_verify_worktree_lease "$WT" "$PROJ" "worktree" "$ID" "$META" \
     "$TREEHOUSE_LEASE_ID" "$TREEHOUSE_LEASE_HOLDER" "$TREEHOUSE_EXPECTED_LEASE_HOLDER" || {
     echo "error: teardown of $ID aborted before touching worktree $WT" >&2

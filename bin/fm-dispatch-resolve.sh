@@ -186,9 +186,12 @@ esac
 [ -r "$RULES_PATH" ] || die "rules file not readable: $RULES_PATH"
 command -v jq >/dev/null 2>&1 || die "jq required"
 RULES=$(mktemp) || die "mktemp failed"
-trap 'rm -f "$RULES"' EXIT
+BRIEF_SNAPSHOT=$(mktemp) || die "mktemp failed"
+trap 'rm -f "$RULES" "$BRIEF_SNAPSHOT"' EXIT
 cp "$RULES_PATH" "$RULES" || die "could not snapshot rules file: $RULES_PATH"
 chmod 400 "$RULES" || die "could not protect rules snapshot"
+cp "$BRIEF" "$BRIEF_SNAPSHOT" || die "could not snapshot brief file: $BRIEF"
+chmod 400 "$BRIEF_SNAPSHOT" || die "could not protect brief snapshot"
 VERIFIED_HARNESSES=$(fm_control_harnesses | jq -Rsc 'split("\n") | map(select(length > 0))')
 
 # The fields this tool consumes must be well formed; bootstrap owns the wider
@@ -337,22 +340,22 @@ never_send_check() {
 # A brief with neither section goes whole. Ship delivery mode is deliberately
 # not sent: live runs showed it pushing routine ship briefs to the top tier.
 brief_kind() {
-  if grep -qxF 'This is a SCOUT task: the deliverable is a written report, not a PR.' "$BRIEF"; then
+  if grep -qxF 'This is a SCOUT task: the deliverable is a written report, not a PR.' "$BRIEF_SNAPSHOT"; then
     printf 'Brief kind: scout (report only)\n\n'
   fi
 }
 task_sections() {
   local heading
   for heading in "## Captain's intent" "## Firstmate spec"; do
-    fm_brief_task_heading_present "$BRIEF" "$heading" || continue
-    printf '%s\n%s\n\n' "$heading" "$(fm_brief_task_heading_body "$BRIEF" "$heading")"
+    fm_brief_task_heading_present "$BRIEF_SNAPSHOT" "$heading" || continue
+    printf '%s\n%s\n\n' "$heading" "$(fm_brief_task_heading_body "$BRIEF_SNAPSHOT" "$heading")"
   done
 }
 SECTIONS=$(task_sections)
 if [ -n "$SECTIONS" ]; then
   { brief_kind; printf '%s\n' "$SECTIONS"; } > "$TASK_TEXT" || die "could not read brief: $BRIEF"
 else
-  cp "$BRIEF" "$TASK_TEXT" || die "could not read brief: $BRIEF"
+  cp "$BRIEF_SNAPSHOT" "$TASK_TEXT" || die "could not read brief: $BRIEF"
 fi
 LAT_MS=null
 command -v curl >/dev/null 2>&1 || emit_error "curl not installed"
@@ -581,7 +584,7 @@ printf '%s\n' "$TEXT"
 if [ -n "$RECEIPT" ]; then
   RECEIPT_FIELDS=$(jq -r '[.status, (.chosen.profile.harness // ""), (.chosen.profile.model // ""), (.chosen.profile.effort // "")] | join("|")' <<<"$RESULT") \
     && IFS='|' read -r R_STATUS R_HARNESS R_MODEL R_EFFORT <<<"$RECEIPT_FIELDS" \
-    && fm_dispatch_receipt_write "$RECEIPT" "$BRIEF" "$R_STATUS" "$R_HARNESS" "$R_MODEL" "$R_EFFORT" \
+    && fm_dispatch_receipt_write "$RECEIPT" "$BRIEF_SNAPSHOT" "$R_STATUS" "$R_HARNESS" "$R_MODEL" "$R_EFFORT" \
     || printf 'dispatch-resolve: warning: could not record the dispatch receipt %s; fm-spawn.sh will require an explicit profile\n' "$RECEIPT" >&2
 fi
 exit 0
