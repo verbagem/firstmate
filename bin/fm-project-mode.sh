@@ -16,6 +16,10 @@
 # instead of by name (see "Path lookups" below), so a project registered outside
 # projects/ gets its real posture and two projects sharing a basename cannot pick
 # each other's entry.
+# --policy-snapshot must be combined with --path. It reads the registry once and
+# prints the selected row's name, raw mode, effective yolo, forge, and branch
+# prefix as six key=value lines (the sixth names path, fallback, or default
+# resolution), so a mechanical caller can bind every policy from one row version.
 #
 # MECHANICAL CONSUMERS ONLY. This answers "what posture did the captain register
 # for this project", never "how does this task ship". A task's delivery mode,
@@ -126,7 +130,7 @@
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses.
-# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] [--with-name] [--path <project-path>] [<project-name>]
+# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge|--policy-snapshot] [--with-name] [--path <project-path>] [<project-name>]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -139,14 +143,16 @@ RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
 WITH_NAME=0
+POLICY_SNAPSHOT=0
 PATH_ARG=
 NAME=
-USAGE="usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] [--with-name] [--path <project-path>] [<project-name>]"
+USAGE="usage: fm-project-mode.sh [--raw|--branch-prefix|--forge|--policy-snapshot] [--with-name] [--path <project-path>] [<project-name>]"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --raw) RAW=1 ;;
     --branch-prefix) BRANCH_PREFIX_QUERY=1 ;;
     --forge) WANT_FORGE=1 ;;
+    --policy-snapshot) POLICY_SNAPSHOT=1 ;;
     --with-name) WITH_NAME=1 ;;
     --path)
       [ "$#" -ge 2 ] || { echo "$USAGE" >&2; exit 2; }
@@ -164,9 +170,13 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$NAME" ] || [ -n "$PATH_ARG" ] || { echo "$USAGE" >&2; exit 2; }
 [ -z "$NAME" ] || [ -z "$PATH_ARG" ] || { echo "$USAGE" >&2; exit 2; }
+[ "$POLICY_SNAPSHOT" -eq 0 ] || { [ -n "$PATH_ARG" ] && [ "$RAW" -eq 0 ] && [ "$BRANCH_PREFIX_QUERY" -eq 0 ] && [ "$WANT_FORGE" -eq 0 ] && [ "$WITH_NAME" -eq 0 ]; } \
+  || { echo "$USAGE" >&2; exit 2; }
 
 emit_default() {  # <name>: the protective default in whichever form was asked for
-  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
+  if [ "$POLICY_SNAPSHOT" -eq 1 ]; then
+    printf 'name=%s\nmode=no-mistakes\nyolo=off\nforge=none\nbranch-prefix=fm/\nresolution=default\n' "$1"
+  elif [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
   elif [ "$WANT_FORGE" -eq 1 ]; then echo none
   elif [ "$WITH_NAME" -eq 1 ]; then echo "$1 no-mistakes off"
@@ -188,6 +198,8 @@ normalize_path() {  # <path>: physical path of a directory, else the absolute sp
 # Path lookup resolves the registry NAME (and its line, so duplicate names cannot
 # cross) before the ordinary name-based parse below.
 SEL_LINE=0
+SELECTED_ROW=
+SNAPSHOT_RESOLUTION=path
 if [ -n "$PATH_ARG" ]; then
   NAME=$(basename -- "$PATH_ARG")
   if [ ! -f "$REG" ]; then
@@ -201,9 +213,10 @@ if [ -n "$PATH_ARG" ]; then
     *) echo "error: --path must be an absolute path or an existing directory: $PATH_ARG" >&2; exit 2 ;;
   esac
   idents=$(awk -v projects="$PROJECTS" '
-    function bail(msg) { print "err", msg; exit }
+    function malformed(msg, candidate) { print "err", NR "\t" nm "\t" candidate "\t" msg }
     substr($0, 1, 2) != "- " { next }
     {
+      print "row", NR "\t" $0;
       rest = substr($0, 3);
       i = index(rest, " [");
       j = index(rest, " - ");
@@ -214,31 +227,56 @@ if [ -n "$PATH_ARG" ]; then
       p = index(ann, "path=");
       if (p > 0 && (p == 1 || substr(ann, p - 1, 1) == " ")) {
         pv = substr(ann, p + 5);
-        if (index(pv, "path=") > 0) bail("malformed path identity for " nm ": multiple path= tokens");
+        q = index(pv, " path=");
+        if (q > 0) {
+          cand = substr(pv, 1, q - 1);
+          malformed("malformed path identity for " nm ": multiple path= tokens", cand);
+          next;
+        }
         sub(/[[:space:]]+$/, "", pv);
         nt = split(pv, tk, " ");
         for (t = 2; t <= nt; t++)
-          if (tk[t] ~ /^\+/ || tk[t] ~ /=/ || tk[t] ~ /^(no-mistakes|direct-PR|local-only|no-mistakes-prod-only)$/)
-            bail("malformed path identity for " nm ": path= must be the last annotation token; found trailing token(s) \"" tk[t] "\" after path= in registry line: " $0);
-        if (substr(pv, 1, 1) != "/") bail("malformed path identity for " nm ": path= must be an absolute path");
+          if (tk[t] ~ /^\+/ || tk[t] ~ /=/ || tk[t] ~ /^(no-mistakes|direct-PR|local-only|no-mistakes-prod-only)$/) {
+            marker = " " tk[t]; q = index(pv, marker); cand = substr(pv, 1, q - 1);
+            malformed("malformed path identity for " nm ": path= must be the last annotation token; found trailing token(s) \"" tk[t] "\" after path= in registry line: " $0, cand);
+            next;
+          }
+        if (substr(pv, 1, 1) != "/") { malformed("malformed path identity for " nm ": path= must be an absolute path", pv); next }
         cand = pv;
       }
-      print "ident", NR "\t" nm "\t" cand
+      print "ident", NR "\t" nm "\t" cand "\t" $0
     }
   ' "$REG")
   matches=0
   match_names=
+  captured_rows=
+  path_error=
+  selected_path_error=
   while IFS= read -r row; do
     case "$row" in
-      "err "*) echo "error: ${row#err }" >&2; exit 2 ;;
+      "row "*)
+        row=${row#row }; row=${row#*$'\t'}
+        captured_rows="$captured_rows$row"$'\n'
+        ;;
+      "err "*)
+        row=${row#err }; r_ln=${row%%$'\t'*}; row=${row#*$'\t'}
+        r_name=${row%%$'\t'*}; row=${row#*$'\t'}
+        r_cand=${row%%$'\t'*}; r_error=${row#*$'\t'}
+        path_error=${path_error:-$r_error}
+        if [ -n "$r_cand" ] && [ "$(normalize_path "$r_cand")" = "$target" ]; then
+          selected_path_error=$r_error
+        fi
+        ;;
       "ident "*)
         row=${row#ident }
         r_ln=${row%%$'\t'*}; row=${row#*$'\t'}
-        r_name=${row%%$'\t'*}; r_cand=${row#*$'\t'}
+        r_name=${row%%$'\t'*}; row=${row#*$'\t'}
+        r_cand=${row%%$'\t'*}; r_row=${row#*$'\t'}
         if [ "$(normalize_path "$r_cand")" = "$target" ]; then
           matches=$((matches + 1))
           SEL_LINE=$r_ln
           NAME=$r_name
+          SELECTED_ROW=$r_row
           match_names="$match_names${match_names:+, }$r_name"
         fi
         ;;
@@ -246,13 +284,29 @@ if [ -n "$PATH_ARG" ]; then
   done <<PATHROWS
 $idents
 PATHROWS
-  if [ "$matches" -eq 0 ]; then
+  if [ -n "$selected_path_error" ]; then
+    echo "error: $selected_path_error" >&2
+    exit 2
+  fi
+  if [ -n "$path_error" ]; then
+    if [ "$POLICY_SNAPSHOT" -eq 0 ]; then
+      echo "error: $path_error" >&2
+      exit 2
+    fi
+    echo "error: $path_error" >&2
+    NAME=$(basename -- "$PATH_ARG")
+    SEL_LINE=0
+    SELECTED_ROW=
+    SNAPSHOT_RESOLUTION=fallback
+  fi
+  if [ -z "$path_error" ] && [ "$matches" -eq 0 ]; then
     NAME=$(basename -- "$PATH_ARG")
     echo "warn: no project registered for path \"$PATH_ARG\"; defaulting $NAME to no-mistakes off" >&2
+    SNAPSHOT_RESOLUTION=default
     emit_default "$NAME"
     exit 0
   fi
-  if [ "$matches" -gt 1 ]; then
+  if [ -z "$path_error" ] && [ "$matches" -gt 1 ]; then
     echo "error: ambiguous path identity \"$PATH_ARG\" matches multiple projects: $match_names" >&2
     exit 2
   fi
@@ -270,7 +324,10 @@ fi
 # token, so an empty value survives the split), or nothing if the project is
 # absent. Every other token beside the mode is ignored, exactly as before either
 # annotation existed.
-parsed=$(awk -v n="$NAME" -v sel="$SEL_LINE" '
+parse_policy() {  # <selected-line> [<registry-file>]
+  local selected_line=$1
+  shift
+  awk -v n="$NAME" -v sel="$selected_line" '
   function dist(x, y,   i, j, lx, ly, d, c, v) {
     lx = length(x); ly = length(y);
     for (i=0; i<=lx; i++) d[i,0] = i;
@@ -327,7 +384,14 @@ parsed=$(awk -v n="$NAME" -v sel="$SEL_LINE" '
     # empty final field, which only holds when nothing follows it.
     print "posture", mode, yolo, forge, branch; exit
   }
-' "$REG")
+' "$@"
+}
+if [ -n "$PATH_ARG" ]; then
+  [ -z "$SELECTED_ROW" ] || captured_rows=$SELECTED_ROW
+  parsed=$(printf '%s\n' "$captured_rows" | parse_policy 0)
+else
+  parsed=$(parse_policy "$SEL_LINE" "$REG")
+fi
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
@@ -384,6 +448,11 @@ fi
 if [ "$forge" = external ] && [ "$yolo" = on ]; then
   echo "refused: +yolo is registered for $NAME but yolo is inactive for forge=external, so this reports yolo=off: firstmate can neither observe nor perform the review tool's approval or merge, so every review escalates" >&2
   yolo=off
+fi
+if [ "$POLICY_SNAPSHOT" -eq 1 ]; then
+  printf 'name=%s\nmode=%s\nyolo=%s\nforge=%s\nbranch-prefix=%s\nresolution=%s\n' \
+    "$NAME" "$mode" "$yolo" "$forge" "$branch" "$SNAPSHOT_RESOLUTION"
+  exit 0
 fi
 # A conditional policy is not a task mode. Mechanical callers get its most
 # rigorous leg; --raw callers get the annotation itself (see the header).

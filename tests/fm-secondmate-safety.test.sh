@@ -2132,6 +2132,8 @@ assert_secondmate_child_unrecorded_lease_refused() {  # <case> <status-json-temp
   [ -e "$CHILD_LEASE_FILE" ] || fail "$1: force teardown released the child lease"
   [ -e "$CHILD_LEASE_META" ] || fail "$1: force teardown cleared the child record"
   [ -d "$CHILD_LEASE_SUBHOME" ] || fail "$1: force teardown removed the secondmate home"
+  grep -F 'kill-window -t =firstmate:=fm-child' "$CHILD_LEASE_LOG" >/dev/null \
+    && fail "$1: force teardown closed the child endpoint before proving its Treehouse lease"
   grep -F "$3" "$CHILD_LEASE_ERR" >/dev/null || fail "$1: refusal did not explain: $3"
 }
 
@@ -2153,7 +2155,7 @@ test_secondmate_force_teardown_guards_unrecorded_child_leases() {
 # before touching it, refuses when that guard cannot be taken, and refuses a
 # child copy listed more than once in the pool inventory.
 test_secondmate_force_teardown_guards_unleased_child_copies() {
-  local unleased='[{"name":"1","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""}]'
+  local unleased='[{"name":"1","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""}]' lease_line close_line
   FM_FAKE_TREEHOUSE_LEASE_JSON="{\"path\":\"$TMP_ROOT/child-guarded-child-worktree\",\"lease_id\":\"guard-child\",\"lease_holder\":\"firstmate:child\"}" \
     run_secondmate_child_unrecorded_lease_teardown child-guarded "$unleased"
   [ "$CHILD_LEASE_RC" -eq 0 ] || fail "force teardown refused a reservable unleased child copy: $(cat "$CHILD_LEASE_ERR")"
@@ -2161,12 +2163,64 @@ test_secondmate_force_teardown_guards_unleased_child_copies() {
     || fail "child teardown did not reserve the unleased child copy"
   grep -F "treehouse return --force $CHILD_LEASE_WT --if-lease-id guard-child" "$CHILD_LEASE_LOG" >/dev/null \
     || fail "child teardown did not return the child copy through its guard lease"
+  lease_line=$(grep -n -m 1 -F "treehouse lease 1 --lease-holder firstmate:child --json" "$CHILD_LEASE_LOG" | cut -d: -f1)
+  close_line=$(grep -n -m 1 -F 'kill-window -t =firstmate:=fm-child' "$CHILD_LEASE_LOG" | cut -d: -f1)
+  [ -n "$lease_line" ] && [ -n "$close_line" ] && [ "$lease_line" -lt "$close_line" ] \
+    || fail "child teardown did not take its Treehouse guard before closing the endpoint"
   assert_secondmate_child_unrecorded_lease_refused child-guard-taken "$unleased" \
     "could not take a durable Treehouse guard lease"
   assert_secondmate_child_unrecorded_lease_refused child-duplicate-rows \
     '[{"name":"1","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""},{"name":"2","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""}]' \
     "is listed 2 times"
   pass "secondmate force teardown guards an unleased child copy and refuses a lost guard or duplicate pool rows"
+}
+
+test_secondmate_force_teardown_preflights_recursive_child_lease() {
+  local home subhome nestedhome childproj childwt fakebin log err rc
+  home="$TMP_ROOT/recursive-child-lease-home"
+  subhome="$TMP_ROOT/recursive-child-lease-subhome"
+  nestedhome="$TMP_ROOT/recursive-child-lease-nestedhome"
+  childproj="$nestedhome/projects/alpha"
+  childwt="$TMP_ROOT/recursive-child-lease-grandchild-worktree"
+  err="$TMP_ROOT/recursive-child-lease.err"
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$subhome/data" "$nestedhome/state"
+  fm_git_worktree "$childproj" "$childwt" recursive-child-lease-grandchild
+  printf 'grandchild work\n' > "$childwt/work.txt"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'nested\n' > "$nestedhome/.fm-secondmate-home"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  fm_write_secondmate_meta "$subhome/state/nested.meta" "$nestedhome"
+  cat > "$nestedhome/state/grandchild.meta" <<EOF
+window=firstmate:fm-grandchild
+worktree=$childwt
+project=$childproj
+harness=echo
+kind=ship
+mode=no-mistakes
+yolo=off
+EOF
+  cat > "$home/data/secondmates.md" <<EOF
+- domain - design domain (home: $subhome; scope: design domain; projects: alpha; added 2026-06-22)
+- nested - nested domain (home: $nestedhome; scope: nested domain; projects: alpha; added 2026-06-22)
+EOF
+  fakebin=$(make_fake_tmux "$TMP_ROOT/recursive-child-lease-fake")
+  log="$TMP_ROOT/recursive-child-lease-fake/tmux.log"
+  set +e
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/recursive-child-lease-fake/pane.txt" \
+    FM_FAKE_TREEHOUSE_STATUS_JSON="[{\"name\":\"1\",\"path\":\"$childwt\",\"status\":\"leased\",\"lease_id\":\"lease-other\",\"lease_holder\":\"firstmate:other-task\"}]" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>"$err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "recursive child lease conflict did not refuse forced teardown"
+  grep -F 'kill-window' "$log" >/dev/null \
+    && fail "recursive child lease conflict closed an endpoint before refusing"
+  [ -f "$nestedhome/state/grandchild.meta" ] || fail "recursive child lease conflict removed grandchild metadata"
+  [ "$(cat "$childwt/work.txt" 2>/dev/null)" = 'grandchild work' ] \
+    || fail "recursive child lease conflict discarded grandchild work"
+  grep -F "holder 'firstmate:other-task'" "$err" >/dev/null \
+    || fail "recursive child lease refusal did not name the conflicting holder"
+  pass "secondmate force teardown preflights recursive child leases before endpoints"
 }
 
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails() {
@@ -3308,6 +3362,7 @@ test_secondmate_force_teardown_refuses_duplicated_child_slot
 test_secondmate_force_teardown_guards_unrecorded_child_leases
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails
 test_secondmate_force_teardown_guards_unleased_child_copies
+test_secondmate_force_teardown_preflights_recursive_child_lease
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_non_state_operational_dir_symlinks_inside_home
 test_secondmate_force_teardown_refuses_operational_dir_symlink_outside_home

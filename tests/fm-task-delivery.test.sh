@@ -252,6 +252,59 @@ test_base_branch_forge_follows_the_registered_path_row() {
   pass "fm-spawn: base-branch forge policy comes from the registry row registered for the copy's path"
 }
 
+test_spawn_uses_one_registry_policy_snapshot() {
+  local root home first second fakebin registry replacement marker real_awk out status
+  root="$TMP_ROOT/policy-snapshot-race"
+  home="$root/home"
+  first="$root/a/agent"
+  second="$root/b/agent"
+  fakebin="$root/bin"
+  registry="$home/data/projects.md"
+  replacement="$root/projects-replacement.md"
+  marker="$root/registry-replaced"
+  real_awk=$(command -v awk)
+  mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects" "$first" "$second" "$fakebin"
+  for repo in "$first" "$second"; do
+    git -C "$repo" init -q || fail "could not initialize $repo"
+    git -c user.name=test -c user.email=test@example.com -C "$repo" commit -q --allow-empty -m init || fail "could not commit $repo"
+  done
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/tmux"
+  cat > "$fakebin/awk" <<'SH'
+#!/usr/bin/env bash
+set -u
+touch_registry=0
+for arg in "$@"; do
+  [ "$arg" != "$FM_TEST_POLICY_REGISTRY" ] || touch_registry=1
+done
+"$FM_TEST_REAL_AWK" "$@"
+rc=$?
+if [ "$touch_registry" -eq 1 ] && mkdir "$FM_TEST_POLICY_MARKER" 2>/dev/null; then
+  cp "$FM_TEST_POLICY_REPLACEMENT" "$FM_TEST_POLICY_REGISTRY"
+fi
+exit "$rc"
+SH
+  chmod +x "$fakebin/awk"
+  {
+    printf -- "- agent [no-mistakes path=%s] - first fixture (added 2026-01-01)\n" "$first"
+    printf -- "- agent [no-mistakes path=%s] - selected fixture (added 2026-01-01)\n" "$second"
+  } > "$registry"
+  {
+    printf -- "- agent [no-mistakes path=%s] - first fixture (added 2026-01-01)\n" "$first"
+    printf -- "- agent [no-mistakes forge=gerrit path=%s] - replacement fixture (added 2026-01-01)\n" "$second"
+  } > "$replacement"
+  write_brief "$home" delivery-snapshot-g1
+
+  out=$(FM_TEST_REAL_AWK="$real_awk" FM_TEST_POLICY_REGISTRY="$registry" \
+    FM_TEST_POLICY_REPLACEMENT="$replacement" FM_TEST_POLICY_MARKER="$marker" \
+    run_spawn "$home" "$fakebin" delivery-snapshot-g1 "$second" claude --scout --base-branch release)
+  status=$?
+  [ -d "$marker" ] || fail "policy snapshot fixture did not replace the registry after its first read"
+  [ "$status" -ne 0 ] || fail "policy snapshot fixture unexpectedly launched through its refusing backend"
+  assert_not_contains "$out" "a base branch is not supported on forge=gerrit" \
+    "spawn mixed the replacement registry row into its already-selected policy snapshot"
+  pass "fm-spawn: one path-selected snapshot supplies every registry policy"
+}
+
 test_spawn_resolves_standing_posture_by_registered_path() {
   local home external fakebin out
   home="$TMP_ROOT/external-spawn/home"
@@ -1949,6 +2002,7 @@ test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_spawn_degrades_when_the_registry_lookup_refuses
 test_spawn_resolves_standing_posture_by_registered_path
 test_base_branch_forge_follows_the_registered_path_row
+test_spawn_uses_one_registry_policy_snapshot
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promote_refuses_a_symlinked_task_record

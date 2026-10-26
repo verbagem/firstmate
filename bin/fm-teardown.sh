@@ -3281,7 +3281,7 @@ preflight_descendant_task_locks() {
 }
 
 preflight_descendant_treehouse_slots() {
-  local i state task_id meta kind backend target worktree project lock_path held owner_rc
+  local i state task_id meta kind backend target worktree project lock_path held owner_rc lease_id lease_holder pool_slot needs_lease
   for ((i=0; i < ${#DESCENDANT_TASK_IDS[@]}; i++)); do
     state=${DESCENDANT_TASK_STATES[$i]}
     task_id=${DESCENDANT_TASK_IDS[$i]}
@@ -3294,7 +3294,16 @@ preflight_descendant_treehouse_slots() {
     if [ "$kind" = secondmate ] || [ "$backend" = orca ]; then
       continue
     fi
-    if ! fm_treehouse_pool_slot "$project" "$worktree"; then
+    lease_id=$(meta_value "$meta" treehouse_lease_id)
+    lease_holder=$(meta_value "$meta" treehouse_lease_holder)
+    pool_slot=0
+    needs_lease=0
+    fm_treehouse_pool_slot "$project" "$worktree" && pool_slot=1
+    if [ "$backend" != t3code ] && { [ -n "$lease_id" ] || [ -n "$lease_holder" ] \
+       || { [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; }; }; then
+      needs_lease=1
+    fi
+    if [ "$pool_slot" -eq 0 ] && [ "$needs_lease" -eq 0 ]; then
       continue
     fi
     lock_path=$(fm_treehouse_project_lock_path "$project") || {
@@ -3327,17 +3336,32 @@ preflight_descendant_treehouse_slots() {
     if [ "$kind" = secondmate ] || [ "$backend" = orca ]; then
       continue
     fi
-    if ! fm_treehouse_pool_slot "$project" "$worktree"; then
+    lease_id=$(meta_value "$meta" treehouse_lease_id)
+    lease_holder=$(meta_value "$meta" treehouse_lease_holder)
+    pool_slot=0
+    needs_lease=0
+    fm_treehouse_pool_slot "$project" "$worktree" && pool_slot=1
+    if [ "$backend" != t3code ] && { [ -n "$lease_id" ] || [ -n "$lease_holder" ] \
+       || { [ -n "$project" ] && [ -d "$project" ] && command -v treehouse >/dev/null 2>&1; }; }; then
+      needs_lease=1
+    fi
+    if [ "$pool_slot" -eq 0 ] && [ "$needs_lease" -eq 0 ]; then
       continue
     fi
     fm_backend_validate_task_endpoint "$meta" "$task_id" || return 1
-    require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" || return 1
     owner_rc=0
-    require_owned_worktree_slot_record "$task_id" "$worktree" || owner_rc=$?
-    case "$owner_rc" in
-      0|"$TEARDOWN_SLOT_REASSIGNED_RC") ;;
-      *) return 1 ;;
-    esac
+    if [ "$pool_slot" -eq 1 ]; then
+      require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" || return 1
+      require_owned_worktree_slot_record "$task_id" "$worktree" || owner_rc=$?
+      case "$owner_rc" in
+        0|"$TEARDOWN_SLOT_REASSIGNED_RC") ;;
+        *) return 1 ;;
+      esac
+    fi
+    if [ "$owner_rc" -eq 0 ] && [ "$needs_lease" -eq 1 ]; then
+      treehouse_verify_worktree_lease "$worktree" "$project" "child worktree" "$task_id" "$meta" \
+        "$lease_id" "$lease_holder" || return $?
+    fi
   done
 }
 

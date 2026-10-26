@@ -4093,21 +4093,28 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   STANDING_MODE=
   STANDING_FORGE=none
-  PROJ_POLICY_ARGS=("$PROJ_NAME")
+  STANDING_BRANCH=fm/
   if [ "$KIND" = ship ] || [ "$BASE_BRANCH_SET" -eq 1 ]; then
     # Resolve the registered project by canonical physical path (a symlinked prefix
     # such as macOS /tmp must not hide a registered path=), so every policy lookup
     # uses the same registry identity rather than the project's path basename.
     PROJ_PHYS=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_PHYS=$PROJ_ABS
     STANDING_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-mode.XXXXXX") || STANDING_ERR=/dev/null
-    # Every later policy query reuses this exact registry row through --path, so
-    # two entries sharing a name can never answer for each other.
-    PROJ_POLICY_ARGS=(--path "$PROJ_PHYS")
-    if STANDING_LINE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$PROJ_PHYS" 2>"$STANDING_ERR"); then
-      # "<name> <mode> <yolo>": the name may contain spaces, so peel the last two words.
-      STANDING_REST=${STANDING_LINE% *}
-      STANDING_MODE=${STANDING_REST##* }
-      PROJ_NAME=${STANDING_REST% *}
+    if STANDING_SNAPSHOT=$("$FM_ROOT/bin/fm-project-mode.sh" --policy-snapshot --path "$PROJ_PHYS" 2>"$STANDING_ERR"); then
+      while IFS= read -r standing_field; do
+        case "$standing_field" in
+          name=*) PROJ_NAME=${standing_field#name=} ;;
+          mode=*) STANDING_MODE=${standing_field#mode=} ;;
+          forge=*) STANDING_FORGE=${standing_field#forge=} ;;
+          branch-prefix=*) STANDING_BRANCH=${standing_field#branch-prefix=} ;;
+          resolution=*) STANDING_RESOLUTION=${standing_field#resolution=} ;;
+        esac
+      done <<EOF
+$STANDING_SNAPSHOT
+EOF
+      if [ "${STANDING_RESOLUTION:-path}" = fallback ]; then
+        echo "warning: registered mode lookup failed: $(head -n 1 "$STANDING_ERR" 2>/dev/null); assuming the basename policy ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
+      fi
     elif grep -q 'ambiguous path identity' "$STANDING_ERR" 2>/dev/null; then
       # Two registered projects claim this copy: no single forge, mode, or branch
       # policy can be chosen for it, so refuse rather than guess by basename.
@@ -4115,20 +4122,12 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       rm -f "$STANDING_ERR"
       exit 1
     else
-      # A malformed line elsewhere in the registry makes the path scan refuse; the
-      # standing posture stays advisory and falls back to the basename entry.
-      PROJ_POLICY_ARGS=("$PROJ_NAME")
-      STANDING_MODE=no-mistakes
-      echo "warning: registered mode lookup failed: $(head -n 1 "$STANDING_ERR" 2>/dev/null); assuming the default standing posture ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
-    fi
-    [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
-    # The parser's own refusal reaches the operator here rather than being
-    # discarded: an entry it refuses resolves to no posture at all.
-    if ! STANDING_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "${PROJ_POLICY_ARGS[@]}" 2>/dev/null); then
-      "$FM_ROOT/bin/fm-project-mode.sh" --forge "${PROJ_POLICY_ARGS[@]}" >/dev/null || true
-      echo "error: $ID cannot launch: the registry entry for $PROJ_NAME does not resolve to a delivery posture (see the refusal above); correct data/projects.md and spawn again" >&2
+      cat "$STANDING_ERR" >&2
+      echo "error: $ID cannot launch: the registry entry for $PROJ_NAME does not resolve to a delivery posture (no single policy snapshot was available; see the refusal above); correct data/projects.md and spawn again" >&2
+      [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
       exit 1
     fi
+    [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
     [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
@@ -4304,7 +4303,6 @@ if [ "$KIND" = ship ]; then
   # spawn that ships the legacy fm/ prefix past a registered override is
   # announced, not refused: the brief-vs-spawn agreement above already
   # guarantees the worker's instructions match the branch this spawn selected.
-  STANDING_BRANCH=$("$FM_ROOT/bin/fm-project-mode.sh" --branch-prefix "${PROJ_POLICY_ARGS[@]}" 2>/dev/null) || STANDING_BRANCH=
   if [ "$BRANCH" != "$STANDING_BRANCH$ID" ]; then
     echo "notice: $ID ships branch=$BRANCH while $PROJ_NAME registers the ship-branch prefix '$STANDING_BRANCH' (branch $STANDING_BRANCH$ID) - the task's branch and PR will read as firstmate-authored; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
   fi
