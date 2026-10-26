@@ -1180,14 +1180,15 @@ test_scout_base_branch_refused_on_gerrit_forge() {
   rec=$(make_case base-gerrit-scout "$id")
   read_case_record "$rec"
   publish_feature_branch feature/hub
-  printf '%s\n' '- project [no-mistakes forge=gerrit] - fixture (added 2026-01-01)' > "$HOME_DIR/data/projects.md"
+  printf -- '- registered-agent [no-mistakes forge=gerrit path=%s] - fixture (added 2026-01-01)\n' \
+    "$PROJECT_DIR" > "$HOME_DIR/data/projects.md"
   brief_with_base "$id" feature/hub
   out=$(run_spawn "$id" --scout --base-branch feature/hub)
   status=$?
   [ "$status" -ne 0 ] || fail "a based scout on a forge=gerrit project should refuse the spawn"
   assert_contains "$out" "forge=gerrit" "the gerrit refusal did not explain itself"
   [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "a refused gerrit scout spawn published task metadata"
-  pass "a based scout on a forge=gerrit project is refused at spawn"
+  pass "a based scout resolves an external project's registered Gerrit policy by canonical path"
 }
 
 test_remote_seeded_home_spawns_from_treehouse_pool

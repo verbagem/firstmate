@@ -985,19 +985,22 @@ SH
   out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
     FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" FM_GATE_REFUSE_BYPASS=1 \
     node --input-type=module 2>&1 <<'JS'
+import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+const digestSlot = `${process.env.FM_HOME}/state/.session-start-digest.${process.pid}.txt`;
+writeFileSync(digestSlot, "stale digest\n");
+chmodSync(digestSlot, 0o644);
 const handlers = new Map();
 const pi = {
   on(event, handler) { handlers.set(event, handler); },
   sendMessage() { throw new Error("session start must use provider preflight"); },
 };
-import { readFileSync as readDigestSlot } from "node:fs";
 // The digest travels as a pointer to a private slot (docs/sessionstart-nudge.md
 // "Digest delivery is a pointer, not inline content"); read through it.
 const payloadOf = (message) => {
   const content = message?.content ?? "";
   const slot = /Session-start digest written to (\S+) \(/.exec(content);
-  return slot ? content + "\n" + readDigestSlot(slot[1], "utf8") : content;
+  return slot ? content + "\n" + readFileSync(slot[1], "utf8") : content;
 };
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?large=${Date.now()}`);
 extension.default(pi);
@@ -1005,6 +1008,9 @@ const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "large
 handlers.get("session_start")({ reason: "startup" }, ctx);
 const result = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
 if (!result?.message) throw new Error("expected one persistent preflight message");
+const publishedSlot = /Session-start digest written to (\S+) \(/.exec(result.message.content)?.[1];
+if (publishedSlot !== digestSlot) throw new Error("digest pointer did not name the process slot");
+if ((statSync(digestSlot).mode & 0o777) !== 0o600) throw new Error("digest slot was not repaired to mode 0600");
 const content = payloadOf(result.message);
 if (result.message.content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("digest was inlined instead of delivered by pointer");
 if (Buffer.byteLength(result.message.content, "utf8") > 1024) throw new Error("pointer message exceeded 1 KiB");
@@ -1016,7 +1022,7 @@ JS
   ) || status=$?
   expect_code 0 "$status" "Pi large session-start delivery"
   [ -z "$out" ] || fail "Pi large session-start delivery printed output: $out"
-  pass "Pi retains a bounded digest prefix and loudly marks oversized preflight delivery"
+  pass "Pi privately replaces its digest slot and loudly marks oversized preflight delivery"
 }
 
 test_run_resume_delegates_to_the_nudge() {

@@ -1,6 +1,14 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -170,11 +178,22 @@ function sweepDeadSessionstartDigests(): void {
 // process's private slot and only a short pointer travels in the message.
 function sessionstartDigestPointer(raw: string): string {
   let writeError: unknown;
+  let temporary = "";
   sweepDeadSessionstartDigests();
   try {
-    writeFileSync(sessionstartDigestFile, raw);
+    temporary = `${sessionstartDigestFile}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, raw, { flag: "wx", mode: 0o600 });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, sessionstartDigestFile);
+    temporary = "";
   } catch (error) {
     writeError = error ?? new Error("unknown error");
+    if (temporary) {
+      try {
+        unlinkSync(temporary);
+      } catch {
+      }
+    }
   }
   const truncationNotice = raw.endsWith(sessionstartTruncatedMarker)
     ? " PI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB, so treat omitted " +

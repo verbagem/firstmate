@@ -4090,6 +4090,34 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       fi
     fi
   fi
+  PROJ_NAME=$(basename "$PROJ_ABS")
+  STANDING_MODE=
+  STANDING_FORGE=none
+  if [ "$KIND" = ship ] || [ "$BASE_BRANCH_SET" -eq 1 ]; then
+    # Resolve the registered project by canonical physical path (a symlinked prefix
+    # such as macOS /tmp must not hide a registered path=), so every policy lookup
+    # uses the same registry identity rather than the project's path basename.
+    PROJ_PHYS=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_PHYS=$PROJ_ABS
+    STANDING_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-mode.XXXXXX") || STANDING_ERR=/dev/null
+    if STANDING_LINE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$PROJ_PHYS" 2>"$STANDING_ERR"); then
+      # "<name> <mode> <yolo>": the name may contain spaces, so peel the last two words.
+      STANDING_REST=${STANDING_LINE% *}
+      STANDING_MODE=${STANDING_REST##* }
+      PROJ_NAME=${STANDING_REST% *}
+    else
+      STANDING_MODE=no-mistakes
+      echo "warning: registered mode lookup failed: $(head -n 1 "$STANDING_ERR" 2>/dev/null); assuming the default standing posture ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
+    fi
+    [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
+    # The parser's own refusal reaches the operator here rather than being
+    # discarded: an entry it refuses resolves to no posture at all.
+    if ! STANDING_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$PROJ_NAME" 2>/dev/null); then
+      "$FM_ROOT/bin/fm-project-mode.sh" --forge "$PROJ_NAME" >/dev/null || true
+      echo "error: $ID cannot launch: the registry entry for $PROJ_NAME does not resolve to a delivery posture (see the refusal above); correct data/projects.md and spawn again" >&2
+      exit 1
+    fi
+    [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
+  fi
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(fm_meta_get "$RELAUNCH_META" base_branch)
   elif [ "$BASE_BRANCH_SET" -eq 1 ]; then
@@ -4097,8 +4125,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       echo "error: --base-branch requires a branch name" >&2
       exit 1
     }
-    BASE_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$(basename "$PROJ_ABS")") || exit 1
-    fm_base_branch_valid "$BASE_BRANCH" "$MODE" "${BASE_FORGE:-none}" "fm-spawn.sh --base-branch" || exit 1
+    fm_base_branch_valid "$BASE_BRANCH" "$MODE" "$STANDING_FORGE" "fm-spawn.sh --base-branch" || exit 1
     if ! fm_brief_base_branches "$BRIEF" >/dev/null || fm_brief_base_branches "$BRIEF" | grep -vxF -- "$BASE_BRANCH" >/dev/null; then
       echo "error: $BRIEF must record Base branch: $BASE_BRANCH and no other Base branch line to spawn with --base-branch $BASE_BRANCH; scaffold it with bin/fm-brief.sh --base-branch $BASE_BRANCH" >&2
       exit 1
@@ -4146,35 +4173,6 @@ delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task 
 # would launch a worker whose instructions and whose recorded task delivery
 # differ, which is the exact drift this contract prevents.
 if [ "$KIND" = ship ]; then
-  # Resolve the registered project by canonical physical path (a symlinked prefix
-  # such as macOS /tmp must not hide a registered path=), so a project registered
-  # outside projects/ gets its real name and posture and a basename collision
-  # cannot pick the wrong entry. The lookup is advisory: a registry refusal
-  # degrades to the basename and the protective default instead of blocking.
-  PROJ_PHYS=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_PHYS=$PROJ_ABS
-  STANDING_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-mode.XXXXXX") || STANDING_ERR=/dev/null
-  if STANDING_LINE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$PROJ_PHYS" 2>"$STANDING_ERR"); then
-    # "<name> <mode> <yolo>": the name may contain spaces, so peel the last two words.
-    STANDING_REST=${STANDING_LINE% *}
-    STANDING_MODE=${STANDING_REST##* }
-    PROJ_NAME=${STANDING_REST% *}
-  else
-    PROJ_NAME=$(basename "$PROJ_ABS")
-    STANDING_MODE=no-mistakes
-    echo "warning: registered mode lookup failed: $(head -n 1 "$STANDING_ERR" 2>/dev/null); assuming the default standing posture ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
-  fi
-  [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
-  # The parser's own refusal reaches the operator here rather than being
-  # discarded: an entry it refuses (an unknown forge token, or a forge on
-  # local-only) resolves to no posture at all, and launching on the silent
-  # default is how a mistyped forge would hand a Gerrit project the
-  # pull-request contract.
-  if ! STANDING_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$PROJ_NAME" 2>/dev/null); then
-    "$FM_ROOT/bin/fm-project-mode.sh" --forge "$PROJ_NAME" >/dev/null || true
-    echo "error: $ID cannot launch: the registry entry for $PROJ_NAME does not resolve to a delivery posture (see the refusal above); correct data/projects.md and spawn again" >&2
-    exit 1
-  fi
-  [ -n "$STANDING_FORGE" ] || STANDING_FORGE=none
   BRIEF_MODE=$(sed -n 's/^Delivery contract: mode=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   BRIEF_FORGE=$(sed -n 's/^Delivery contract: mode=[^ ]*.*[[:space:]]forge=\([^ ]*\).*$/\1/p' "$BRIEF" | head -n 1)
   [ -n "$BRIEF_FORGE" ] || BRIEF_FORGE=none
