@@ -118,7 +118,15 @@ make_treehouse_fakebin() {  # <dir> -> echoes fakebin dir
   mkdir -p "$fb"
   cat > "$fb/treehouse" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
+if [ "${1:-}:${2:-}" = status:--json ]; then
+  if [ -n "${FM_T3_TREEHOUSE_HOLDER:-}" ]; then
+    printf '[{"name":"1","path":"%s","lease_id":"lease-test","lease_holder":"%s"}]\n' \
+      "${FM_T3_TREEHOUSE_WT:?}" "$FM_T3_TREEHOUSE_HOLDER"
+  else
+    printf '[]\n'
+  fi
+  exit 0
+fi
 set -u
 printf '{"tool":"treehouse","args":"%s","cwd":"%s"}\n' "$*" "$PWD" >> "${FM_T3_TREEHOUSE_LOG:?}"
 case "${1:-}" in
@@ -1323,6 +1331,7 @@ CHECK
   printf 'decisions_reviewed=1\ndecision_keys=\n' >> "$state/$id.meta"
   neutral=$(neutral_fm_root "$CASE_DIR/neutral")
   out=$( HOME="$SPAWN_HOME" PATH="$fb:$PATH" FM_T3_TREEHOUSE_LOG="$LOG" FM_T3_TREEHOUSE_WT="$wt" \
+    FM_T3_TREEHOUSE_HOLDER="$id" \
     FM_ROOT_OVERRIDE="$neutral" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$CONFIG" \
     "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 ); rc=$?
   expect_code 0 "$rc" "teardown must restore the tracked config"$'\n'"$out"
@@ -2135,6 +2144,7 @@ test_scout_teardown_stops_and_archives_before_slot_return() {
   fb=$(make_treehouse_fakebin "$CASE_DIR")
   neutral=$(neutral_fm_root "$CASE_DIR/neutral")
   out=$( PATH="$fb:$PATH" FM_T3_TREEHOUSE_LOG="$LOG" FM_T3_TREEHOUSE_WT="$wt" \
+    FM_T3_TREEHOUSE_HOLDER="$id" \
     FM_ROOT_OVERRIDE="$neutral" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$CONFIG" \
     "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
   rc=$?
@@ -2661,6 +2671,7 @@ test_teardown_keeps_tracked_claude_local_md() {
   fb=$(make_treehouse_fakebin "$CASE_DIR")
   neutral=$(neutral_fm_root "$CASE_DIR/neutral")
   out=$( PATH="$fb:$PATH" FM_T3_TREEHOUSE_LOG="$LOG" FM_T3_TREEHOUSE_WT="$wt" \
+    FM_T3_TREEHOUSE_HOLDER="$id" \
     FM_ROOT_OVERRIDE="$neutral" FM_HOME="$CASE_DIR/home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$CONFIG" \
     "$ROOT/bin/fm-teardown.sh" "$id" 2>&1 )
   rc=$?

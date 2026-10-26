@@ -551,6 +551,23 @@ if [ "$FORCE" = --force ] && [ "$(fm_lease_actor)" = branch ]; then
 fi
 fm_lease_guard "$ID" "teardown (fm-teardown)"
 
+# 0 when <project>'s Treehouse inventory lists <worktree> (any row), 1 when it
+# provably does not. Reading the inventory takes no project lock; an inventory
+# that cannot be read counts as listed, so the caller still takes the lock and
+# the lease proof refuses with the reason.
+treehouse_inventory_lists_worktree() {  # <worktree> <project>
+  local want status rows path
+  want=$(cd "$1" 2>/dev/null && pwd -P) || want=$1
+  command -v jq >/dev/null 2>&1 || return 0
+  status=$( cd "$2" && treehouse status --json 2>/dev/null ) || return 0
+  rows=$(jq -r 'if type == "array" then .[] | (.path // "") else error("not a pool list") end' <<<"$status" 2>/dev/null) || return 0
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    [ "$(cd "$path" 2>/dev/null && pwd -P || printf '%s' "$path")" != "$want" ] || return 0
+  done <<<"$rows"
+  return 1
+}
+
 META="$STATE/$ID.meta"
 TREEHOUSE_PROJECT_LOCK=
 TREEHOUSE_PROJECT_LOCK_HELD=0
@@ -568,7 +585,10 @@ if [ -f "$META" ] && [ ! -L "$META" ]; then
      && [ "$TEARDOWN_LOCK_BACKEND" != orca ] \
      && { [ "$TEARDOWN_LOCK_BACKEND" = t3code ] \
           || [ -n "$TEARDOWN_LOCK_LEASE_ID" ] || [ -n "$TEARDOWN_LOCK_LEASE_HOLDER" ] \
-          || fm_treehouse_pool_slot "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT"; }; then
+          || fm_treehouse_pool_slot "$TEARDOWN_LOCK_PROJECT" "$TEARDOWN_LOCK_WT" \
+          || { [ -n "$TEARDOWN_LOCK_PROJECT" ] && [ -d "$TEARDOWN_LOCK_PROJECT" ] && [ -d "$TEARDOWN_LOCK_WT" ] \
+               && command -v treehouse >/dev/null 2>&1 \
+               && treehouse_inventory_lists_worktree "$TEARDOWN_LOCK_WT" "$TEARDOWN_LOCK_PROJECT"; }; }; then
     TREEHOUSE_SLOT_LOCK_REQUIRED=1
     TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$TEARDOWN_LOCK_PROJECT") || {
       echo "REFUSED: cannot resolve the shared Treehouse project lock for ${TEARDOWN_LOCK_PROJECT:-<missing>}; nothing was changed" >&2
@@ -1300,7 +1320,10 @@ CURRENT_TREEHOUSE_SLOT_LOCK_REQUIRED=0
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] \
    && { [ "$BACKEND" = t3code ] \
         || [ -n "$TREEHOUSE_LEASE_ID" ] || [ -n "$TREEHOUSE_LEASE_HOLDER" ] \
-        || fm_treehouse_pool_slot "$PROJ" "$WT"; }; then
+        || fm_treehouse_pool_slot "$PROJ" "$WT" \
+        || { [ -n "$PROJ" ] && [ -d "$PROJ" ] && [ -d "$WT" ] && command -v treehouse >/dev/null 2>&1 \
+             && treehouse_inventory_lists_worktree "$WT" "$PROJ"; }; }; then
+  # A copy the pool lists is proven like a pooled one, layout or not.
   CURRENT_TREEHOUSE_SLOT_LOCK_REQUIRED=1
   EXPECTED_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ") || {
     echo "REFUSED: cannot resolve the shared Treehouse project lock for ${PROJ:-<missing>}; nothing was changed" >&2
@@ -3335,6 +3358,13 @@ preflight_descendant_treehouse_slots() {
     if [ "$pool_slot" -eq 0 ] && [ "$needs_lease" -eq 0 ]; then
       continue
     fi
+    # The project lock serializes taking or returning a pooled copy or lease.
+    # An unleased copy the pool does not list has none to take or return, so its
+    # read-only lease proof below runs without that lock.
+    if [ "$pool_slot" -eq 0 ] && [ "$backend" != t3code ] && [ -z "$lease_id" ] && [ -z "$lease_holder" ] \
+       && ! treehouse_inventory_lists_worktree "$worktree" "$project"; then
+      continue
+    fi
     lock_path=$(fm_treehouse_project_lock_path "$project") || {
       echo "REFUSED: cannot resolve the shared Treehouse project lock for child $task_id; forced teardown changed nothing" >&2
       return 1
@@ -3381,7 +3411,7 @@ preflight_descendant_treehouse_slots() {
     owner_rc=0
     if [ "$pool_slot" -eq 1 ]; then
       require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" || return 1
-      reassignment_policy=records-only
+      reassignment_policy='records-only'
       [ "$backend" != t3code ] || reassignment_policy=refuse
       require_owned_worktree_slot_record "$task_id" "$worktree" "$reassignment_policy" || owner_rc=$?
       case "$owner_rc" in
@@ -3634,7 +3664,7 @@ cleanup_firstmate_home_children() {
        && [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
       validate_child_worktree_for_removal "$child_wt" "$child_proj" >/dev/null || return 1
       if fm_treehouse_pool_slot "$child_proj" "$child_wt"; then
-        child_reassignment_policy=records-only
+        child_reassignment_policy='records-only'
         [ "$child_backend" != t3code ] || child_reassignment_policy=refuse
         require_owned_worktree_slot_record "$child_id" "$child_wt" "$child_reassignment_policy" 2>/dev/null || child_owner_rc=$?
         if [ "$child_owner_rc" -ne 0 ] && [ "$child_owner_rc" -ne "$TEARDOWN_SLOT_REASSIGNED_RC" ]; then
