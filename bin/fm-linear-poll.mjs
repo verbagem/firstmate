@@ -25,7 +25,8 @@
 // rather than one shared team holding a Project per business). The webhook
 // is workspace-wide (allPublicTeams) so it fires for issues in any team.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -180,6 +181,34 @@ async function createNotionTask(routing, row) {
   return page.id;
 }
 
+function matchingExistingIntake(briefPath, scaffold) {
+  let stat;
+  try {
+    stat = lstatSync(briefPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+  if (!stat.isFile() || readFileSync(briefPath, "utf8") !== scaffold) {
+    throw new Error(`existing brief differs from Linear intake: ${briefPath}`);
+  }
+  return true;
+}
+
+function publishIntakeBrief(briefPath, scaffold) {
+  const tmpPath = `${briefPath}.tmp.${process.pid}.${randomUUID()}`;
+  writeFileSync(tmpPath, scaffold, { flag: "wx", mode: 0o600 });
+  try {
+    linkSync(tmpPath, briefPath);
+    return true;
+  } catch (error) {
+    if (error.code !== "EEXIST" || !matchingExistingIntake(briefPath, scaffold)) throw error;
+    return false;
+  } finally {
+    unlinkSync(tmpPath);
+  }
+}
+
 async function publishIntake(row) {
   const routing = TEAM_ROUTING[row.linear_team_id];
   if (!routing) {
@@ -190,18 +219,16 @@ async function publishIntake(row) {
 
   const taskId = slugify(row.linear_identifier);
   try {
-    const notionTaskId = await createNotionTask(routing, row);
     const taskDir = path.join(FM_ROOT, "data", taskId);
     const briefPath = path.join(taskDir, "brief.md");
     const businessLine = routing.business ? `Business area: \`${routing.business}\`.\n\n` : "";
     const taskText =
       `${businessLine}${row.title}\n\n${row.description || "(no description on the Linear issue)"}\n\n` +
       `Source: Linear issue ${row.linear_identifier} — ${row.linear_url}`;
-    const notionLine = notionTaskId ? `\nNotion task: ${notionTaskId}` : "";
     const scaffold = `# Linear intake\n\n` +
       `Status: waiting-for-dispatch\n` +
       `Task id: ${taskId}\n` +
-      `Project: projects/${routing.repo}${notionLine}\n\n` +
+      `Project: projects/${routing.repo}\n\n` +
       `# Task\n\n## Captain's intent\n\n${taskText}\n\n` +
       `## Firstmate spec\n\n` +
       `Firstmate must classify this intake, write the implementation or research specification, ` +
@@ -209,7 +236,9 @@ async function publishIntake(row) {
       `# Unresolved dispatch decisions\n\n` +
       `- Task kind\n- Delivery mode\n- Merge authority\n- Dispatch profile\n`;
     mkdirSync(taskDir, { recursive: true });
-    writeFileSync(briefPath, scaffold, { mode: 0o600 });
+    if (publishIntakeBrief(briefPath, scaffold)) {
+      await createNotionTask(routing, row);
+    }
 
     await markRow(row.id, { status: "waiting_for_dispatch", firstmate_task_id: taskId });
     process.stdout.write(`waiting-for-dispatch ${row.linear_identifier} -> ${taskId}\n`);

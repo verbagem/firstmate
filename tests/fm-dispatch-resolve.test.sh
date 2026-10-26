@@ -1118,6 +1118,13 @@ assert_contains "$(jq -r .state.task.brief "$LOG/body")" 'off-by-one in the page
 assert_not_contains "$(jq -r .state.task.brief "$LOG/body")" 'replacement written while resolution is in flight' \
   "resolver request observed a concurrent brief replacement"
 [ "$(stat -f %Lp "$RECEIPT" 2>/dev/null || stat -c %a "$RECEIPT")" = 600 ] || fail "receipt must be private (0600)"
+SNAPSHOT_TMP="$TMP_ROOT/dispatch-snapshots"
+mkdir -p "$SNAPSHOT_TMP"
+reset_log
+TMPDIR="$SNAPSHOT_TMP" TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "snapshot cleanup success path exits 0"
+set -- "$SNAPSHOT_TMP"/*
+[ ! -e "$1" ] || fail "dispatch resolution left private snapshots after success"
 run_without_curl code out err "$HOME_DIR/data/$TASK_ID/brief.md" --project pager
 assert_absent "$RECEIPT" "a later run that yields no answer drops the earlier receipt"
 pass "a task-brief resolution records exactly one private receipt for fm-spawn.sh to enforce"

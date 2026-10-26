@@ -117,7 +117,15 @@ usage() {
 }
 
 BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
+BRIEF_SNAPSHOT='' RESP_FILE='' QUOTA='' TASK_TEXT='' SEND_TEXT=''
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
+cleanup() {
+  rm -f "$RULES" "$BRIEF_SNAPSHOT" "$RESP_FILE" "$QUOTA" "$TASK_TEXT" "$SEND_TEXT"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) [ $# -ge 2 ] || die "--project needs a value"; PROJECT=$2; shift 2 ;;
@@ -187,7 +195,6 @@ esac
 command -v jq >/dev/null 2>&1 || die "jq required"
 RULES=$(mktemp) || die "mktemp failed"
 BRIEF_SNAPSHOT=$(mktemp) || die "mktemp failed"
-trap 'rm -f "$RULES" "$BRIEF_SNAPSHOT"' EXIT
 cp "$RULES_PATH" "$RULES" || die "could not snapshot rules file: $RULES_PATH"
 chmod 400 "$RULES" || die "could not protect rules snapshot"
 cp "$BRIEF" "$BRIEF_SNAPSHOT" || die "could not snapshot brief file: $BRIEF"
@@ -295,10 +302,9 @@ if [ "$RULE_COUNT" -eq 0 ]; then
 fi
 
 RESP_FILE=$(mktemp) || die "mktemp failed"
-QUOTA=$(mktemp) || { rm -f "$RESP_FILE"; die "mktemp failed"; }
-TASK_TEXT=$(mktemp) || { rm -f "$RESP_FILE" "$QUOTA"; die "mktemp failed"; }
-SEND_TEXT=$(mktemp) || { rm -f "$RESP_FILE" "$QUOTA" "$TASK_TEXT"; die "mktemp failed"; }
-trap 'rm -f "$RULES" "$RESP_FILE" "$QUOTA" "$TASK_TEXT" "$SEND_TEXT"' EXIT
+QUOTA=$(mktemp) || die "mktemp failed"
+TASK_TEXT=$(mktemp) || die "mktemp failed"
+SEND_TEXT=$(mktemp) || die "mktemp failed"
 
 never_send_off() {
   echo "dispatch-resolve: off ($1; nothing sent)" >&2

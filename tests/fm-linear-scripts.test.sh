@@ -21,7 +21,7 @@ test_linear_node_scripts_parse() {
 }
 
 test_linear_poll_publishes_waiting_intake_without_dispatch() {
-  local dir script_root command_center calls exec_log out brief final_body
+  local dir script_root command_center calls exec_log out brief final_body brief_before divergent_before notion_calls
   command -v node >/dev/null 2>&1 || { echo "skip: node not found"; return 0; }
   dir=$(fm_test_tmproot fm-linear-poll)
   command_center="$dir/command-center"
@@ -33,6 +33,7 @@ test_linear_poll_publishes_waiting_intake_without_dispatch() {
   printf '%s\n' \
     'BH1VE_SUPABASE_URL=https://supabase.test' \
     'BH1VE_SUPABASE_SERVICE_KEY=test-supabase' \
+    'NOTION_API_KEY=test-notion' \
     > "$command_center/_config/.env"
   cat > "$script_root/bin/fm-brief.sh" <<'SH'
 #!/usr/bin/env bash
@@ -61,6 +62,10 @@ global.fetch = async (url, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : null;
   fs.appendFileSync(process.env.FM_LINEAR_FETCH_LOG, JSON.stringify({ url: String(url), method, body }) + "\n");
   if (String(url).startsWith("https://api.linear.app/")) throw new Error("unexpected Linear mutation");
+  if (String(url).startsWith("https://api.notion.com/")) {
+    if (!fs.existsSync(process.env.FM_LINEAR_EXPECT_BRIEF)) throw new Error("Notion task created before intake publication");
+    return { ok: true, status: 200, json: async () => ({ id: "notion-task-1" }) };
+  }
   if (method === "GET") return { ok: true, status: 200, json: async () => [row] };
   if (String(url).includes("status=eq.pending")) return { ok: true, status: 200, json: async () => [{ ...row, status: "claimed" }] };
   return { ok: true, status: 200, json: async () => [{ ...row, ...body }] };
@@ -69,6 +74,7 @@ JS
 
   out=$(NODE_OPTIONS="--require=$dir/mock-fetch.cjs" \
     FM_LINEAR_FETCH_LOG="$calls" FM_LINEAR_EXEC_LOG="$exec_log" \
+    FM_LINEAR_EXPECT_BRIEF="$script_root/data/linear-fir-42/brief.md" \
     node "$script_root/bin/fm-linear-poll.mjs" 2> "$dir/stderr") \
     || fail "linear poll failed: $(cat "$dir/stderr")"
   brief="$script_root/data/linear-fir-42/brief.md"
@@ -86,7 +92,37 @@ JS
     || fail "queue row did not stop in waiting_for_dispatch: $final_body"
   [ "$(jq -r .firstmate_task_id <<<"$final_body")" = linear-fir-42 ] \
     || fail "queue row did not retain the durable Firstmate task id"
-  pass "linear poll publishes a durable intake and stops before dispatch authority"
+  notion_calls=$(jq -s '[.[] | select(.url | startswith("https://api.notion.com/"))] | length' "$calls")
+  [ "$notion_calls" -eq 1 ] || fail "initial intake did not create exactly one Notion task"
+  brief_before=$(cat "$brief")
+
+  : > "$calls"
+  out=$(NODE_OPTIONS="--require=$dir/mock-fetch.cjs" \
+    FM_LINEAR_FETCH_LOG="$calls" FM_LINEAR_EXEC_LOG="$exec_log" \
+    FM_LINEAR_EXPECT_BRIEF="$brief" \
+    node "$script_root/bin/fm-linear-poll.mjs" 2> "$dir/retry.stderr") \
+    || fail "matching linear intake retry failed: $(cat "$dir/retry.stderr")"
+  assert_contains "$out" 'waiting-for-dispatch FIR-42 -> linear-fir-42' "matching retry did not reuse the intake"
+  [ "$(cat "$brief")" = "$brief_before" ] || fail "matching retry changed the existing intake"
+  notion_calls=$(jq -s '[.[] | select(.url | startswith("https://api.notion.com/"))] | length' "$calls")
+  [ "$notion_calls" -eq 0 ] || fail "matching retry created a duplicate Notion task"
+
+  printf '\nFirstmate edit.\n' >> "$brief"
+  divergent_before=$(cat "$brief")
+  : > "$calls"
+  out=$(NODE_OPTIONS="--require=$dir/mock-fetch.cjs" \
+    FM_LINEAR_FETCH_LOG="$calls" FM_LINEAR_EXEC_LOG="$exec_log" \
+    FM_LINEAR_EXPECT_BRIEF="$brief" \
+    node "$script_root/bin/fm-linear-poll.mjs" 2> "$dir/divergent.stderr") \
+    || fail "divergent linear intake retry failed unexpectedly: $(cat "$dir/divergent.stderr")"
+  assert_contains "$out" 'failed FIR-42: existing brief differs from Linear intake' \
+    "divergent retry did not refuse the existing intake"
+  [ "$(cat "$brief")" = "$divergent_before" ] || fail "divergent retry truncated the existing intake"
+  notion_calls=$(jq -s '[.[] | select(.url | startswith("https://api.notion.com/"))] | length' "$calls")
+  [ "$notion_calls" -eq 0 ] || fail "divergent retry created a duplicate Notion task"
+  set -- "$script_root/data/linear-fir-42"/brief.md.tmp.*
+  [ ! -e "$1" ] || fail "linear intake publication left a temporary brief behind"
+  pass "linear poll atomically reuses matching intake and preserves divergent briefs"
 }
 
 test_linear_node_scripts_parse
