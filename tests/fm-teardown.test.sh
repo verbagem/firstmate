@@ -5507,6 +5507,61 @@ assert_unverifiable_lease_state_refuses() {  # <case> <status-script> <expected-
   [ -e "$case_dir/state/task-x1.meta" ] || fail "$1: teardown removed the record"
 }
 
+# A legacy record's pooled copy that no lease holds is reserved as the task's own
+# firstmate:<id> lease before anything destructive, and returned only through it.
+test_unleased_pooled_copy_is_guarded_before_cleanup() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-guard-unleased)
+  write_meta "$case_dir" local-only ship
+  write_status_treehouse "$case_dir" "  printf '%s\\n' '[{\"name\":\"7\",\"path\":\"$case_dir/wt\",\"status\":\"in-use\",\"lease_id\":\"\",\"lease_holder\":\"\"}]'; exit 0
+fi
+if [ \"\${1:-}\" = lease ]; then
+  printf '%s\\n' '{\"path\":\"$case_dir/wt\",\"lease_id\":\"guard-x1\",\"lease_holder\":\"firstmate:task-x1\"}'; exit 0"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "teardown of a guarded unleased pooled copy should succeed: $(cat "$case_dir/stderr")"
+  assert_grep "lease 7 --lease-holder firstmate:task-x1 --json" "$case_dir/treehouse.log" \
+    "teardown did not reserve the unleased copy before cleanup"
+  assert_grep "return --force $case_dir/wt --if-lease-id guard-x1" "$case_dir/treehouse.log" \
+    "teardown did not return the copy through its own guard lease"
+  [ "$(grep -n '^lease 7' "$case_dir/treehouse.log" | cut -d: -f1)" -lt "$(grep -n '^return' "$case_dir/treehouse.log" | cut -d: -f1)" ] \
+    || fail "teardown returned the copy before reserving it"
+  pass "teardown reserves an unleased pooled copy as its own lease before cleanup and returns through it"
+}
+
+# If another allocator takes the slot after the status snapshot, the guard lease
+# cannot be taken, and teardown leaves the copy, its work and the record alone.
+test_unleased_pooled_copy_refuses_when_its_guard_is_taken() {
+  local case_dir rc
+  case_dir=$(make_case treehouse-guard-race)
+  write_meta "$case_dir" local-only ship
+  printf '%s\n' 'uncommitted work' > "$case_dir/wt/work.txt"
+  write_status_treehouse "$case_dir" "  printf '%s\\n' '[{\"name\":\"7\",\"path\":\"$case_dir/wt\",\"status\":\"in-use\",\"lease_id\":\"\",\"lease_holder\":\"\"}]'; exit 0
+fi
+if [ \"\${1:-}\" = lease ]; then
+  echo 'slot 7 is already leased' >&2; exit 1"
+
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "teardown must refuse when its guard lease cannot be taken"
+  if grep -q '^return' "$case_dir/treehouse.log"; then
+    fail "teardown returned a copy it could not reserve"
+  fi
+  assert_grep "could not take a durable Treehouse guard lease" "$case_dir/stderr" "refusal did not explain the lost guard"
+  [ -f "$case_dir/wt/work.txt" ] || fail "teardown discarded work in a copy it could not reserve"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "teardown removed the record of a copy it could not reserve"
+  pass "teardown refuses, leaving copy and record intact, when another allocator holds the slot"
+}
+
+# A copy listed twice in the pool inventory is ambiguous, as spawn also treats it.
+test_duplicate_pool_rows_refuse_teardown() {
+  assert_unverifiable_lease_state_refuses treehouse-duplicate-rows \
+    "  printf '%s\\n' '[{\"name\":\"1\",\"path\":\"$TMP_ROOT/treehouse-duplicate-rows/wt\",\"status\":\"leased\",\"lease_id\":\"lease-own\",\"lease_holder\":\"firstmate:task-x1\"},{\"name\":\"2\",\"path\":\"$TMP_ROOT/treehouse-duplicate-rows/wt\",\"status\":\"leased\",\"lease_id\":\"lease-other\",\"lease_holder\":\"firstmate:other\"}]'; exit 0" \
+    "is listed 2 times"
+  pass "teardown refuses a copy listed more than once in the pool inventory"
+}
+
 test_unleased_record_refuses_teardown_when_lease_state_unverifiable() {
   assert_unverifiable_lease_state_refuses treehouse-status-fails "  exit 1" \
     "'treehouse status --json' failed"
@@ -5965,3 +6020,6 @@ test_unleased_record_refuses_teardown_of_copy_leased_to_another_owner
 test_unleased_record_adopts_its_own_firstmate_lease
 test_unleased_record_refuses_teardown_when_lease_state_unverifiable
 test_recorded_lease_refuses_before_touching_copy_it_no_longer_holds
+test_unleased_pooled_copy_is_guarded_before_cleanup
+test_unleased_pooled_copy_refuses_when_its_guard_is_taken
+test_duplicate_pool_rows_refuse_teardown

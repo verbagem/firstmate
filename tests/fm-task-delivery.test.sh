@@ -221,6 +221,37 @@ EOF
   pass "fm-spawn: an advisory registry lookup refusal degrades and warns instead of blocking the spawn"
 }
 
+# Two registry entries may share a name; the one registered for this copy's path
+# owns its forge policy, so a based scout of the Gerrit-bound copy is refused even
+# though a forge=none entry of the same name appears first.
+test_base_branch_forge_follows_the_registered_path_row() {
+  local root home first second fakebin out status
+  root="$TMP_ROOT/dup-name-forge"
+  home="$root/home"
+  first="$root/a/agent"
+  second="$root/b/agent"
+  fakebin="$root/bin"
+  mkdir -p "$home/data" "$home/state" "$home/config" "$home/projects" "$first" "$second" "$fakebin"
+  for repo in "$first" "$second"; do
+    git -C "$repo" init -q || fail "could not initialize $repo"
+    git -c user.name=test -c user.email=test@example.com -C "$repo" commit -q --allow-empty -m init || fail "could not commit $repo"
+  done
+  printf '#!/bin/sh\nexit 1\n' > "$fakebin/tmux"
+  chmod +x "$fakebin/tmux"
+  {
+    printf -- "- agent [no-mistakes path=%s] - forge-free fixture (added 2026-01-01)\n" "$first"
+    printf -- "- agent [no-mistakes forge=gerrit path=%s] - Gerrit fixture (added 2026-01-01)\n" "$second"
+  } > "$home/data/projects.md"
+  write_brief "$home" delivery-dupname-g1
+
+  out=$(run_spawn "$home" "$fakebin" delivery-dupname-g1 "$second" claude --scout --base-branch release)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a based scout of the Gerrit-registered copy launched: $out"
+  assert_contains "$out" "a base branch is not supported on forge=gerrit" \
+    "base-branch validation used another same-named entry's forge: $out"
+  pass "fm-spawn: base-branch forge policy comes from the registry row registered for the copy's path"
+}
+
 test_spawn_resolves_standing_posture_by_registered_path() {
   local home external fakebin out
   home="$TMP_ROOT/external-spawn/home"
@@ -1917,6 +1948,7 @@ test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_spawn_degrades_when_the_registry_lookup_refuses
 test_spawn_resolves_standing_posture_by_registered_path
+test_base_branch_forge_follows_the_registered_path_row
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promote_refuses_a_symlinked_task_record

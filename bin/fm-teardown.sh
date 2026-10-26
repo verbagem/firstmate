@@ -208,7 +208,10 @@
 # ship or scout task, also before any process reaping). A record with a recorded
 # lease must find that exact lease listed on its copy. For a record without one,
 # a lease held by firstmate:<that task id> is the record's own and guards the
-# return. A missing recorded lease, a lease held by anyone else, or lease state
+# return; an unleased pooled copy is first leased in place as firstmate:<task id>
+# (refusing if that lease cannot be taken and confirmed), so no other allocator
+# can be handed it before the return, and a copy listed more than once in the
+# pool inventory refuses. A missing recorded lease, a lease held by anyone else, or lease state
 # that cannot be read (jq missing, `treehouse status --json` failing or
 # unparseable) refuses and leaves the copy, its lease, and the record untouched
 # for reconciliation.
@@ -1986,7 +1989,8 @@ treehouse_listed_worktree_path() {  # <dir> <cd-dir>
 # The verified guard is exposed through TREEHOUSE_VERIFIED_LEASE_ID/_HOLDER.
 treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [<lease-id> <lease-holder>]
   local dir=$1 cd_dir=$2 label=$3 task_id=$4 meta=$5 recorded_id=${6:-} recorded_holder=${7:-}
-  local want status entries path lease_id lease_holder reason="" ownership found=0
+  local want status entries rows name path lease_id lease_holder reason="" ownership found=0 matches=0
+  local guard_name='' guard_holder result leased_path
   TREEHOUSE_VERIFIED_LEASE_ID=
   TREEHOUSE_VERIFIED_LEASE_HOLDER=
   if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
@@ -2003,10 +2007,27 @@ treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [
     reason="jq is not installed"
   elif ! status=$( cd "$cd_dir" && treehouse status --json 2>/dev/null ); then
     reason="'treehouse status --json' failed in '$cd_dir'"
-  elif ! entries=$(jq -rn 'input | if type == "array" then .[] else error("not a pool list") end
-      | select((.lease_id // "") != "" or (.lease_holder // "") != "")
-      | [.path // "", .lease_id // "", .lease_holder // ""] | @tsv' <<<"$status" 2>/dev/null); then
+  elif ! rows=$(jq -rn 'input | if type == "array" then .[] else error("not a pool list") end
+      | [.name // "", .path // "", .lease_id // "", .lease_holder // ""] | @tsv' <<<"$status" 2>/dev/null); then
     reason="'treehouse status --json' in '$cd_dir' did not return a parseable pool list"
+  fi
+  # Every pool row naming this copy, leased or not: more than one is an ambiguous
+  # inventory spawn also refuses, so no single lease can be trusted to guard it.
+  if [ -z "$reason" ]; then
+    entries=
+    while IFS=$'\t' read -r name path lease_id lease_holder; do
+      [ -n "$path" ] || continue
+      [ "$(canonical_existing_dir "$path" || printf '%s' "$path")" = "$want" ] || continue
+      matches=$((matches + 1))
+      guard_name=$name
+      if [ -n "$lease_id" ] || [ -n "$lease_holder" ]; then
+        entries="$entries$path"$'\t'"$lease_id"$'\t'"$lease_holder"$'\n'
+      fi
+    done <<<"$rows"
+    if [ "$matches" -gt 1 ]; then
+      echo "error: $label '$dir' of task $task_id is listed $matches times in 'treehouse status --json' in '$cd_dir'; $ownership, and an ambiguous pool inventory cannot prove which entry guards the copy, so refusing to touch it. The copy, its work and this record were left untouched; repair the duplicate pool entry in Treehouse without changing the copy, then rerun teardown" >&2
+      return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+    fi
   fi
   if [ -n "$reason" ]; then
     echo "error: cannot verify Treehouse lease state of $label '$dir' of task $task_id because $reason; $ownership, so refusing to touch a copy that may be leased to another owner. The copy, its work and this record were left untouched; restore the project, treehouse, jq and 'treehouse status --json', then rerun teardown" >&2
@@ -2033,6 +2054,22 @@ treehouse_verify_worktree_lease() {  # <dir> <cd-dir> <label> <task-id> <meta> [
     echo "error: $label '$dir' of task $task_id is durably leased in Treehouse (lease '${lease_id:-none}', holder '${lease_holder:-none}'), but $ownership; refusing to touch another owner's copy. The copy, its lease, its work and this record were left untouched. Inspect '$meta' against 'treehouse status --json' in '$cd_dir'; if the holder is another owner, this record no longer owns the copy, so retire only the record by moving '$meta' aside once task $task_id's branch and work are confirmed safe elsewhere" >&2
     return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
   done <<<"$entries"
+  if [ -z "$recorded_id" ] && [ -z "$recorded_holder" ] && [ "$matches" -eq 1 ]; then
+    # A legacy record's pooled copy that no lease holds yet: take this task's own
+    # durable guard before anything destructive, so no other allocator can be
+    # handed the slot between this check and the return, and return through it.
+    guard_holder="firstmate:$task_id"
+    if ! result=$( cd "$cd_dir" && treehouse lease "$guard_name" --lease-holder "$guard_holder" --json 2>/dev/null ) \
+       || ! leased_path=$(jq -er 'select(type == "object" and (.lease_id | type) == "string" and (.lease_id | length) > 0) | .path' <<<"$result" 2>/dev/null) \
+       || [ "$(canonical_existing_dir "$leased_path" || printf '%s' "$leased_path")" != "$want" ] \
+       || [ "$(jq -r '.lease_holder // ""' <<<"$result" 2>/dev/null)" != "$guard_holder" ]; then
+      echo "error: could not take a durable Treehouse guard lease '$guard_holder' on $label '$dir' of task $task_id before cleanup; $ownership, so refusing to touch a copy another allocator could be handed. The copy, its work and this record were left untouched; rerun teardown once 'treehouse lease' succeeds in '$cd_dir'" >&2
+      return "$TEARDOWN_TREEHOUSE_LEASE_REFUSED"
+    fi
+    TREEHOUSE_VERIFIED_LEASE_ID=$(jq -r '.lease_id' <<<"$result")
+    TREEHOUSE_VERIFIED_LEASE_HOLDER=$guard_holder
+    return 0
+  fi
   if [ -n "$recorded_id" ] || [ -n "$recorded_holder" ]; then
     if [ "$found" -ne 1 ]; then
       echo "error: $label '$dir' of task $task_id is not listed under its recorded lease in 'treehouse status --json' in '$cd_dir'; $ownership, so the lease was lost and the slot may since belong to another owner. The copy, its work and this record were left untouched. Once the copy is confirmed to be task $task_id's, remove the treehouse_lease_id and treehouse_lease_holder lines from '$meta' and rerun teardown" >&2

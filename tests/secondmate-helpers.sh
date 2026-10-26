@@ -133,6 +133,12 @@ case "${1:-}" in
     printf '%s\n' "${FM_FAKE_TREEHOUSE_STATUS_JSON:-[]}"
     exit 0
     ;;
+  lease)
+    # State-only guard lease: the test supplies the result, or the slot is taken.
+    [ -n "${FM_FAKE_TREEHOUSE_LEASE_JSON:-}" ] || { echo "slot already leased" >&2; exit 1; }
+    printf '%s\n' "$FM_FAKE_TREEHOUSE_LEASE_JSON"
+    exit 0
+    ;;
   get)
     # Durable lease: print only the worktree path to stdout (banners to stderr),
     # and record the lease holder so tests can assert it is set and later cleared.

@@ -514,6 +514,11 @@ if [ "\${1:-}:\${2:-}" = status:--json ]; then
   done | jq -s '.'
   exit 0
 fi
+if [ "\${1:-}" = lease ]; then
+  m=\$(grep -l '^worktree=' "$home"/state/*.meta | head -n 1)
+  jq -cn --arg p "\$(sed -n 's/^worktree=//p' "\$m")" --arg h "\$4" '{path:\$p,lease_id:"guard",lease_holder:\$h}'
+  exit 0
+fi
 if [ "\${1:-}" = return ] && [ ! -f "$case_dir/teardown-interrupted" ]; then
   : > "$case_dir/teardown-interrupted"
   teardown_pid=\$(ps -o ppid= -p "\$PPID" | tr -d ' ')

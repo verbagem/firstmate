@@ -4093,26 +4093,39 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   STANDING_MODE=
   STANDING_FORGE=none
+  PROJ_POLICY_ARGS=("$PROJ_NAME")
   if [ "$KIND" = ship ] || [ "$BASE_BRANCH_SET" -eq 1 ]; then
     # Resolve the registered project by canonical physical path (a symlinked prefix
     # such as macOS /tmp must not hide a registered path=), so every policy lookup
     # uses the same registry identity rather than the project's path basename.
     PROJ_PHYS=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_PHYS=$PROJ_ABS
     STANDING_ERR=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-mode.XXXXXX") || STANDING_ERR=/dev/null
+    # Every later policy query reuses this exact registry row through --path, so
+    # two entries sharing a name can never answer for each other.
+    PROJ_POLICY_ARGS=(--path "$PROJ_PHYS")
     if STANDING_LINE=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$PROJ_PHYS" 2>"$STANDING_ERR"); then
       # "<name> <mode> <yolo>": the name may contain spaces, so peel the last two words.
       STANDING_REST=${STANDING_LINE% *}
       STANDING_MODE=${STANDING_REST##* }
       PROJ_NAME=${STANDING_REST% *}
+    elif grep -q 'ambiguous path identity' "$STANDING_ERR" 2>/dev/null; then
+      # Two registered projects claim this copy: no single forge, mode, or branch
+      # policy can be chosen for it, so refuse rather than guess by basename.
+      echo "error: $ID cannot launch: $(head -n 1 "$STANDING_ERR"); give each project one distinct path in data/projects.md and spawn again" >&2
+      rm -f "$STANDING_ERR"
+      exit 1
     else
+      # A malformed line elsewhere in the registry makes the path scan refuse; the
+      # standing posture stays advisory and falls back to the basename entry.
+      PROJ_POLICY_ARGS=("$PROJ_NAME")
       STANDING_MODE=no-mistakes
       echo "warning: registered mode lookup failed: $(head -n 1 "$STANDING_ERR" 2>/dev/null); assuming the default standing posture ($STANDING_MODE) for $PROJ_NAME - this notice is advisory and does not block the spawn, but fix the registry so the standing posture is authoritative again" >&2
     fi
     [ "$STANDING_ERR" = /dev/null ] || rm -f "$STANDING_ERR"
     # The parser's own refusal reaches the operator here rather than being
     # discarded: an entry it refuses resolves to no posture at all.
-    if ! STANDING_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$PROJ_NAME" 2>/dev/null); then
-      "$FM_ROOT/bin/fm-project-mode.sh" --forge "$PROJ_NAME" >/dev/null || true
+    if ! STANDING_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "${PROJ_POLICY_ARGS[@]}" 2>/dev/null); then
+      "$FM_ROOT/bin/fm-project-mode.sh" --forge "${PROJ_POLICY_ARGS[@]}" >/dev/null || true
       echo "error: $ID cannot launch: the registry entry for $PROJ_NAME does not resolve to a delivery posture (see the refusal above); correct data/projects.md and spawn again" >&2
       exit 1
     fi
@@ -4291,7 +4304,7 @@ if [ "$KIND" = ship ]; then
   # spawn that ships the legacy fm/ prefix past a registered override is
   # announced, not refused: the brief-vs-spawn agreement above already
   # guarantees the worker's instructions match the branch this spawn selected.
-  STANDING_BRANCH=$("$FM_ROOT/bin/fm-project-mode.sh" --branch-prefix "$PROJ_NAME" 2>/dev/null) || STANDING_BRANCH=
+  STANDING_BRANCH=$("$FM_ROOT/bin/fm-project-mode.sh" --branch-prefix "${PROJ_POLICY_ARGS[@]}" 2>/dev/null) || STANDING_BRANCH=
   if [ "$BRANCH" != "$STANDING_BRANCH$ID" ]; then
     echo "notice: $ID ships branch=$BRANCH while $PROJ_NAME registers the ship-branch prefix '$STANDING_BRANCH' (branch $STANDING_BRANCH$ID) - the task's branch and PR will read as firstmate-authored; proceed only on a current explicit captain instruction or an intake judgment you can state" >&2
   fi
@@ -4922,6 +4935,13 @@ fi
 if [ -e "$STATE/$ID.backlog-close" ] || [ -L "$STATE/$ID.backlog-close" ]; then
   echo "error: task $ID has a pending authoritative backlog close at $STATE/$ID.backlog-close; finish or repair that close before dispatching a new worker" >&2
   exit 1
+fi
+
+# Reserve preserved records' copies before any endpoint exists, so a refusal
+# leaves nothing for a retry to trip over. t3code reserves inside its own branch,
+# after the launch refusals that must not touch the pool at all.
+if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ] && [ "$BACKEND" != t3code ]; then
+  treehouse_protect_recorded_worktrees || exit 1
 fi
 
 W="fm-$ID"
@@ -6007,7 +6027,6 @@ elif [ "$RELAUNCH" -eq 1 ]; then
 elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # A t3code slot was leased and validated in its target branch above.
   if [ "$BACKEND" != t3code ]; then
-    treehouse_protect_recorded_worktrees || exit 1
     spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
     # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.

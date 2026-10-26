@@ -455,6 +455,10 @@ if [ "${1:-}:${2:-}" = status:--json ]; then
   jq -cn --arg path "${FM_FAKE_TREEHOUSE_PATH:?}" \
     '[{name:"fixture",path:$path,status:"available",lease_id:"",lease_holder:""}]'
 fi
+# Teardown reserves the unleased fixture slot before returning it.
+if [ "${1:-}" = lease ]; then
+  jq -cn --arg path "${FM_FAKE_TREEHOUSE_PATH:?}" --arg h "$4" '{path:$path,lease_id:"guard",lease_holder:$h}'
+fi
 exit 0
 SH
   chmod +x "$fakebin/treehouse"

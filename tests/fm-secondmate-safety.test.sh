@@ -2149,6 +2149,26 @@ test_secondmate_force_teardown_guards_unrecorded_child_leases() {
   pass "secondmate force teardown adopts a child's own lease and refuses foreign or unreadable lease state"
 }
 
+# Child teardown reserves an unleased pooled child copy as the child's own lease
+# before touching it, refuses when that guard cannot be taken, and refuses a
+# child copy listed more than once in the pool inventory.
+test_secondmate_force_teardown_guards_unleased_child_copies() {
+  local unleased='[{"name":"1","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""}]'
+  FM_FAKE_TREEHOUSE_LEASE_JSON="{\"path\":\"$TMP_ROOT/child-guarded-child-worktree\",\"lease_id\":\"guard-child\",\"lease_holder\":\"firstmate:child\"}" \
+    run_secondmate_child_unrecorded_lease_teardown child-guarded "$unleased"
+  [ "$CHILD_LEASE_RC" -eq 0 ] || fail "force teardown refused a reservable unleased child copy: $(cat "$CHILD_LEASE_ERR")"
+  grep -F "treehouse lease 1 --lease-holder firstmate:child --json" "$CHILD_LEASE_LOG" >/dev/null \
+    || fail "child teardown did not reserve the unleased child copy"
+  grep -F "treehouse return --force $CHILD_LEASE_WT --if-lease-id guard-child" "$CHILD_LEASE_LOG" >/dev/null \
+    || fail "child teardown did not return the child copy through its guard lease"
+  assert_secondmate_child_unrecorded_lease_refused child-guard-taken "$unleased" \
+    "could not take a durable Treehouse guard lease"
+  assert_secondmate_child_unrecorded_lease_refused child-duplicate-rows \
+    '[{"name":"1","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""},{"name":"2","path":"@WT@","status":"in-use","lease_id":"","lease_holder":""}]' \
+    "is listed 2 times"
+  pass "secondmate force teardown guards an unleased child copy and refuses a lost guard or duplicate pool rows"
+}
+
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails() {
   assert_secondmate_child_unrecorded_lease_refused child-stale-recorded-lease \
     '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-other","lease_holder":"firstmate:other-task"}]' \
@@ -2158,8 +2178,11 @@ test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails()
     '[{"name":"1","path":"@WT@","status":"available"}]' \
     "is not listed under its recorded lease" \
     "$(printf '%s\n%s' treehouse_lease_id=lease-child treehouse_lease_holder=firstmate:child)"
-  assert_secondmate_child_guarded_return_failure_preserves_copy child-ambiguous-lease-inventory \
-    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"},{"name":"2","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"}]'
+  # A duplicated inventory now refuses before any return (covered by
+  # test_secondmate_force_teardown_guards_unleased_child_copies), so the failed
+  # guarded return is exercised on the child's single own-lease row.
+  assert_secondmate_child_guarded_return_failure_preserves_copy child-guarded-return-fails \
+    '[{"name":"1","path":"@WT@","status":"leased","lease_id":"lease-child","lease_holder":"firstmate:child"}]'
   pass "secondmate force teardown keeps a lease-bound child copy, lease and work when its guarded return fails"
 }
 
@@ -3284,6 +3307,7 @@ test_secondmate_force_teardown_discards_child_work
 test_secondmate_force_teardown_refuses_duplicated_child_slot
 test_secondmate_force_teardown_guards_unrecorded_child_leases
 test_secondmate_force_teardown_preserves_child_when_lease_guarded_return_fails
+test_secondmate_force_teardown_guards_unleased_child_copies
 test_secondmate_force_teardown_preserves_child_on_unproven_lock
 test_secondmate_force_teardown_allows_non_state_operational_dir_symlinks_inside_home
 test_secondmate_force_teardown_refuses_operational_dir_symlink_outside_home
