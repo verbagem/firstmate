@@ -1,0 +1,93 @@
+head=62423bcd6abd1e83b816e9ada7917154cc489c0d
+lab=/tmp/fm-cleanup-live.14S11O
+tmux_socket_root=/tmp/fm-cleanup-live.14S11O/tmux
+PASS private tmux server is live
+PASS scenario1 live=true nested no-pool retirement archived two levels without a project lock refusal
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-cleanup-live.14S11O/recursive-foreign/pool/.treehouse/project-35c587/1/project. Run 'treehouse return /tmp/fm-cleanup-live.14S11O/recursive-foreign/pool/.treehouse/project-35c587/1/project' to release it.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+PASS scenario2 live=true recursive foreign lease refused before endpoint, process, copy, lease, or record mutation
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-cleanup-live.14S11O/t3-missing/pool/.treehouse/project-e5f963/1/project. Run 'treehouse return /tmp/fm-cleanup-live.14S11O/t3-missing/pool/.treehouse/project-e5f963/1/project' to release it.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+PASS scenario3-missing live=true T3 refusal preserved endpoint, process, copy, lease state, and record
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-cleanup-live.14S11O/t3-foreign/pool/.treehouse/project-3b1724/1/project. Run 'treehouse return /tmp/fm-cleanup-live.14S11O/t3-foreign/pool/.treehouse/project-3b1724/1/project' to release it.
+PASS scenario3-foreign live=true T3 refusal preserved endpoint, process, copy, lease state, and record
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-cleanup-live.14S11O/t3-ambiguous/pool/.treehouse/project-6a36f4/1/project. Run 'treehouse return /tmp/fm-cleanup-live.14S11O/t3-ambiguous/pool/.treehouse/project-6a36f4/1/project' to release it.
+PASS scenario3-ambiguous live=true T3 refusal preserved endpoint, process, copy, lease state, and record
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Terminated lingering processes: zsh (47647), sleep (53517)
+🌳 Worktree returned to pool.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+PASS scenario4-permitted live=true real spawn took a guard lease and cleanup completed
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Terminated lingering processes: zsh (75544), sleep (82418)
+🌳 Worktree returned to pool.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Leased worktree 1 at /tmp/fm-cleanup-live.14S11O/spawn-guard-refusal/pool/.treehouse/project-87a75e/1/project. Run 'treehouse return /tmp/fm-cleanup-live.14S11O/spawn-guard-refusal/pool/.treehouse/project-87a75e/1/project' to release it.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+PASS scenario4-refused live=true lost guard preserved endpoint, copy, lease, and record
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /tmp/fm-cleanup-live.14S11O/t3-codex/pool/.treehouse/project-58441e/1/project. Run 'treehouse return /tmp/fm-cleanup-live.14S11O/t3-codex/pool/.treehouse/project-58441e/1/project' to release it.
+A new version of treehouse is available: v3.1.4 → v3.1.6
+Run "treehouse update" to update
+
+PASS scenario5 live=true valid T3 Codex cleanup archived endpoint, restored config, and returned exact bare-id lease
+PASS all five requested live cleanup scenarios passed

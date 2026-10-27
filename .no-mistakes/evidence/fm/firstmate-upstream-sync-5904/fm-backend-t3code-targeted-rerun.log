@@ -1,0 +1,5 @@
+head=62423bcd6abd1e83b816e9ada7917154cc489c0d
+command=FM_TEST_ONLY=test_spawn_codex_preserves_tracked_codex_config tests/fm-backend-t3code.test.sh
+ok - codex-cli 0.163.0: project config retained; shell FM_TASK_ID=t3codextrk215ae573b5
+ok - fm-spawn.sh backend=t3code: compatible tracked Codex config launches, stays out of commits, and survives cleanup
+exit=0

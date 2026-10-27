@@ -1,0 +1,5 @@
+head=62423bcd6abd1e83b816e9ada7917154cc489c0d
+attribution=62423bcd6abd1e83b816e9ada7917154cc489c0d Verify Treehouse-listed copies before closing teardown endpoints
+command=bash /Users/temp/.no-mistakes/evidence/01M5WKWYKBCGKYKPBR9H5QS3TG/live-cleanup-scenarios.sh
+exit=0
+worktree_status=clean
