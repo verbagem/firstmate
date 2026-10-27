@@ -38,15 +38,20 @@ seen_sig() {
   if [ "$(uname)" = Darwin ]; then stat -f '%z:%Fm' "$1" 2>/dev/null; else stat -c '%s:%Y' "$1" 2>/dev/null; fi
 }
 
-# mark_status_seen <state> <status-file>: record the file's CURRENT complete
+# mark_status_seen <state> <status-file> <watch-script>: record the file's CURRENT complete
 # snapshot as both reported and classified, so a status this case writes itself
 # does not also raise a status-signal wake and mask which route the pane took.
-mark_status_seen() {
+mark_status_seen() {  # <state> <status-file> <watch-script>
+  local watch_bin=${3%/*}
   FM_STATE_OVERRIDE="$1" bash -c '
     # shellcheck disable=SC1090,SC1091
     . "$1"
-    fm_wake_status_mark_current "$2" "$3"
-  ' _ "$ROOT/bin/fm-wake-lib.sh" "$1" "$2"
+    if declare -F fm_wake_status_mark_current >/dev/null; then
+      fm_wake_status_mark_current "$2" "$3"
+    else
+      fm_wake_signal_sig "$3" > "$(fm_wake_signal_seen_path "$2" "$3")"
+    fi
+  ' _ "$watch_bin/fm-wake-lib.sh" "$1" "$2"
 }
 
 # upstream_tree <dest-dir>: materialise upstream main's own bin/ tree, so the
@@ -80,14 +85,15 @@ backdate_meta() {  # <meta-file>: make the spawn record older than any BUSY_TURN
 # the pane's semantic state, so window_is_busy is decided by the record and the
 # pane's rendered frame stays free to hold still. The idle flip applies the
 # opposite verdict under the same armed generation.
-record_pi_state() {  # <state-dir> <id> <busy|idle>
-  local state=$1 id=$2 want=$3 gen event
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$state" "$id")
+record_pi_state() {  # <state-dir> <id> <busy|idle> <watch-script>
+  local state=$1 id=$2 want=$3 watch_bin gen event
+  watch_bin=${4%/*}
+  gen=$("$watch_bin/fm-busy-event.sh" arm "$state" "$id")
   case "$want" in
     busy) event=agent-start ;;
     *) event=agent-end ;;
   esac
-  "$ROOT/bin/fm-busy-event.sh" apply "$state" "$id" "$want" --gen "$gen" \
+  "$watch_bin/fm-busy-event.sh" apply "$state" "$id" "$want" --gen "$gen" \
     --source pi-ext --event "$event" >/dev/null
 }
 
@@ -101,9 +107,8 @@ IDLE_CREW='state: idle · source: none'
 parity_run() {  # <dir> <watch> <label> <crew-state> <cap-assignment> [extra-env...]
   local dir=$1 watch=$2 label=$3 crew=$4 cap_assignment=$5
   shift 5
-  local out pid
-  local -a cap_args=()
-  [ -n "$cap_assignment" ] && cap_args+=("$cap_assignment")
+  local out pid cap_arg=
+  [ -n "$cap_assignment" ] && cap_arg=$cap_assignment
   out="$dir/watch.out"
   echo $(( $(date +%s) - 500 )) > "$dir/state/.stale-since-$PARITY_KEY"
   : > "$out"
@@ -118,7 +123,7 @@ parity_run() {  # <dir> <watch> <label> <crew-state> <cap-assignment> [extra-env
     FM_FAKE_CREW_STATE="$crew" FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     FM_STALE_ESCALATE_SECS=240 \
-    PATH="$dir/fakebin:$PATH" "${cap_args[@]}" "$@" \
+    PATH="$dir/fakebin:$PATH" ${cap_arg:+"$cap_arg"} "$@" \
     bash "$watch" > "$out" &
   pid=$!
   wait_for_exit "$pid" 100 || {
@@ -165,10 +170,10 @@ run_scenario() {  # <watch> <tag> [cap-env] [rounds]: drive the stuck-pane scena
 
   printf 'idle wedged content' > "$dir/pane.txt"
   printf 'window=%s\nkind=ship\nharness=pi\n' "$PARITY_WINDOW" > "$state/wedge-cap-parity.meta"
-  record_pi_state "$state" wedge-cap-parity busy
+  record_pi_state "$state" wedge-cap-parity busy "$watch"
   backdate_meta "$state/wedge-cap-parity.meta"
   printf 'working: still wedged\n' > "$statusf"
-  mark_status_seen "$state" "$statusf"
+  mark_status_seen "$state" "$statusf" "$watch"
   printf '%s' "$(hash_text 'idle wedged content')" > "$state/.hash-$PARITY_KEY"
   printf '1\n' > "$state/.count-$PARITY_KEY"
 
@@ -187,7 +192,7 @@ run_scenario() {  # <watch> <tag> [cap-env] [rounds]: drive the stuck-pane scena
   # route whose pre-cap shape kept the count standing. Upstream leaves the
   # counter at 2; a watcher that resets it here restarts. The surface wakes
   # without an escalation count.
-  record_pi_state "$state" wedge-cap-parity idle
+  record_pi_state "$state" wedge-cap-parity idle "$watch"
   parity_run "$dir" "$watch" first-sight-surface "$IDLE_CREW" "$cap_env"
 
   # The re-wedge: THE discriminator. Upstream and this branch show escalation 3
