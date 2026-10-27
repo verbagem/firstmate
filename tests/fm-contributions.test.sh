@@ -158,6 +158,245 @@ with_home() {
     FM_CONTRIBUTIONS_NOW="$NOW" "$@"
 }
 
+install_watcher_repeat_trace() { # <home>
+  local home=$1 trace_dir
+  trace_dir="$home/state/watcher-repeat-trace"
+  mkdir -p "$trace_dir"
+  chmod 700 "$trace_dir"
+  : > "$trace_dir/events.log"
+  chmod 600 "$trace_dir/events.log"
+
+  cat > "$trace_dir/bash-env" <<'SH'
+enable -n kill 2>/dev/null || true
+SH
+  chmod 600 "$trace_dir/bash-env"
+
+  cat > "$home/fakebin/kill" <<'SH'
+#!/usr/bin/env bash
+set -u
+args=("$@")
+signal=
+target=
+case ${args[0]:-} in
+  -s|--signal)
+    signal=${args[1]:-}
+    target=${args[2]:-}
+    ;;
+  --signal=*)
+    signal=${args[0]#--signal=}
+    target=${args[1]:-}
+    ;;
+  -*)
+    signal=${args[0]#-}
+    if [ "${args[1]:-}" = -- ]; then target=${args[2]:-}; else target=${args[1]:-}; fi
+    ;;
+esac
+"${FM_WATCH_TRACE_REAL_KILL:?}" "${args[@]}"
+rc=$?
+if [ "$rc" -eq 0 ] && [ -n "$signal" ] && [ "$signal" != 0 ]; then
+  caller=$PPID
+  metadata=$(ps -o pid= -o ppid= -o pgid= -o sess= -o stat= -o comm= -p "$caller" 2>/dev/null || true)
+  # Process command names are the only text admitted to this trace; arguments
+  # and environment values never enter it.
+  set -- $metadata
+  caller_pid=${1:-absent}
+  caller_ppid=${2:-absent}
+  caller_pgid=${3:-absent}
+  caller_sid=${4:-absent}
+  caller_stat=${5:-absent}
+  caller_comm=${6:-absent}
+  case "$caller_comm" in *[!A-Za-z0-9_.-]*|'') caller_comm=invalid ;; esac
+  case "$target" in
+    -*) target_pid=none; target_pgid=${target#-} ;;
+    *)
+      target_pid=${target:-none}
+      target_pgid=$(ps -o pgid= -p "$target_pid" 2>/dev/null | tr -d '[:space:]')
+      target_pgid=${target_pgid:-absent}
+      ;;
+  esac
+  printf 'delivery caller_pid=%s caller_ppid=%s caller_pgid=%s caller_sid=%s caller_stat=%s caller_comm=%s signal=%s target_pid=%s target_pgid=%s\n' \
+    "$caller_pid" "$caller_ppid" "$caller_pgid" "$caller_sid" "$caller_stat" "$caller_comm" \
+    "$signal" "$target_pid" "$target_pgid" >> "${FM_WATCH_TRACE_DIR:?}/events.log"
+fi
+exit "$rc"
+SH
+  chmod +x "$home/fakebin/kill"
+
+  cat > "$home/fakebin/timeout" <<'PERL'
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use POSIX qw(:sys_wait_h);
+use Time::HiRes qw(time sleep);
+
+if (@ARGV == 1 && $ARGV[0] eq '--version') {
+  print "timeout (firstmate fixture trace shim)\n";
+  exit 0;
+}
+
+my $signal = 'TERM';
+my $kill_after = 0;
+while (@ARGV && $ARGV[0] =~ /^-/) {
+  my $option = shift @ARGV;
+  if ($option eq '-s' || $option eq '--signal') {
+    @ARGV or die "missing timeout signal\n";
+    $signal = shift @ARGV;
+  } elsif ($option eq '-k' || $option eq '--kill-after') {
+    @ARGV or die "missing timeout kill bound\n";
+    $kill_after = shift @ARGV;
+    $kill_after =~ s/s$//;
+  } elsif ($option =~ /^--signal=(.+)$/) {
+    $signal = $1;
+  } elsif ($option =~ /^--kill-after=([0-9]+(?:\.[0-9]+)?)s?$/) {
+    $kill_after = $1;
+  } else {
+    die "unsupported timeout option\n";
+  }
+}
+$kill_after =~ /^[0-9]+(?:\.[0-9]+)?$/ or die "invalid timeout kill bound\n";
+@ARGV >= 2 or die "timeout needs a duration and command\n";
+my $duration = shift @ARGV;
+$duration =~ s/s$//;
+$duration =~ /^[0-9]+(?:\.[0-9]+)?$/ or die "invalid timeout duration\n";
+
+my $trace_dir = $ENV{FM_WATCH_TRACE_DIR} // die "trace directory is required\n";
+my $command = $ARGV[0];
+my $role = $command =~ m{(?:^|/)fm-watch\.sh$} ? 'watcher' : 'other';
+if ($command =~ m{(?:^|/)bash$} && @ARGV > 1 && $ARGV[1] ne '-c') {
+  $role = 'active-check';
+}
+
+sub clean_comm {
+  my ($comm) = @_;
+  return 'invalid' unless defined $comm && $comm =~ /^[A-Za-z0-9_.-]+$/;
+  return $comm;
+}
+
+sub process_fields {
+  my ($pid) = @_;
+  open my $ps, '-|', 'ps', '-o', 'pid=', '-o', 'ppid=', '-o', 'pgid=', '-o', 'sess=', '-o', 'stat=', '-o', 'comm=', '-p', $pid
+    or return ($pid, ('absent') x 5);
+  my $line = <$ps>;
+  close $ps;
+  return ($pid, ('absent') x 5) unless defined $line;
+  $line =~ s/^\s+//;
+  $line =~ s/\s+$//;
+  my @fields = split /\s+/, $line, 6;
+  return ($pid, ('absent') x 5) unless @fields == 6;
+  $fields[5] = clean_comm($fields[5]);
+  return @fields;
+}
+
+sub append_line {
+  my ($line) = @_;
+  open my $log, '>>', "$trace_dir/events.log" or return;
+  print {$log} "$line\n";
+  close $log;
+}
+
+sub snapshot {
+  my ($phase, $snapshot_role, $pid) = @_;
+  my @fields = process_fields($pid);
+  append_line(sprintf 'snapshot phase=%s role=%s pid=%s ppid=%s pgid=%s sid=%s stat=%s comm=%s',
+    $phase, $snapshot_role, @fields);
+}
+
+sub active_check_pid {
+  for my $file ("$trace_dir/active-check.current", "$trace_dir/active-check.last") {
+    next unless open my $handle, '<', $file;
+    my $line = <$handle>;
+    close $handle;
+    next unless defined $line && $line =~ /^([0-9]+) ([0-9]+)$/;
+    return $1;
+  }
+  return 0;
+}
+
+sub snapshot_watcher_tree {
+  my ($phase, $timeout_pid, $watcher_pid) = @_;
+  snapshot($phase, 'timeout', $timeout_pid);
+  snapshot($phase, 'fm-watch.sh', $watcher_pid);
+  my $active_pid = active_check_pid();
+  if ($active_pid) {
+    snapshot($phase, 'active-check', $active_pid);
+  } else {
+    append_line("snapshot phase=$phase role=active-check pid=absent ppid=absent pgid=absent sid=absent stat=absent comm=absent");
+  }
+}
+
+sub deliver {
+  my ($delivered_signal, $target_pid, $target_pgid) = @_;
+  my @caller = process_fields($$);
+  if ($delivered_signal eq 'KILL') {
+    append_line(sprintf 'delivery caller_pid=%s caller_ppid=%s caller_pgid=%s caller_sid=%s caller_stat=%s caller_comm=%s signal=%s target_pid=%s target_pgid=%s delivered=pending',
+      @caller, $delivered_signal, $target_pid, $target_pgid);
+    kill $delivered_signal, -$target_pgid;
+    return;
+  }
+  local $SIG{$delivered_signal} = 'IGNORE';
+  my $count = kill $delivered_signal, -$target_pgid;
+  append_line(sprintf 'delivery caller_pid=%s caller_ppid=%s caller_pgid=%s caller_sid=%s caller_stat=%s caller_comm=%s signal=%s target_pid=%s target_pgid=%s delivered=%s',
+    @caller, $delivered_signal, $target_pid, $target_pgid, $count ? 'yes' : 'no');
+}
+
+setpgrp(0, 0);
+my $group = $$;
+my $child = fork;
+defined $child or die "fork failed\n";
+if (!$child) {
+  exec @ARGV;
+  die "exec failed\n";
+}
+my $marker = "$trace_dir/$role.current";
+if ($role ne 'other') {
+  open my $current, '>', $marker or die "cannot write trace marker\n";
+  print {$current} "$$ $child\n";
+  close $current;
+  open my $last, '>', "$trace_dir/$role.last" or die "cannot write trace marker\n";
+  print {$last} "$$ $child\n";
+  close $last;
+}
+
+my $pending = '';
+local $SIG{HUP} = sub { $pending = 'HUP' };
+local $SIG{INT} = sub { $pending = 'INT' };
+local $SIG{TERM} = sub { $pending = 'TERM' };
+my $deadline = time + $duration;
+my $kill_deadline = 0;
+my $timed_out = 0;
+my $sent_kill = 0;
+my $status = 0;
+while (1) {
+  my $waited = waitpid $child, WNOHANG;
+  if ($waited == $child) {
+    $status = $?;
+    last;
+  }
+  my $now = time;
+  if (!$timed_out && ($pending ne '' || $now >= $deadline)) {
+    my $stop_signal = $pending ne '' ? $pending : $signal;
+    snapshot_watcher_tree('INT', $$, $child) if $role eq 'watcher' && $stop_signal eq 'INT';
+    deliver($stop_signal, $child, $group);
+    $timed_out = 1;
+    $kill_deadline = $now + $kill_after if $kill_after > 0;
+    $pending = '';
+  } elsif ($timed_out && !$sent_kill && $kill_deadline && $now >= $kill_deadline) {
+    deliver('KILL', $child, $group);
+    $sent_kill = 1;
+  }
+  sleep 0.01;
+}
+snapshot_watcher_tree('EXIT', $$, $child) if $role eq 'watcher';
+unlink $marker if $role ne 'other';
+exit 124 if $timed_out;
+exit(128 + ($status & 127)) if $status & 127;
+exit($status >> 8);
+PERL
+  chmod +x "$home/fakebin/timeout"
+
+  printf '%s\n' "$trace_dir"
+}
+
 registered_checks() {
   local home=$1 check
   for check in "$home/state/"*.check.sh; do
@@ -711,7 +950,7 @@ test_expired_child_unsupported_forge_stays_unmeasured() {
 
 test_watcher_surfaces_new_contribution_once() {
   local home out rc rows repeat_started repeat_ended repeat_elapsed repeat_checkpoint
-  local timeout_capability exit_signal watcher_lock liveness_marker sanitized_err queue_metadata
+  local timeout_capability exit_signal watcher_lock liveness_marker sanitized_err queue_metadata trace_dir trace_output real_kill
   home=$(new_home watcher-contribution)
   forge_home "$home"
   with_home "$home" "$ROOT/bin/fm-pr-check.sh" delivery https://github.com/o/r/pull/8 >/dev/null \
@@ -729,10 +968,14 @@ test_watcher_surfaces_new_contribution_once() {
     || fail "watcher did not surface the durable contribution wake: $(cat "$out")"
   rows=$(awk -F '\t' 'NF >= 5 && $3 == "check" { count++ } END { print count + 0 }' "$home/state/.wake-queue")
   [ "$rows" = 1 ] || fail "one contribution signal created $rows durable check wakes"
+  trace_dir=$(install_watcher_repeat_trace "$home")
+  real_kill=$(type -P kill) || fail 'the watcher trace needs an external kill command'
   repeat_checkpoint=${FM_CONTRIBUTIONS_REPEAT_CHECKPOINT:-"$ROOT/bin/fm-watch-checkpoint.sh"}
   repeat_started=$(date +%s)
   rc=0
-  with_home "$home" env FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
+  with_home "$home" env BASH_ENV="$trace_dir/bash-env" FM_WATCH_TRACE_DIR="$trace_dir" \
+    FM_WATCH_TRACE_REAL_KILL="$real_kill" \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
     "$repeat_checkpoint" --seconds 2 > "$home/watcher-repeat.out" 2> "$home/watcher-repeat.err" || rc=$?
   repeat_ended=$(date +%s)
   repeat_elapsed=$((repeat_ended - repeat_started))
@@ -795,11 +1038,15 @@ test_watcher_surfaces_new_contribution_once() {
       }
       END { printf "row_count=%d%s", count + 0, rows }
     ' "$home/state/.wake-queue" 2>/dev/null)
+    trace_output=$(sed -n '1,200p' "$trace_dir/events.log" 2>/dev/null)
+    [ -n "$trace_output" ] || trace_output='<empty>'
     fail "an already durable contribution signal re-rang the watcher:
 repeat_checkpoint rc=$rc elapsed_seconds=$repeat_elapsed exit_signal=$exit_signal
 capability timeout=$timeout_capability bash_version=$BASH_VERSION
 markers watcher_lock=$watcher_lock liveness_marker=$liveness_marker
 wake_queue $queue_metadata
+watcher_repeat_signal_trace:
+$trace_output
 watcher_repeat_stderr_first_40_lines:
 $sanitized_err"
   fi
