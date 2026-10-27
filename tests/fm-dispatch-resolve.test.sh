@@ -1117,7 +1117,7 @@ assert_contains "$(jq -r .state.task.brief "$LOG/body")" 'off-by-one in the page
   "resolver request did not use the immutable brief snapshot"
 assert_not_contains "$(jq -r .state.task.brief "$LOG/body")" 'replacement written while resolution is in flight' \
   "resolver request observed a concurrent brief replacement"
-[ "$(stat -f %Lp "$RECEIPT" 2>/dev/null || stat -c %a "$RECEIPT")" = 600 ] || fail "receipt must be private (0600)"
+[ "$(stat -c %a "$RECEIPT" 2>/dev/null || /usr/bin/stat -f %Lp "$RECEIPT")" = 600 ] || fail "receipt must be private (0600)"
 SNAPSHOT_TMP="$TMP_ROOT/dispatch-snapshots"
 mkdir -p "$SNAPSHOT_TMP"
 reset_log

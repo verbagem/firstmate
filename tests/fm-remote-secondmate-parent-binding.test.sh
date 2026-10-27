@@ -242,7 +242,8 @@ write_child_meta() {
   fm_write_meta "$REMOTE_HOME/state/work-child.meta" \
     "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
     "worktree=$CHILD_WT" "project=$CHILD_WT" "harness=codex" "kind=ship" \
-    "mode=local-only" "yolo=off"
+    "mode=local-only" "yolo=off" \
+    "treehouse_lease_id=lease-work-child" "treehouse_lease_holder=firstmate:work-child"
 }
 mkdir -p "$TMP_ROOT/childfake"
 for t in tmux no-mistakes gh gh-axi tasks-axi; do
@@ -253,7 +254,7 @@ cat > "$TMP_ROOT/childfake/treehouse" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}:${2:-}" = status:--json ]; then
   jq -cn --arg path "$PWD" \
-    '[{name:"fixture",path:$path,status:"available",lease_id:"",lease_holder:""}]'
+    '[{name:"fixture",path:$path,status:"leased",lease_id:"lease-work-child",lease_holder:"firstmate:work-child"}]'
 fi
 exit 0
 SH

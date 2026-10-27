@@ -1132,7 +1132,9 @@ set -u
 { printf 'treehouse'; for a in "$@"; do printf '\x1f%s' "$a"; done; printf '\n'; } >> "${FM_TMUX_LOG:?}"
 if [ "${1:-}:${2:-}" = status:--json ]; then
   jq -cn --arg path "${FM_FAKE_TREEHOUSE_PATH:?}" \
-    '[{name:"fixture",path:$path,status:"available",lease_id:"",lease_holder:""}]'
+    --arg lease "lease-${FM_FAKE_TREEHOUSE_TASK_ID:?}" \
+    --arg holder "firstmate:${FM_FAKE_TREEHOUSE_TASK_ID:?}" \
+    '[{name:"fixture",path:$path,status:"leased",lease_id:$lease,lease_holder:$holder}]'
 fi
 exit 0
 SH
@@ -1158,11 +1160,13 @@ SH
 # worktree-tangle check runs identically (and silently) for both, regardless
 # of which fm-teardown.sh (old or new) is actually being invoked.
 run_teardown_case() {
-  local script=$1 fmroot=$2 fb=$3 log=$4 state=$5 data=$6 config=$7 id=$8
+  local script=$1 fmroot=$2 fb=$3 log=$4 state=$5 data=$6 config=$7 id=$8 home="${5}-home"
   : > "$log"
-  env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$fmroot" \
+  mkdir -p "$home/state"
+  env PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fmroot" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_TMUX_LOG="$log" FM_FAKE_TREEHOUSE_PATH="$(sed -n 's/^worktree=//p' "$state/$id.meta" | tail -1)" \
+    FM_TMUX_LOG="$log" FM_FAKE_TREEHOUSE_TASK_ID="$id" \
+    FM_FAKE_TREEHOUSE_PATH="$(sed -n 's/^worktree=//p' "$state/$id.meta" | tail -1)" \
     "$script" "$id"
 }
 
@@ -1196,10 +1200,12 @@ test_teardown_conformance_old_vs_new() {
 
   fm_write_meta "$state_old/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=claude" "kind=scout" "mode=no-mistakes" "yolo=off" \
-    "decisions_reviewed=1" "decision_keys="
+    "decisions_reviewed=1" "decision_keys=" \
+    "treehouse_lease_id=lease-$id" "treehouse_lease_holder=firstmate:$id"
   fm_write_meta "$state_new/$id.meta" \
     "window=firstmate:fm-$id" "worktree=$wt" "project=$proj" "harness=claude" "kind=scout" "mode=no-mistakes" "yolo=off" \
-    "decisions_reviewed=1" "decision_keys="
+    "decisions_reviewed=1" "decision_keys=" \
+    "treehouse_lease_id=lease-$id" "treehouse_lease_holder=firstmate:$id"
   touch "$state_old/.last-watcher-beat" "$state_new/.last-watcher-beat"
 
   log_old="$TMP_ROOT/teardown-old.log"; log_new="$TMP_ROOT/teardown-new.log"

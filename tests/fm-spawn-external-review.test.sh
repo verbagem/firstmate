@@ -28,7 +28,8 @@ make_case() {
   printf 'codex\n' > "$HOME_DIR/config/crew-harness"
   # shellcheck disable=SC2016 # Backticks are literal adapter text.
   printf '%s\n' 'Run `review-tool upload --draft`.' > "$HOME_DIR/config/external-review.md"
-  printf -- '- project [%s] - fixture (added 2026-01-01)\n' "$tokens" > "$HOME_DIR/data/projects.md"
+  printf -- '- project [%s path=%s] - fixture (added 2026-01-01)\n' \
+    "$tokens" "$PROJECT_DIR" > "$HOME_DIR/data/projects.md"
   touch "$HOME_DIR/state/.last-watcher-beat"
   git init --quiet -b main "$PROJECT_DIR"
   printf 'base\n' > "$PROJECT_DIR/README.md"

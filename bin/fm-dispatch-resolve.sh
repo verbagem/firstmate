@@ -119,6 +119,8 @@ usage() {
 BRIEF='' PROJECT='' RULES_PATH="$CONFIG/crew-dispatch.json" RULES=''
 BRIEF_SNAPSHOT='' RESP_FILE='' QUOTA='' TASK_TEXT='' SEND_TEXT=''
 NEVER_SEND_PATH="$CONFIG/dispatch-never-send"
+# ShellCheck cannot see that EXIT and the signal exits below invoke this trap handler.
+# shellcheck disable=SC2329
 cleanup() {
   rm -f "$RULES" "$BRIEF_SNAPSHOT" "$RESP_FILE" "$QUOTA" "$TASK_TEXT" "$SEND_TEXT"
 }

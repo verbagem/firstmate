@@ -200,7 +200,6 @@ SH
 
 cat > "$FAKEBIN/treehouse" <<'SH'
 #!/usr/bin/env bash
-[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 set -u
 {
   first=1
