@@ -2991,6 +2991,17 @@ run_check_capture() {
   fm_check_output_cleanup
 }
 
+FM_WATCHER_CREW_STATE=
+
+# Read fm-crew-state through the same owned process-group boundary as a watcher
+# check. The caller stays in this shell so EXIT cleanup retains the child group
+# identity if a checkpoint stop arrives while no-mistakes is still answering.
+watcher_crew_state_capture() {  # <task>
+  FM_WATCHER_CREW_STATE=
+  run_check_capture "$FM_CREW_STATE_BIN" "$1" || return 1
+  FM_WATCHER_CREW_STATE=$FM_CHECK_RESULT
+}
+
 FM_CAPTURE_OUTPUT=
 WATCHER_CAPTURE=
 
@@ -3176,8 +3187,8 @@ surface_actionable_run_state_if_new() {  # <window> <task> <hash> <crew-state-li
   wake "$reason"
 }
 
-# The cost gate for every crew_state_line probe the stale loop can reach on a pane
-# it revisits each poll. crew_state_line spawns fm-crew-state.sh - a bounded
+# The cost gate for every crew-state probe the stale loop can reach on a pane
+# it revisits each poll. watcher_crew_state_capture spawns fm-crew-state.sh - a bounded
 # no-mistakes CLI read for a ship crew with a branch - which bin/fm-classify-lib.sh
 # runs on first-sighting paths, never every poll; a steady-state pane (a held
 # pause, a surfaced terminal status, a running validation) would otherwise pay it
@@ -3198,7 +3209,8 @@ surface_paused_actionable_run_state_if_new() {  # <window> <task> <hash>
   status_is_paused_or_captain_held "$(status_declared_wait_line "$STATE/$task.status")" || return 1
   key=$(window_key "$win")
   claim_run_state_probe run-state-probed "$key" || return 1
-  crew_state=$(crew_state_line "$task" || true)
+  watcher_crew_state_capture "$task" || true
+  crew_state=$FM_WATCHER_CREW_STATE
   surface_actionable_run_state_if_new "$win" "$task" "$h" "$crew_state" pause-throttle
 }
 
@@ -4103,7 +4115,8 @@ EOF
           # pane-hash drift is no new captain-facing information and is absorbed;
           # a new actionable run outcome still surfaces once per run generation.
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            crew_state=$(crew_state_line "$task" || true)
+            watcher_crew_state_capture "$task" || true
+            crew_state=$FM_WATCHER_CREW_STATE
             if [ "$(crew_absorb_class_from_state_line "$crew_state")" = working ]; then
               printf '%s' "$h" > "$sf"
               # Pre-cap shape kept the count here (keep-count contract).
@@ -4170,7 +4183,8 @@ EOF
             # here once the operator has turned the cap back off.
             crew_state=
             if claim_run_state_probe run-state-probed-terminal "$key"; then
-              crew_state=$(crew_state_line "$task" || true)
+              watcher_crew_state_capture "$task" || true
+              crew_state=$FM_WATCHER_CREW_STATE
             fi
             surface_actionable_run_state_if_new "$w" "$task" "$h" "$crew_state" \
               || wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf" "$task" "$h" "$dialog"
@@ -4178,7 +4192,8 @@ EOF
             # Surfaced as genuinely terminal on a prior poll of this same hash:
             # one capped probe per STALE_ESCALATE_SECS lets a run that has since
             # resumed be absorbed, or a new run outcome surface.
-            crew_state=$(crew_state_line "$task" || true)
+            watcher_crew_state_capture "$task" || true
+            crew_state=$FM_WATCHER_CREW_STATE
             if [ "$(crew_absorb_class_from_state_line "$crew_state")" = working ]; then
               printf '%s' "$h" > "$sf"
               wedge_episode_end "$key" 0 1

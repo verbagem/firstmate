@@ -222,6 +222,80 @@ SH
   pass "checkpoint preserves watcher environment for registered custom checks"
 }
 
+test_checkpoint_owns_a_blocked_run_state_probe_group() {
+  local home state fakebin window task capture key status probe_pid child_pid i
+  home=$(make_case run-state-probe-group)
+  state="$home/state"
+  fakebin="$home/fakebin"
+  mkdir -p "$home/data" "$home/config"
+  window='test:fm-run-state-probe'
+  task=run-state-probe
+  capture="$home/pane.txt"
+  printf 'idle while validation state is read\n' > "$capture"
+  printf 'window=%s\nkind=ship\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting validation\n' > "$state/$task.status"
+  prime_status_seen "$state" "$state/$task.status"
+
+  # First settle the pane into the already-paused steady state. The regression
+  # is the later capped run-state probe, not first-sighting classification.
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: paused · source: status-log · awaiting validation' \
+    FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --seconds 2 > "$home/prime.out" 2> "$home/prime.err" || status=$?
+  expect_code 124 "$status" "run-state probe fixture setup: $(cat "$home/prime.out" "$home/prime.err")"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" > "$home/prime-drain.out" 2> "$home/prime-drain.err" \
+    || fail "could not present the intentional setup checkpoint recovery"
+  ack_drain_err "$state" "$home/prime-drain.err" >/dev/null \
+    || fail "could not acknowledge the intentional setup checkpoint recovery"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  : > "$state/.paused-$key"
+  date +%s > "$state/.paused-rechecked-$key"
+  rm -f "$state/.run-state-probed-$key" "$state/.run-state-probed-terminal-$key"
+
+  cat > "$fakebin/fm-crew-state-blocked.sh" <<'SH'
+#!/usr/bin/env bash
+trap '' HUP INT TERM
+printf '%s\n' "$$" > "$FM_PROBE_PID_FILE"
+(
+  trap '' HUP INT TERM
+  printf '%s\n' "$$" > "$FM_PROBE_CHILD_PID_FILE"
+  while :; do sleep 30; done
+) &
+wait "$!"
+SH
+  chmod +x "$fakebin/fm-crew-state-blocked.sh"
+
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state-blocked.sh" \
+    FM_PROBE_PID_FILE="$home/probe.pid" FM_PROBE_CHILD_PID_FILE="$home/probe-child.pid" \
+    FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --seconds 3 > "$home/out.txt" 2> "$home/err.txt" || status=$?
+
+  expect_code 124 "$status" "blocked run-state probe checkpoint: $(cat "$home/out.txt" "$home/err.txt")"
+  assert_contains "$(cat "$home/out.txt")" "checkpoint: no actionable wake within 3s" \
+    "blocked run-state probe did not return the quiet checkpoint contract"
+  [ -s "$home/probe.pid" ] && [ -s "$home/probe-child.pid" ] \
+    || fail "the checkpoint never exercised the blocked run-state probe and its child"
+  probe_pid=$(cat "$home/probe.pid")
+  child_pid=$(cat "$home/probe-child.pid")
+  i=0
+  while [ "$i" -lt 30 ] && { is_live_non_zombie "$probe_pid" || is_live_non_zombie "$child_pid"; }; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! is_live_non_zombie "$probe_pid" || fail "the blocked run-state probe survived checkpoint cleanup"
+  ! is_live_non_zombie "$child_pid" || fail "the blocked run-state probe child survived checkpoint cleanup"
+  assert_absent "$state/.watch.lock/pid" "watch lock pid survived blocked run-state probe cleanup"
+  pass "checkpoint owns and cleans a blocked run-state probe process group"
+}
+
 test_existing_singleton_watcher_is_not_success() {
   local home out err status
   home=$(make_home singleton)
@@ -359,6 +433,7 @@ test_never_announced_recovery_is_announced_once
 test_queue_append_during_checkpoint_still_resurfaces
 test_signal_passes_through_and_exits_zero
 test_registered_check_uses_preserved_watcher_environment
+test_checkpoint_owns_a_blocked_run_state_probe_group
 test_existing_singleton_watcher_is_not_success
 test_host_checkpoint_bounds_the_park_by_posture
 test_host_checkpoint_passes_a_handback_and_reports_a_stand_down
