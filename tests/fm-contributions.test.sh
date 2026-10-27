@@ -710,7 +710,8 @@ test_expired_child_unsupported_forge_stays_unmeasured() {
 }
 
 test_watcher_surfaces_new_contribution_once() {
-  local home out rc rows
+  local home out rc rows repeat_started repeat_ended repeat_elapsed repeat_checkpoint
+  local timeout_capability exit_signal watcher_lock liveness_marker sanitized_err queue_metadata
   home=$(new_home watcher-contribution)
   forge_home "$home"
   with_home "$home" "$ROOT/bin/fm-pr-check.sh" delivery https://github.com/o/r/pull/8 >/dev/null \
@@ -728,10 +729,80 @@ test_watcher_surfaces_new_contribution_once() {
     || fail "watcher did not surface the durable contribution wake: $(cat "$out")"
   rows=$(awk -F '\t' 'NF >= 5 && $3 == "check" { count++ } END { print count + 0 }' "$home/state/.wake-queue")
   [ "$rows" = 1 ] || fail "one contribution signal created $rows durable check wakes"
+  repeat_checkpoint=${FM_CONTRIBUTIONS_REPEAT_CHECKPOINT:-"$ROOT/bin/fm-watch-checkpoint.sh"}
+  repeat_started=$(date +%s)
   rc=0
   with_home "$home" env FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 > "$home/watcher-repeat.out" 2> "$home/watcher-repeat.err" || rc=$?
-  [ "$rc" -eq 124 ] || fail "an already durable contribution signal re-rang the watcher: $(cat "$home/watcher-repeat.out")"
+    "$repeat_checkpoint" --seconds 2 > "$home/watcher-repeat.out" 2> "$home/watcher-repeat.err" || rc=$?
+  repeat_ended=$(date +%s)
+  repeat_elapsed=$((repeat_ended - repeat_started))
+  if [ "$rc" -eq 124 ]; then
+    :
+  else
+    if command -v timeout >/dev/null 2>&1; then
+      if timeout --version 2>/dev/null | head -n 1 | grep -qi 'coreutils'; then
+        timeout_capability=gnu-coreutils
+      else
+        timeout_capability=non-gnu
+      fi
+    else
+      timeout_capability=unavailable
+    fi
+    case "$rc" in
+      130) exit_signal=SIGINT ;;
+      137) exit_signal=SIGKILL ;;
+      143) exit_signal=SIGTERM ;;
+      *) exit_signal=none ;;
+    esac
+    if [ -e "$home/state/.watcher.lock" ] || [ -L "$home/state/.watcher.lock" ]; then
+      watcher_lock=present
+    else
+      watcher_lock=absent
+    fi
+    if [ -e "$home/state/.last-watcher-beat" ] || [ -L "$home/state/.last-watcher-beat" ]; then
+      liveness_marker=present
+    else
+      liveness_marker=absent
+    fi
+    sanitized_err=$(awk -v home="$home" -v fixture="$TMP_ROOT" -v root="$ROOT" -v user_home="${HOME:-}" '
+      function replace_literal(text, needle, replacement, at) {
+        if (needle == "") return text
+        while ((at = index(text, needle)) != 0)
+          text = substr(text, 1, at - 1) replacement substr(text, at + length(needle))
+        return text
+      }
+      NR > 40 { exit }
+      {
+        line = replace_literal($0, home, "<HOME>")
+        line = replace_literal(line, fixture, "<FIXTURE>")
+        line = replace_literal(line, root, "<ROOT>")
+        line = replace_literal(line, user_home, "<USER_HOME>")
+        lower = tolower(line)
+        if (lower ~ /authorization|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?key|secret|password|passwd|credential/ \
+            || lower ~ /(^|[^[:alnum:]_])key([^[:alnum:]_]|$)/)
+          line = "<redacted-sensitive-line>"
+        print line
+        seen = 1
+      }
+      END { if (!seen) print "<empty>" }
+    ' "$home/watcher-repeat.err")
+    queue_metadata=$(awk -F '\t' '
+      NF {
+        count++
+        sequence = ($2 ~ /^[0-9]+$/) ? $2 : "<invalid>"
+        kind = ($3 == "signal" || $3 == "stale" || $3 == "check" || $3 == "heartbeat") ? $3 : "<invalid>"
+        rows = rows sprintf(" row[%d]={kind=%s,sequence=%s}", count, kind, sequence)
+      }
+      END { printf "row_count=%d%s", count + 0, rows }
+    ' "$home/state/.wake-queue" 2>/dev/null)
+    fail "an already durable contribution signal re-rang the watcher:
+repeat_checkpoint rc=$rc elapsed_seconds=$repeat_elapsed exit_signal=$exit_signal
+capability timeout=$timeout_capability bash_version=$BASH_VERSION
+markers watcher_lock=$watcher_lock liveness_marker=$liveness_marker
+wake_queue $queue_metadata
+watcher_repeat_stderr_first_40_lines:
+$sanitized_err"
+  fi
   rows=$(awk -F '\t' 'NF >= 5 && $3 == "check" { count++ } END { print count + 0 }' "$home/state/.wake-queue")
   [ "$rows" = 1 ] || fail "repeat contribution observation created $rows durable check wakes"
   pass 'watcher surfaces one newly durable contribution signal without re-ringing it'
