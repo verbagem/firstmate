@@ -15,6 +15,9 @@
 //        3. marks the Supabase row waiting_for_dispatch
 // Firstmate still owns task classification, delivery mode, merge authority,
 // model-profile resolution, and worker launch.
+// Intake publication is exclusive and atomic. A retry reuses only a byte-identical
+// regular brief and does not call Notion again; a divergent existing path refuses
+// before any Notion side effect and leaves the claimed row in a failed state.
 //
 // Run manually (one pass) or wire into a periodic wakeup; this script does
 // not loop or daemonize itself - one invocation is one pass over pending rows.

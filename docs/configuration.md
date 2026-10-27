@@ -1655,7 +1655,7 @@ Firstmate invokes the resolve path directly after writing the brief, without a p
 **Single-resolution receipt**
 
 The resolver is the only model resolution for a task, so two model calls can never disagree about one intake.
-Run on a task's `data/<id>/brief.md`, it first drops any earlier `state/<id>.dispatch-receipt`, then records this run's status and chosen profile there, private and bound to the brief's SHA-256; off, error, and no-rules outcomes leave no receipt.
+Run on a task's `data/<id>/brief.md`, it first drops any earlier `state/<id>.dispatch-receipt`, snapshots the brief once, derives both the request and receipt SHA-256 from those same bytes, then records this run's status and chosen profile there; the snapshot and receipt stay private, and off, error, and no-rules outcomes leave no receipt.
 `bin/fm-dispatch-receipt-lib.sh` owns the receipt format.
 A fresh crewmate or scout `fm-spawn.sh` never resolves again: a current `clear` receipt supplies the profile when no profile flags are passed, a matching explicit profile launches as given, and a profile that diverges on any of harness, model, or effort is refused unless `--dispatch-override-reason` names one of `adapter_unavailable`, `catalog_rejection`, `credential_failure`, `privacy_veto`, `quota_runway_veto`, `captain_override`, or `supported_manual_override`.
 The reason is refused without a current clear receipt to diverge from, when the profile already matches the receipt, and on relaunch or secondmate spawns.

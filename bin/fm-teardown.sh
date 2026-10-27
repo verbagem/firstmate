@@ -202,19 +202,17 @@
 # `treehouse return --if-lease-id`/`--if-lease-holder`, so it can never release a
 # lease it does not own. If that guarded return fails, or a child's project or
 # treehouse is unavailable for it, teardown refuses and never falls back to
-# deleting the lease-bound copy. A record with a recorded lease, or any record
-# whose project and treehouse are available, first verifies the copy's lease
-# state, even with --force and before its worktree is stripped or returned (for a
-# ship or scout task, also before any process reaping). A record with a recorded
-# lease must find that exact lease listed on its copy. For a record without one,
-# a lease held by firstmate:<that task id> is the record's own and guards the
-# return; an unleased pooled copy is first leased in place as firstmate:<task id>
-# (refusing if that lease cannot be taken and confirmed), so no other allocator
-# can be handed it before the return, and a copy listed more than once in the
-# pool inventory refuses. A missing recorded lease, a lease held by anyone else, or lease state
-# that cannot be read (jq missing, `treehouse status --json` failing or
-# unparseable) refuses and leaves the copy, its lease, and the record untouched
-# for reconciliation.
+# deleting the lease-bound copy. Every task or nested child whose existing copy is pooled,
+# carries a recorded lease, or appears in Treehouse inventory takes the shared
+# project lock and verifies that copy's lease state before any endpoint closes,
+# process is reaped, or copy is stripped or returned, even with --force. A nested
+# child with no pooled copy, recorded lease, or inventory row needs no project
+# lock. A recorded lease must match exactly. T3 Code requires its bare task-id
+# holder; another record without a lease may adopt firstmate:<task-id> or first
+# lease an unleased listed copy in place under that holder. A duplicate inventory
+# row, missing or foreign lease, unreadable inventory, or failed guard acquisition
+# refuses with the endpoint, copy, lease, work, and record untouched for
+# reconciliation.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it

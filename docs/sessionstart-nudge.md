@@ -322,10 +322,8 @@ isolated even after reading the installed `@earendil-works/pi-coding-agent` sour
 and the absence of a registered entry-renderer both appear to gate the known TUI rendering paths), but
 removing the inline payload removes the exposure regardless of which path was responsible.
 
-The fix: `injectSessionstart()` writes an unencoded digest to a per-process private state file,
-`state/.session-start-digest.<pid>.txt` (overwritten on every session-start/compact of that process; the
-pid qualifier keeps two Pi processes sharing one `FM_HOME` from overwriting each other's not-yet-read
-digest), and sends only a short pointer instructing the agent to read that file in full before acting.
+The fix: `injectSessionstart()` atomically replaces a per-process mode-`0600` state file, `state/.session-start-digest.<pid>.txt`, with the unencoded digest and sends only a short pointer instructing the agent to read that file in full before acting.
+The slot is overwritten on every session-start or compact of that process, and the pid qualifier keeps two Pi processes sharing one `FM_HOME` from overwriting each other's not-yet-read digest.
 Every write first sweeps sibling digest slots whose pid is no longer alive, so the directory stays bounded
 by the number of currently-live Pi processes instead of accruing one orphan file per launch.
 If the write itself fails, the pointer is replaced by an operational message naming the error and
