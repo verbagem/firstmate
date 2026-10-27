@@ -242,17 +242,58 @@ jobs:
           FM_SERIAL_LANE: portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
           FM_SERIAL_SHARD: ${{ matrix.shard }}
         run: |
-          set -eu
+          set -u
+          set -o pipefail
           mkdir -p "$RUNNER_TEMP/fm-test"
+          portable_log="$RUNNER_TEMP/fm-test/portable-serial-${FM_SERIAL_SHARD}.log"
           bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
-            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
+            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json" \
+            2>&1 | tee "$portable_log"
+          test_status=${PIPESTATUS[0]}
+
+          if [ "$FM_SERIAL_SHARD" = 4 ] && [ "$test_status" -ne 0 ]; then
+            diagnostic_log="$RUNNER_TEMP/fm-test/portable-serial-4-diagnostic.log"
+            {
+              timeout --kill-after=1s 5s ps -eo pid,ppid,stat,etime,comm || true
+
+              timeout --kill-after=1s 5s tmux list-sessions \
+                -F 'session_id=#{session_id} windows=#{session_windows} attached=#{session_attached} grouped=#{session_grouped}' 2>/dev/null || true
+              timeout --kill-after=1s 5s tmux list-windows -a \
+                -F 'session_id=#{session_id} window_id=#{window_id} panes=#{window_panes} active=#{window_active} flags=#{window_flags}' 2>/dev/null || true
+              timeout --kill-after=1s 5s tmux list-panes -a \
+                -F 'session_id=#{session_id} window_id=#{window_id} pane_id=#{pane_id} active=#{pane_active} dead=#{pane_dead} dead_status=#{pane_dead_status}' 2>/dev/null || true
+
+              timeout --kill-after=1s 5s find /tmp -mindepth 1 -maxdepth 1 -type d \
+                \( -name '.fm-test-*' -o -name 'fm-*' \) \
+                -printf 'name=%p type=%y size=%s mtime=%TY-%Tm-%TdT%TH:%TM:%TS%TZ\n' || true
+              timeout --kill-after=1s 5s find /tmp -mindepth 1 -maxdepth 1 -type d \
+                \( -name '.fm-test-*' -o -name 'fm-*' \) \
+                -exec find '{}' -mindepth 1 -maxdepth 8 \
+                  \( -name '.wake-queue' -o -name '.watcher.lock' \
+                    -o -name '.last-watcher-beat' -o -name '.wedge-*' \) \
+                  -printf 'name=%p type=%y size=%s mtime=%TY-%Tm-%TdT%TH:%TM:%TS%TZ\n' \; || true
+
+              # The single-quoted awk program owns these field references.
+              # shellcheck disable=SC2016
+              timeout --kill-after=1s 5s awk '
+                $1 == "FM_TEST_BEGIN" && $3 == "tests/fm-contributions.test.sh" { emit = 1 }
+                emit { print }
+                $1 == "FM_TEST_END" && $3 == "tests/fm-contributions.test.sh" { emit = 0 }
+              ' "$portable_log" || true
+            } > "$diagnostic_log" 2>&1 || true
+          fi
+
+          exit "$test_status"
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fm-test-timing-portable-serial-${{ matrix.shard }}
-          path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-serial-${{ matrix.shard }}.json
+          path: |
+            ${{ runner.temp }}/fm-test/fm-test-timing-portable-serial-${{ matrix.shard }}.json
+            ${{ runner.temp }}/fm-test/portable-serial-${{ matrix.shard }}.log
+            ${{ runner.temp }}/fm-test/portable-serial-4-diagnostic.log
           if-no-files-found: warn
 
   # Required real-Herdr lane: pinned install, serial real-herdr-gated family,
