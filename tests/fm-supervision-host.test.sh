@@ -176,6 +176,8 @@ export FM_SUPERVISION_HOST_PRIMARY=claude
 export FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999
 # Keep the real engine watchdog/reaping path, but not its production grace in fixtures.
 export FM_SUPERVISION_ENGINE_GRACE=1
+# Keep real successor verification, with room for bounded retirement inside each fixture handback assertion.
+export FM_SUPERVISION_HOST_READY_TIMEOUT=5
 export FM_ARM_CONFIRM_TIMEOUT=30
 unset FM_SUPERVISION_ACTOR FM_BRANCH_REPORT_TURN FM_LEASE_HOLDER_PID PI_CODING_AGENT
 
