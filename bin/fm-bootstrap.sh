@@ -444,11 +444,16 @@ tool_autoupdate_due() {
 
 tool_autoupdate_stamp() {
   local marker="$STATE/.tool-autoupdate-checked" tmp
-  [ -d "$STATE" ] || return 0
-  tmp=$(mktemp "$STATE/.tool-autoupdate-checked.XXXXXX" 2>/dev/null) || return 0
+  [ -d "$STATE" ] || return 1
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  fi
+  tmp=$(mktemp "$STATE/.tool-autoupdate-checked.XXXXXX" 2>/dev/null) || return 1
   if ! date +%s > "$tmp" 2>/dev/null || ! mv -f "$tmp" "$marker" 2>/dev/null; then
     rm -f "$tmp"
+    return 1
   fi
+  [ -f "$marker" ] && [ ! -L "$marker" ]
 }
 
 npm_global_installed_version() {  # <pkg>
@@ -555,7 +560,11 @@ tool_autoupdate_sweep() {
   local tmp timeout monitor_was_on pid start elapsed
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tool-autoupdate.XXXXXX" 2>/dev/null) || return 0
   timeout=$(tool_autoupdate_timeout)
-  tool_autoupdate_stamp
+  if ! tool_autoupdate_stamp; then
+    echo "TOOL_AUTOUPDATE: could not record the 24-hour throttle marker; update check skipped"
+    rm -f "$tmp"
+    return 0
+  fi
   monitor_was_on=0
   case $- in *m*) monitor_was_on=1 ;; esac
   set -m 2>/dev/null || true

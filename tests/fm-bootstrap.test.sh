@@ -563,6 +563,21 @@ test_tool_autoupdate_updates_outdated_and_skips_current() {
   pass "bootstrap: tool auto-update installs a pinned newer version and leaves a current package alone"
 }
 
+test_tool_autoupdate_holds_when_throttle_marker_is_unwritable() {
+  local case_dir out log state
+  case_dir=$(autoupdate_case marker-unwritable yes)
+  log="$case_dir/npm-install.log"
+  state="$case_dir/home/state"
+  chmod a-w "$state"
+  out=$(run_autoupdate "$case_dir" FM_BOOTSTRAP_NETWORK=only FM_FAKE_NPM_INSTALL_LOG="$log" \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  chmod u+w "$state"
+  assert_contains "$out" "TOOL_AUTOUPDATE: could not record the 24-hour throttle marker; update check skipped" \
+    "an opted-in sweep must report when its durable throttle cannot be recorded"
+  [ ! -e "$log" ] || fail "npm install must not run without a durable throttle marker (ran: $(cat "$log"))"
+  pass "bootstrap: tool auto-update holds when its throttle marker cannot be written"
+}
+
 test_tool_autoupdate_never_downgrades_a_newer_install() {
   local case_dir out log
   case_dir=$(autoupdate_case newer yes)
@@ -1766,6 +1781,7 @@ test_no_mistakes_min_version
 test_backpass_min_version
 test_tool_autoupdate_disabled_by_default
 test_tool_autoupdate_updates_outdated_and_skips_current
+test_tool_autoupdate_holds_when_throttle_marker_is_unwritable
 test_tool_autoupdate_never_downgrades_a_newer_install
 test_tool_autoupdate_holds_when_versions_cannot_be_compared
 test_tool_autoupdate_reports_failed_install
