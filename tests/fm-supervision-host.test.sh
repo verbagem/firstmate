@@ -3452,11 +3452,6 @@ SH
   pass "host+hook: hand-back retry submits only to the idle owning pane without replacing human input"
 }
 
-if [ "${FM_SUPERVISION_HOST_DOWNTIME_CONTROL_ONLY:-0}" = 1 ]; then
-  test_undelivered_dialog_is_fed_again_on_the_next_turn
-  exit 0
-fi
-
 test_main_only_close_after_handled_turn_restores_inherited_handling
 test_main_only_close_after_handled_turn_delivers_restore_failure
 test_returned_driver_is_caught_attended

@@ -3107,8 +3107,28 @@ test_captain_work_peek_is_read_only_and_reports_pending_work() {
   local dir state snap_before snap_after out
   dir=$(make_case captain-work-peek)
   state="$dir/state"
-  snapshot_state() { (cd "$state" && find . -type f -exec cksum {} + | sort); }
-  peek() { FM_STATE_OVERRIDE="$state" "$DRAIN" --captain-work-pending 2>/dev/null; }
+  mkdir -p "$dir/data" "$dir/config"
+  fm_test_tasks_toml "$dir/.tasks.toml"
+  : > "$dir/data/backlog.md"
+  cat > "$dir/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list) printf '%s\n' '  sample-peek-call,in-flight,captain' ;;
+  show)
+    printf '%s\n' \
+      '  state: in-flight' \
+      '  hold_kind: captain' \
+      '  title: Synthetic peek decision'
+    ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/tasks-axi"
+  snapshot_state() { (cd "$dir" && find state data -type f -exec cksum {} + | sort); }
+  peek() {
+    PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+      "$DRAIN" --captain-work-pending 2>/dev/null
+  }
 
   out=$(peek) || fail "peek failed on an empty state"
   [ "$out" = quiet ] || fail "empty state must peek quiet, got: $out"
@@ -3127,6 +3147,23 @@ test_captain_work_peek_is_read_only_and_reports_pending_work() {
   printf 'needs-decision: choose target\n' >> "$state/t1.status"
   out=$(peek) || fail "peek failed with an open decision"
   [ "$out" = pending ] || fail "an open decision must peek pending, got: $out"
+
+  cat > "$state/t1.status" <<'EOF'
+needs-decision [key=sample-peek-call]: choose target
+resolved [key=sample-peek-call]: recorded without closing the hold
+EOF
+  snap_before=$(snapshot_state)
+  out=$(peek) || fail "peek failed with record divergence"
+  [ "$out" = pending ] || fail "record divergence must peek pending, got: $out"
+  snap_after=$(snapshot_state)
+  [ "$snap_before" = "$snap_after" ] \
+    || fail "the divergence peek changed queue, cursor, or backlog state: $snap_before vs $snap_after"
+  out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$DRAIN" 2>/dev/null)
+  case "$out" in
+    *'RECORD DIVERGENCE'*'sample-peek-call [key=sample-peek-call]'*) ;;
+    *) fail "the pending divergence was not emitted by the ordinary drain: $out" ;;
+  esac
+
   : > "$state/t1.status"
   printf '1700000000\t1\tsignal\tdemo\tsignal: demo\n' > "$state/.wake-queue"
   out=$(peek) || fail "peek failed with a queued row"

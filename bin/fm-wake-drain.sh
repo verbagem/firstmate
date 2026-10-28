@@ -217,6 +217,13 @@ presented_max_row() { # <rows-file>
   fi
 }
 
+scan_record_divergence() {
+  local bound
+  bound=${FM_DIVERGENCE_TIMEOUT:-20}
+  case "$bound" in ''|*[!0-9]*|0) bound=20 ;; esac
+  fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" diverged 2>/dev/null
+}
+
 case "${1:-}" in
   '') ;;
   --ack-through)
@@ -242,6 +249,9 @@ case "${1:-}" in
       printf 'pending\n'; exit 0
     fi
     if ! PEEK_UNREAD=$(scan_unread_surface_lines "$STATE") || [ -n "$PEEK_UNREAD" ]; then
+      printf 'pending\n'; exit 0
+    fi
+    if ! PEEK_DIVERGED=$(scan_record_divergence) || [ -n "$PEEK_DIVERGED" ]; then
       printf 'pending\n'; exit 0
     fi
     printf 'quiet\n'
@@ -545,18 +555,13 @@ EOF
 # never changes the drain's exit status - a supervision turn must still present
 # its wakes when the backlog tool is having a bad day.
 print_record_divergence_section() {
-  local diverged task origin key title line shown=0 omitted=0 bound
+  local diverged task origin key title line shown=0 omitted=0
   local output='' used=0 bytes item_bytes=220 global_bytes=2000
-
-  # A non-positive bound is not a bound (bin/fm-timeout-lib.sh), so a bad
-  # override falls back to the default rather than disabling the deadline.
-  bound=${FM_DIVERGENCE_TIMEOUT:-20}
-  case "$bound" in ''|*[!0-9]*|0) bound=20 ;; esac
 
   # Bounded, because this runs at the top of every supervision turn: a backlog
   # tool having a bad day must cost the drain a few seconds at worst, never the
   # presentation of the wakes it exists to deliver.
-  diverged=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" diverged 2>/dev/null) || return 0
+  diverged=$(scan_record_divergence) || return 0
   [ -n "$diverged" ] || return 0
 
   while IFS=$(printf '\t') read -r task origin key title; do
