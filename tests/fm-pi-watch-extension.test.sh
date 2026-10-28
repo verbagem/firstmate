@@ -105,10 +105,11 @@ install_pi_watch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   mkdir -p "$repo/bin"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
-  # The empty re-arm peek runs the real drain, so ship it with its libraries.
-  cp "$ROOT/bin/fm-wake-drain.sh" "$repo/bin/fm-wake-drain.sh"
+  # The empty re-arm peek runs the real drain, so ship it with the read-only
+  # captain-hold classifier it invokes and their libraries.
+  cp "$ROOT/bin/fm-wake-drain.sh" "$ROOT/bin/fm-captain-hold.sh" "$repo/bin/"
   cp "$ROOT"/bin/fm-*-lib.sh "$ROOT/bin/fm-afk-contract.sh" "$repo/bin/"
-  chmod +x "$repo/bin/fm-operational-input.sh" "$repo/bin/fm-wake-drain.sh"
+  chmod +x "$repo/bin/fm-operational-input.sh" "$repo/bin/fm-wake-drain.sh" "$repo/bin/fm-captain-hold.sh"
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/package.json" <<'JSON'
 {"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}
 JSON
