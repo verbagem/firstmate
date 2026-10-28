@@ -22,9 +22,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the three
+# Timeout policy: docs/fm-test-portable-shards.md "Timeouts" owns the four
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
-# Each job comment identifies the tier implemented by its executable value.
+# Each job or matrix row identifies the tier implemented by its executable value.
 
 # Fork opt-out: a fork sets the repository variable FM_CI_SKIP_PUSH to 1 to
 # skip the push run, and FM_CI_SKIP_MACOS to 1 to skip the macOS job, without
@@ -192,13 +192,22 @@ jobs:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') }}
-    # Normal tier (see the timeout policy above).
-    timeout-minutes: 30
+    # Normal and readiness tiers (see the timeout policy above).
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        include:
+          - { shard: 1, timeout_minutes: 45 }
+          - { shard: 2, timeout_minutes: 30 }
+          - { shard: 3, timeout_minutes: 30 }
+          - { shard: 4, timeout_minutes: 30 }
+          - { shard: 5, timeout_minutes: 30 }
+          - { shard: 6, timeout_minutes: 30 }
+          - { shard: 7, timeout_minutes: 30 }
+          - { shard: 8, timeout_minutes: 30 }
+          - { shard: 9, timeout_minutes: 30 }
     steps:
       - uses: actions/checkout@v6
         with:

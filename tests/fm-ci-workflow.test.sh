@@ -6,8 +6,8 @@
 # fan-out, and four jobs carried no timeout at all. These tests hold both
 # safeguards: PR runs supersede within one PR while main pushes are never
 # cancelled, and every CI job carries a finite hang tripwire drawn from the
-# three-tier timeout policy that docs/fm-test-portable-shards.md "Timeouts"
-# owns (fast, normal, heavy), so no job drifts back to a one-off number.
+# four-tier timeout policy that docs/fm-test-portable-shards.md "Timeouts"
+# owns (fast, normal, readiness, heavy), so no job drifts back to an unowned number.
 #
 # They also hold the fork opt-out: the repository variables FM_CI_SKIP_PUSH and
 # FM_CI_SKIP_MACOS let a fork skip the push run and the macOS job through a
@@ -196,11 +196,28 @@ puts YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("timeout-minutes
 ' "$CI_WORKFLOW" "$1"
 }
 
+portable_serial_timeout_rows() {
+  # shellcheck disable=SC2016 # GitHub's expression is intentional Ruby input.
+  ruby -ryaml -e '
+job = YAML.load_file(ARGV[0]).fetch("jobs").fetch("tests-portable-serial")
+expected = "${{ matrix.timeout_minutes }}"
+raise "portable serial timeout must resolve from its matrix row" unless job.fetch("timeout-minutes") == expected
+rows = job.fetch("strategy").fetch("matrix").fetch("include")
+rows.each do |row|
+  raise "portable serial timeout row has unexpected fields" unless row.keys.sort == %w[shard timeout_minutes]
+  shard = row.fetch("shard")
+  timeout = row.fetch("timeout_minutes")
+  raise "portable serial timeout row must contain positive integers" unless shard.is_a?(Integer) && shard > 0 && timeout.is_a?(Integer) && timeout > 0
+  puts "#{shard}\t#{timeout}"
+end
+' "$CI_WORKFLOW"
+}
+
 # Tier membership is the executable inventory of the timeout policy: a new job
 # must join a tier, and a job-level value outside these tiers is exactly the
 # one-off number the policy removed.
 FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate'
-NORMAL_TIER_JOBS='lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash'
+NORMAL_TIER_JOBS='lint tests-portable-parallel-1 tests-portable-parallel-2 macos-stock-bash'
 HEAVY_TIER_JOBS='tests-herdr'
 
 # Print the one timeout every listed job shares; fail on any disagreement.
@@ -263,30 +280,37 @@ test_every_job_has_a_finite_timeout() {
   local reported
   reported=$(ruby -ryaml -e '
 YAML.load_file(ARGV[0]).fetch("jobs").each do |name, job|
+  next if name == "tests-portable-serial"
   timeout = job["timeout-minutes"]
   next if timeout.is_a?(Integer) && timeout > 0
   puts "#{name}: #{timeout.inspect}"
 end
 ' "$CI_WORKFLOW") || fail "could not read job timeouts from ci.yml"
   [ -z "$reported" ] || fail "these CI jobs have no finite hang tripwire:"$'\n'"$reported"
+  portable_serial_timeout_rows >/dev/null \
+    || fail "the portable serial matrix does not resolve every job to a finite timeout"
   pass "every ci.yml job carries a finite timeout"
 }
 
-# Every job sits in exactly one tier, and the workflow carries exactly three
-# distinct job-level timeouts: one per tier, no one-off numbers.
+# Every job or matrix row sits in exactly one tier, and the workflow carries
+# exactly four effective job-level timeouts: one per tier, no unowned numbers.
 test_every_job_belongs_to_exactly_one_timeout_tier() {
   local expected actual distinct
   # shellcheck disable=SC2086
-  expected=$(printf '%s\n' $FAST_TIER_JOBS $NORMAL_TIER_JOBS $HEAVY_TIER_JOBS | LC_ALL=C sort)
+  expected=$(printf '%s\n' $FAST_TIER_JOBS $NORMAL_TIER_JOBS $HEAVY_TIER_JOBS tests-portable-serial | LC_ALL=C sort)
   [ "$(printf '%s\n' "$expected" | LC_ALL=C sort -u)" = "$expected" ] \
     || fail "a job is listed in more than one timeout tier:"$'\n'"$expected"
   actual=$(workflow_jobs | LC_ALL=C sort) || fail "could not list ci.yml jobs"
   [ "$actual" = "$expected" ] \
     || fail "ci.yml jobs and the timeout tiers disagree; every job must join one tier"$'\n'"workflow: $(printf '%s' "$actual" | tr '\n' ' ')"$'\n'"tiers: $(printf '%s' "$expected" | tr '\n' ' ')"
-  distinct=$(for job in $expected; do job_timeout "$job"; done | LC_ALL=C sort -u | wc -l | tr -d ' ')
-  [ "$distinct" = 3 ] \
-    || fail "ci.yml must carry exactly three distinct job timeouts (fast, normal, heavy), got $distinct"
-  pass "every ci.yml job belongs to one of the three timeout tiers"
+  distinct=$(
+    for job in $FAST_TIER_JOBS $NORMAL_TIER_JOBS $HEAVY_TIER_JOBS; do job_timeout "$job"; done
+    portable_serial_timeout_rows | cut -f2
+  ) || fail "could not resolve effective CI timeouts"
+  distinct=$(printf '%s\n' "$distinct" | LC_ALL=C sort -u | wc -l | tr -d ' ')
+  [ "$distinct" = 4 ] \
+    || fail "ci.yml must carry exactly four effective job timeouts (fast, normal, readiness, heavy), got $distinct"
+  pass "every ci.yml job or matrix row belongs to one of the four timeout tiers"
 }
 
 # Fast tier: seconds-long checks share one short tripwire in the 5-10 minute band.
@@ -312,6 +336,17 @@ test_normal_tier_shares_one_budget() {
   [ "$normal" = 30 ] \
     || fail "normal tier must be the single 30-minute shared budget, got $normal"
   pass "normal tier jobs share one $normal minute budget"
+}
+
+# Readiness tier: only portable serial shard 1 gets the bounded 45-minute
+# allocation; every sibling shard remains on the normal tier.
+test_portable_serial_readiness_tier_is_narrow() {
+  local rows expected
+  rows=$(portable_serial_timeout_rows) || fail "could not resolve portable serial timeout rows"
+  expected=$(printf '1\t45\n2\t30\n3\t30\n4\t30\n5\t30\n6\t30\n7\t30\n8\t30\n9\t30')
+  [ "$rows" = "$expected" ] \
+    || fail "only portable serial shard 1 may use the 45-minute readiness tier"$'\n'"$rows"
+  pass "portable serial shard 1 alone has the 45-minute readiness allocation"
 }
 
 # Heavy tier: Herdr alone carries a job-level last-resort backstop above the
@@ -417,8 +452,10 @@ serial_job = jobs.fetch("tests-portable-serial")
 serial = serial_job.fetch("strategy")
 raise "serial failures must not cancel other shards" unless serial.fetch("fail-fast") == false
 matrix = serial.fetch("matrix")
-raise "unexpected serial dimensions" unless matrix.keys == ["shard"]
-shards = matrix.fetch("shard")
+raise "unexpected serial dimensions" unless matrix.keys == ["include"]
+rows = matrix.fetch("include")
+raise "unexpected serial row fields" unless rows.all? { |row| row.keys.sort == %w[shard timeout_minutes] }
+shards = rows.map { |row| row.fetch("shard") }
 proof_steps = serial_job.fetch("steps").select { |step| step["name"] == "Run timeout checkpoint matched proof" }
 raise "timeout matched proof is not independently runnable exactly once" unless proof_steps.length == 1
 proof = proof_steps.first
@@ -456,4 +493,5 @@ test_every_job_has_a_finite_timeout
 test_every_job_belongs_to_exactly_one_timeout_tier
 test_fast_tier_shares_one_short_tripwire
 test_normal_tier_shares_one_budget
+test_portable_serial_readiness_tier_is_narrow
 test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop
