@@ -296,6 +296,71 @@ SH
   pass "checkpoint owns and cleans a blocked run-state probe process group"
 }
 
+test_gnu_timeout_int_stops_before_another_run_state_probe() {
+  local home state fakebin window task capture status started ended elapsed probes real_tr timeout_kind
+  timeout_kind=perl-fallback
+  if command -v timeout >/dev/null 2>&1 \
+    && timeout --version 2>/dev/null | head -n 1 | grep -qi coreutils; then
+    timeout_kind=gnu-coreutils
+  fi
+
+  home=$(make_case gnu-timeout-int)
+  state="$home/state"
+  fakebin="$home/fakebin"
+  mkdir -p "$home/data" "$home/config"
+  window='test:fm-gnu-timeout-int'
+  task=gnu-timeout-int
+  capture="$home/pane.txt"
+  printf 'idle while validation state is read\n' > "$capture"
+  printf 'window=%s\nkind=ship\nbackend=tmux\n' "$window" > "$state/$task.meta"
+  printf 'paused: awaiting validation\n' > "$state/$task.status"
+  prime_status_seen "$state" "$state/$task.status"
+  printf 'done run-id=run-a' > "$state/.run-state-surfaced-$task"
+
+  real_tr=$(command -v tr) || fail "could not locate tr for GNU timeout regression"
+  cat > "$fakebin/tr" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "$#" -eq 2 ] && [ "$1" = ':/.' ] && [ "$2" = '___' ] \
+  && (set -C; : > "$FM_INT_WINDOW_ONCE") 2>/dev/null; then
+  trap '' INT
+  : > "$FM_INT_WINDOW_ENTERED"
+  sleep 3
+fi
+exec "$FM_REAL_TR" "$@"
+SH
+  chmod +x "$fakebin/tr"
+
+  status=0
+  started=$(date +%s)
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE_LOG="$home/crew-state.log" \
+    FM_FAKE_CREW_STATE='state: done · source: run-step · run-id=run-a' \
+    FM_INT_WINDOW_ONCE="$home/int-window-once" FM_INT_WINDOW_ENTERED="$home/int-window-entered" \
+    FM_REAL_TR="$real_tr" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$CHECKPOINT" --seconds 2 > "$home/out.txt" 2> "$home/err.txt" || status=$?
+  ended=$(date +%s)
+  elapsed=$((ended - started))
+
+  expect_code 124 "$status" "GNU timeout INT checkpoint: $(cat "$home/out.txt" "$home/err.txt")"
+  assert_contains "$(cat "$home/out.txt")" "checkpoint: no actionable wake within 2s" \
+    "GNU timeout INT did not return the quiet checkpoint contract"
+  [ -e "$home/int-window-entered" ] \
+    || fail "GNU timeout regression never entered the run-state marker command substitution"
+  [ -s "$home/crew-state.log" ] \
+    || fail "GNU timeout regression never started its initial crew-state group"
+  probes=$(awk 'END { print NR + 0 }' "$home/crew-state.log")
+  [ "$probes" -eq 1 ] \
+    || fail "the watcher started $probes crew-state groups; expected none after GNU timeout sent INT"
+  [ "$elapsed" -le 5 ] \
+    || fail "the quiet checkpoint took ${elapsed}s after a 2s timeout deadline"
+  assert_absent "$state/.watch.lock/pid" "watch lock pid survived GNU timeout INT cleanup"
+  pass "$timeout_kind checkpoint INT exits through cleanup before another run-state probe starts"
+}
+
 test_existing_singleton_watcher_is_not_success() {
   local home out err status
   home=$(make_home singleton)
@@ -434,6 +499,7 @@ test_queue_append_during_checkpoint_still_resurfaces
 test_signal_passes_through_and_exits_zero
 test_registered_check_uses_preserved_watcher_environment
 test_checkpoint_owns_a_blocked_run_state_probe_group
+test_gnu_timeout_int_stops_before_another_run_state_probe
 test_existing_singleton_watcher_is_not_success
 test_host_checkpoint_bounds_the_park_by_posture
 test_host_checkpoint_passes_a_handback_and_reports_a_stand_down

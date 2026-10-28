@@ -158,83 +158,6 @@ with_home() {
     FM_CONTRIBUTIONS_NOW="$NOW" "$@"
 }
 
-prepare_watcher_repeat_trace() { # <home>
-  local home=$1 trace_dir
-  trace_dir="$home/state/watcher-repeat-trace"
-  mkdir -p "$trace_dir"
-  chmod 700 "$trace_dir"
-  : > "$trace_dir/processes.log"
-  : > "$trace_dir/syscalls.log"
-  chmod 600 "$trace_dir/processes.log" "$trace_dir/syscalls.log"
-
-  printf '%s\n' "$trace_dir"
-}
-
-watcher_repeat_process_snapshot() { # <root-pid>
-  ps -A -o pid= -o ppid= -o pgid= -o sess= -o stat= -o comm= 2>/dev/null \
-    | awk -v root="$1" '
-        {
-          pid = $1
-          parent[pid] = $2
-          row[pid] = $0
-        }
-        END {
-          for (pid in row) {
-            current = pid
-            while (current != "" && current != 0 && current != 1) {
-              if (current == root) {
-                split(row[pid], field)
-                comm = field[6]
-                count = split(comm, component, "/")
-                comm = component[count]
-                if (comm !~ /^[A-Za-z0-9_.-]+$/) comm = "invalid"
-                printf "pid=%s ppid=%s pgid=%s sid=%s stat=%s comm=%s\n", \
-                  field[1], field[2], field[3], field[4], field[5], comm
-                break
-              }
-              current = parent[current]
-            }
-          }
-        }
-      '
-}
-
-observe_watcher_repeat() { # <root-pid> <trace-dir> <strace-enabled>
-  local root_pid=$1 trace_dir=$2 strace_enabled=$3 attempts=0 saw_int=0 root_stat snapshot
-  snapshot="$trace_dir/processes.last"
-  printf 'scope descendants_of=%s fields=pid,ppid,pgid,sid,stat,comm\n' "$root_pid" \
-    >> "$trace_dir/processes.log"
-  while [ "$attempts" -lt 1000 ]; do
-    watcher_repeat_process_snapshot "$root_pid" > "$snapshot"
-    if [ "$strace_enabled" -eq 1 ] && [ "$saw_int" -eq 0 ] \
-      && grep -E '(kill|tkill|tgkill)\(.*SIGINT' "$trace_dir/syscalls.log" >/dev/null 2>&1; then
-      sed 's/^/snapshot phase=INT /' "$snapshot" >> "$trace_dir/processes.log"
-      saw_int=1
-    fi
-    root_stat=$(ps -o stat= -p "$root_pid" 2>/dev/null | tr -d '[:space:]')
-    case "$root_stat" in
-      ''|Z*)
-        if [ "$saw_int" -eq 0 ]; then
-          if [ "$strace_enabled" -eq 1 ]; then
-            printf 'snapshot phase=INT status=not-observed-before-exit\n' >> "$trace_dir/processes.log"
-          else
-            printf 'snapshot phase=INT status=unobservable-without-strace\n' >> "$trace_dir/processes.log"
-          fi
-        fi
-        sed 's/^/snapshot phase=EXIT_LAST_LIVE /' "$snapshot" >> "$trace_dir/processes.log"
-        printf 'snapshot phase=EXIT pid=absent ppid=absent pgid=absent sid=absent stat=absent comm=absent\n' \
-          >> "$trace_dir/processes.log"
-        rm -f "$snapshot"
-        return 0
-        ;;
-    esac
-    attempts=$((attempts + 1))
-    sleep 0.01
-  done
-  printf 'snapshot phase=EXIT status=observer-bound-expired\n' >> "$trace_dir/processes.log"
-  rm -f "$snapshot"
-}
-
 registered_checks() {
   local home=$1 check
   for check in "$home/state/"*.check.sh; do
@@ -789,7 +712,6 @@ test_expired_child_unsupported_forge_stays_unmeasured() {
 test_watcher_surfaces_new_contribution_once() {
   local home out rc rows repeat_started repeat_ended repeat_elapsed repeat_checkpoint
   local timeout_capability exit_signal watcher_lock liveness_marker sanitized_err queue_metadata
-  local trace_dir trace_output trace_mode strace_enabled repeat_pid observer_pid
   home=$(new_home watcher-contribution)
   forge_home "$home"
   with_home "$home" "$ROOT/bin/fm-pr-check.sh" delivery https://github.com/o/r/pull/8 >/dev/null \
@@ -807,34 +729,12 @@ test_watcher_surfaces_new_contribution_once() {
     || fail "watcher did not surface the durable contribution wake: $(cat "$out")"
   rows=$(awk -F '\t' 'NF >= 5 && $3 == "check" { count++ } END { print count + 0 }' "$home/state/.wake-queue")
   [ "$rows" = 1 ] || fail "one contribution signal created $rows durable check wakes"
-  trace_dir=$(prepare_watcher_repeat_trace "$home")
   repeat_checkpoint=${FM_CONTRIBUTIONS_REPEAT_CHECKPOINT:-"$ROOT/bin/fm-watch-checkpoint.sh"}
   repeat_started=$(date +%s)
   rc=0
-  trace_mode=observer-only
-  strace_enabled=0
-  if command -v strace >/dev/null 2>&1; then
-    trace_mode=strace-child-only
-    strace_enabled=1
-    printf 'limitation scope=repeat-checkpoint-descendants external-senders=not-traced\n' \
-      >> "$trace_dir/processes.log"
-    with_home "$home" env \
-      FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
-      strace -f -qq -e trace=kill,tkill,tgkill,setpgid,setsid,getpgid -e signal=none \
-        -o "$trace_dir/syscalls.log" -- "$repeat_checkpoint" --seconds 2 \
-        > "$home/watcher-repeat.out" 2> "$home/watcher-repeat.err" &
-  else
-    printf 'limitation signal-sender-syscalls=unavailable reason=strace-not-found sender-blind-spots=all\n' \
-      >> "$trace_dir/processes.log"
-    with_home "$home" env \
-      FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
-      "$repeat_checkpoint" --seconds 2 > "$home/watcher-repeat.out" 2> "$home/watcher-repeat.err" &
-  fi
-  repeat_pid=$!
-  observe_watcher_repeat "$repeat_pid" "$trace_dir" "$strace_enabled" &
-  observer_pid=$!
-  wait "$observer_pid" || true
-  wait "$repeat_pid" || rc=$?
+  with_home "$home" env \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 \
+    "$repeat_checkpoint" --seconds 2 > "$home/watcher-repeat.out" 2> "$home/watcher-repeat.err" || rc=$?
   repeat_ended=$(date +%s)
   repeat_elapsed=$((repeat_ended - repeat_started))
   if [ "$rc" -eq 124 ]; then
@@ -896,19 +796,11 @@ test_watcher_surfaces_new_contribution_once() {
       }
       END { printf "row_count=%d%s", count + 0, rows }
     ' "$home/state/.wake-queue" 2>/dev/null)
-    trace_output=$(
-      printf 'mode=%s\n' "$trace_mode"
-      sed -n '1,120p' "$trace_dir/processes.log" 2>/dev/null
-      sed -n '1,120p' "$trace_dir/syscalls.log" 2>/dev/null
-    )
-    [ -n "$trace_output" ] || trace_output='<empty>'
     fail "an already durable contribution signal re-rang the watcher:
 repeat_checkpoint rc=$rc elapsed_seconds=$repeat_elapsed exit_signal=$exit_signal
 capability timeout=$timeout_capability bash_version=$BASH_VERSION
 markers watcher_lock=$watcher_lock liveness_marker=$liveness_marker
 wake_queue $queue_metadata
-watcher_repeat_signal_trace:
-$trace_output
 watcher_repeat_stderr_first_40_lines:
 $sanitized_err"
   fi

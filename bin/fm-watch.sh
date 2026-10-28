@@ -2953,11 +2953,14 @@ fm_active_check_stop() {
 # and the signal is consumed, so a stop request could leave this watcher
 # polling forever while its stopper waits (fixed upstream in bash 5.3). Bash
 # 3.2 holds HUP and TERM until a running command substitution's child exits, so
-# fm_backend_capture pane reads go through watcher_capture instead. INT keeps
-# its trap because bash ignores a direct SIGINT while a child runs.
+# fm_backend_capture pane reads go through watcher_capture instead. INT keeps a
+# trap because bash ignores a direct SIGINT while a child runs, but that trap
+# relays TERM to the recorded main watcher: if bash runs the INT trap inside a
+# command-substitution context, the main shell still takes its native fatal path
+# through watcher_cleanup instead of consuming the stop in the child context.
 watcher_stop_signals() {
   trap - HUP TERM
-  trap 'exit 1' INT
+  trap 'kill -TERM "$WATCHER_PID"' INT
 }
 
 run_check_capture() {
@@ -3552,12 +3555,12 @@ watcher_cleanup() {
   fi
   return "$cleanup_status"
 }
-trap watcher_cleanup EXIT
-watcher_stop_signals
 # This watcher's own pid, as recorded in the lock by fm_lock_claim (which writes
 # ${BASHPID:-$$} from this same main shell). Read directly, never via a command
 # substitution, so it matches the stored holder pid for the self-eviction check.
 WATCHER_PID=${BASHPID:-$$}
+trap watcher_cleanup EXIT
+watcher_stop_signals
 printf '%s\n' "$FM_HOME" > "$WATCH_LOCK/fm-home" || true
 printf '%s\n' "$WATCH_PATH" > "$WATCH_LOCK/watcher-path" || true
 # shellcheck disable=SC2034 # Consumed by wake() in the separately linted transition owner.
