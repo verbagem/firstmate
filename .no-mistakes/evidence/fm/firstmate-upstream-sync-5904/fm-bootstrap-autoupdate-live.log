@@ -1,0 +1,3 @@
+ok - bootstrap: tool auto-update stays off without config/tool-autoupdate
+ok - bootstrap: tool auto-update installs a pinned newer version and leaves a current package alone
+ok - bootstrap: tool auto-update holds when its throttle marker cannot be written
