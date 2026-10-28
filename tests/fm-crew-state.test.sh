@@ -2315,6 +2315,62 @@ EOF
   pass "runs-list selection keeps the newer failure over an older live row"
 }
 
+test_coarse_generation_uses_selected_inventory_snapshot() {
+  reset_fakes
+  local d short replacement calls out
+  d=$(new_case coarse-generation-snapshot)
+  make_repo_on_branch "$d/wt" fm/feat-snapshot
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  replacement=0123abc
+  git -C "$d/wt" rev-parse --verify --quiet "${replacement}^{commit}" >/dev/null 2>&1 \
+    && fail "the replacement inventory head must not resolve in the task copy"
+  make_fakebin "$d" >/dev/null
+  mv "$d/fakebin/no-mistakes" "$d/fakebin/no-mistakes-base"
+  cat > "$d/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = runs ]; then
+  count=0
+  if [ -f "$FM_FAKE_RUNS_CALLS" ]; then
+    while IFS= read -r _; do count=$((count + 1)); done < "$FM_FAKE_RUNS_CALLS"
+  fi
+  printf 'call\n' >> "$FM_FAKE_RUNS_CALLS"
+  if [ "$count" -eq 0 ]; then
+    printf '%s\n' "$FM_FAKE_RUNS_LIST"
+  else
+    printf '%s\n' "$FM_FAKE_RUNS_LIST_AFTER"
+  fi
+  exit 0
+fi
+exec "${0%/*}/no-mistakes-base" "$@"
+SH
+  chmod +x "$d/fakebin/no-mistakes"
+  fm_write_meta "$d/state/snapshot.meta" "window=fm:fm-snapshot" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-10-28 10:05
+  failed     fm/feat-snapshot ${short}  2026-10-28 10:00
+EOF
+)"
+  FM_FAKE_RUNS_LIST_AFTER="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-10-28 10:10
+  failed     fm/feat-snapshot ${replacement}  2026-10-28 10:09
+EOF
+)"
+  calls="$d/runs.calls"
+  : > "$calls"
+  export FM_FAKE_RUNS_LIST_AFTER FM_FAKE_RUNS_CALLS="$calls"
+  out=$(run_crew_state "$d" snapshot)
+  unset FM_FAKE_RUNS_LIST_AFTER FM_FAKE_RUNS_CALLS
+  assert_contains "$out" "state: failed" "the selected coarse failure keeps its verdict"
+  assert_contains "$out" "runs-row=" "the coarse failure carries a run-generation row"
+  assert_contains "$out" "$short" "the generation row comes from the selected inventory snapshot"
+  assert_not_contains "$out" "$replacement" "a later inventory cannot replace the selected generation row"
+  [ "$(wc -l < "$calls" | tr -d ' ')" -eq 1 ] \
+    || fail "coarse status and generation did not share one inventory read"
+  pass "coarse status and run generation share one selected inventory snapshot"
+}
+
 # An unfetched head on the older live row does not change creation order.
 # Exact-head compatibility of the newer terminal row is not supersession proof.
 test_unfetched_older_live_sibling_does_not_hide_failure() {
@@ -5905,6 +5961,7 @@ test_coarse_failed_ledger_with_daemon_down_reports_unknown
 test_cross_branch_attribution_picks_most_recent_row
 test_terminal_run_keeps_newer_failure_over_live_sibling
 test_runs_list_newer_failure_outranks_older_live_row
+test_coarse_generation_uses_selected_inventory_snapshot
 test_unfetched_older_live_sibling_does_not_hide_failure
 test_only_terminal_rows_keep_newest_first_precedence
 test_unknown_status_row_keeps_newest_first_precedence

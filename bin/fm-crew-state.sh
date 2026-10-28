@@ -971,6 +971,13 @@ nm_runs_list() {
   nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT"
 }
 
+snapshot_runs_ledger() {
+  local list
+  list=$(nm_runs_list)
+  LEDGER_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$list")
+  LEDGER_ROW=$(printf '%s\n' "$list" | awk -v b="$CREW_BRANCH" '$2 == b { print; exit }')
+}
+
 # CREW_BRANCH is empty at detached HEAD (a just-spawned crew, or a scout's
 # scratch worktree); with no branch there is no run to attribute to this crew.
 CREW_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -995,6 +1002,9 @@ RUN_SOURCE=full
 NM_DAEMON_ANSWER=""
 RUN_DEAD_DAEMON=""
 COARSE_STATUS=""
+COARSE_RUNS_ROW=""
+LEDGER_STATUS=""
+LEDGER_ROW=""
 SELECTED_RUN_ID=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
 # worktree, so skip the lookup for them and read state from pane/log directly.
@@ -1083,7 +1093,8 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
         # Without run ids, contradictory liveness cannot prove precedence.
         # A live replacement also needs an id-addressed status read: a bare
         # "running" row cannot tell working from waiting at a gate.
-        ledger_status=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$(nm_runs_list)")
+        snapshot_runs_ledger
+        ledger_status=$LEDGER_STATUS
         if fm_nm_run_is_active "$RUN_OUT"; then
           if [ "$(fm_nm_run_status_class "$ledger_status")" = terminal ]; then
             emit unknown run-step "run records disagree; run ids: $(strip_quotes "$(nm_field id)"), competing identity unavailable"
@@ -1095,6 +1106,7 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
             && [ "$ledger_status" != "$(strip_quotes "$(nm_field status)")" ] \
             && [ "$ledger_status" != "$(strip_quotes "$(nm_field outcome)")" ]; then
             COARSE_STATUS=$ledger_status
+            COARSE_RUNS_ROW=$LEDGER_ROW
             RUN_SOURCE=coarse
           fi
         fi
@@ -1105,7 +1117,9 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
         # `[ -n "$RUN_OUT" ]`: an empty/timed-out primary call means the CLI
         # itself did not respond, so retrying it immediately with a second
         # bounded call would just double the wait for no better answer.
-        COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$(nm_runs_list)")
+        snapshot_runs_ledger
+        COARSE_STATUS=$LEDGER_STATUS
+        COARSE_RUNS_ROW=$LEDGER_ROW
         if [ -n "$COARSE_STATUS" ]; then
           HAVE_RUN=1
           # A branch-matching answer the strict rule rejected is this branch's
@@ -1129,7 +1143,7 @@ run_generation_token() {  # <value>
 }
 
 run_generation_detail() {
-  local run_id run_head row detail=''
+  local run_id run_head detail=''
   case "$RUN_SOURCE" in
     full)
       run_id=$(strip_quotes "$(nm_field id)")
@@ -1138,8 +1152,7 @@ run_generation_detail() {
       [ -n "$run_head" ] && detail="${detail}${detail:+ }run-head=$(run_generation_token "$run_head")"
       ;;
     coarse)
-      row=$(nm_runs_list | awk -v b="$CREW_BRANCH" '$2 == b { print; exit }')
-      [ -n "$row" ] && detail="runs-row=$(run_generation_token "$row")"
+      [ -n "$COARSE_RUNS_ROW" ] && detail="runs-row=$(run_generation_token "$COARSE_RUNS_ROW")"
       ;;
   esac
   [ -n "$detail" ] && printf '%s' "$detail"
