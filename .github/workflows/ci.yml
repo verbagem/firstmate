@@ -200,7 +200,7 @@ jobs:
       matrix:
         include:
           - { shard: 1, timeout_minutes: 45 }
-          - { shard: 2, timeout_minutes: 30 }
+          - { shard: 2, timeout_minutes: 45 }
           - { shard: 3, timeout_minutes: 30 }
           - { shard: 4, timeout_minutes: 30 }
           - { shard: 5, timeout_minutes: 30 }

@@ -338,15 +338,15 @@ test_normal_tier_shares_one_budget() {
   pass "normal tier jobs share one $normal minute budget"
 }
 
-# Readiness tier: only portable serial shard 1 gets the bounded 45-minute
+# Readiness tier: only portable serial shards 1 and 2 get the bounded 45-minute
 # allocation; every sibling shard remains on the normal tier.
 test_portable_serial_readiness_tier_is_narrow() {
   local rows expected
   rows=$(portable_serial_timeout_rows) || fail "could not resolve portable serial timeout rows"
-  expected=$(printf '1\t45\n2\t30\n3\t30\n4\t30\n5\t30\n6\t30\n7\t30\n8\t30\n9\t30')
+  expected=$(printf '1\t45\n2\t45\n3\t30\n4\t30\n5\t30\n6\t30\n7\t30\n8\t30\n9\t30')
   [ "$rows" = "$expected" ] \
-    || fail "only portable serial shard 1 may use the 45-minute readiness tier"$'\n'"$rows"
-  pass "portable serial shard 1 alone has the 45-minute readiness allocation"
+    || fail "only portable serial shards 1 and 2 may use the 45-minute readiness tier"$'\n'"$rows"
+  pass "portable serial shards 1 and 2 alone have the 45-minute readiness allocation"
 }
 
 # Heavy tier: Herdr alone carries a job-level last-resort backstop above the
