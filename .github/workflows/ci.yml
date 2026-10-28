@@ -247,10 +247,10 @@ jobs:
           bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
-      - name: Run GNU timeout checkpoint paired proof
+      - name: Run timeout checkpoint matched proof
         if: always() && matrix.shard == 7
         env:
-          FM_GNU_TIMEOUT_PAIRED_PROOF_ONLY: "1"
+          FM_TIMEOUT_MATCHED_PROOF_ONLY: "1"
         run: bash tests/fm-watch-checkpoint.test.sh
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
         if: always()

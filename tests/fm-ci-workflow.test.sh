@@ -419,12 +419,12 @@ raise "serial failures must not cancel other shards" unless serial.fetch("fail-f
 matrix = serial.fetch("matrix")
 raise "unexpected serial dimensions" unless matrix.keys == ["shard"]
 shards = matrix.fetch("shard")
-proof_steps = serial_job.fetch("steps").select { |step| step["name"] == "Run GNU timeout checkpoint paired proof" }
-raise "GNU timeout paired proof is not independently runnable exactly once" unless proof_steps.length == 1
+proof_steps = serial_job.fetch("steps").select { |step| step["name"] == "Run timeout checkpoint matched proof" }
+raise "timeout matched proof is not independently runnable exactly once" unless proof_steps.length == 1
 proof = proof_steps.first
-raise "GNU timeout paired proof is not isolated to one Linux x86 shard after every earlier result" unless proof["if"] == "always() && matrix.shard == 7"
-raise "GNU timeout paired proof does not select its independent test mode" unless proof.fetch("env", {}).fetch("FM_GNU_TIMEOUT_PAIRED_PROOF_ONLY", nil) == "1"
-raise "GNU timeout paired proof does not invoke its executable interface" unless proof.fetch("run", "").strip == "bash tests/fm-watch-checkpoint.test.sh"
+raise "timeout matched proof is not isolated to one Linux x86 shard after every earlier result" unless proof["if"] == "always() && matrix.shard == 7"
+raise "timeout matched proof does not select its independent test mode" unless proof.fetch("env", {}).fetch("FM_TIMEOUT_MATCHED_PROOF_ONLY", nil) == "1"
+raise "timeout matched proof does not invoke its executable interface" unless proof.fetch("run", "").strip == "bash tests/fm-watch-checkpoint.test.sh"
 lanes, status = Open3.capture2(File.join(root, "bin/fm-test-run.sh"), "--list-lanes")
 raise "cannot list runner lanes" unless status.success?
 actual = lanes.lines.map(&:strip).select { |l| l.match?(/\Aportable-serial-\d+of\d+\z/) }

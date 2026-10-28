@@ -501,9 +501,8 @@ test_agent_state_from_process_view() {
 }
 
 # start_shell_tree: a real process tree shaped like a pane whose login shell
-# launched <leaf> through a wrapper script in its own process group: a root
-# shell (TREE_ROOT), a wrapper shell below it, and <leaf> (a `sleep` under that
-# name, TREE_LEAF) below the wrapper. Its args name <dir>/tree, so the suite's
+# launched <leaf> through a wrapper shell (TREE_ROOT), with <leaf> (a `sleep`
+# under that name, TREE_LEAF) below it. Its args name <dir>/tree, so the suite's
 # fixture reaping also covers it.
 start_shell_tree() {  # <dir> <leaf-name>
   local dir=$1 leaf=$2 i=0
@@ -517,8 +516,8 @@ printf '%s\n' "$child" >"$3"
 wait "$child"
 SH
   chmod +x "$dir/tree/wrapper"
-  bash -c '"$1" "$2" "$3" "$4" & wait' root "$dir/tree/wrapper" "$dir/tree/$leaf" \
-    "$FM_TEST_STUB_MAX_BLOCK_SECONDS" "$dir/tree/leaf.pid" >/dev/null 2>&1 &
+  "$dir/tree/wrapper" "$dir/tree/$leaf" "$FM_TEST_STUB_MAX_BLOCK_SECONDS" \
+    "$dir/tree/leaf.pid" >"$dir/tree/wrapper.out" 2>"$dir/tree/wrapper.err" &
   TREE_ROOT=$!
   TREE_LEAF=
   while [ -z "$TREE_LEAF" ] && [ "$i" -lt 50 ]; do

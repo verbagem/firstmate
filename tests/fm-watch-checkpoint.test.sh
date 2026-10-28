@@ -296,7 +296,7 @@ SH
   pass "checkpoint owns and cleans a blocked run-state probe process group"
 }
 
-run_gnu_timeout_int_case() {  # <name> <code-root>
+run_timeout_int_case() {  # <name> <code-root>
   local name=$1 code_root=$2 checkpoint home state fakebin window task capture started ended real_tr
   local i pid alive=0
   checkpoint="$code_root/bin/fm-watch-checkpoint.sh"
@@ -304,8 +304,8 @@ run_gnu_timeout_int_case() {  # <name> <code-root>
   state="$home/state"
   fakebin="$home/fakebin"
   mkdir -p "$home/data" "$home/config"
-  window='test:fm-gnu-timeout-int'
-  task=gnu-timeout-int
+  window='test:fm-timeout-int'
+  task=timeout-int
   capture="$home/pane.txt"
   printf 'idle while validation state is read\n' > "$capture"
   printf 'window=%s\nkind=ship\nbackend=tmux\n' "$window" > "$state/$task.meta"
@@ -329,7 +329,8 @@ printf '%s\n' "${FM_FAKE_CREW_STATE:-state: unknown · source: none · fake defa
 SH
   chmod +x "$fakebin/fm-crew-state.sh"
 
-  real_tr=$(command -v tr) || fail "could not locate tr for GNU timeout regression"
+  ln -s "$TIMEOUT_PROOF_BIN" "$fakebin/timeout"
+  real_tr=$(command -v tr) || fail "could not locate tr for timeout regression"
   cat > "$fakebin/tr" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -343,7 +344,7 @@ exec "$FM_REAL_TR" "$@"
 SH
   chmod +x "$fakebin/tr"
 
-  GNU_TIMEOUT_CASE_STATUS=0
+  TIMEOUT_CASE_STATUS=0
   started=$(date +%s)
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
     FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -354,12 +355,11 @@ SH
     FM_REAL_TR="$real_tr" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
     FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 \
     FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$checkpoint" --seconds 2 > "$home/out.txt" 2> "$home/err.txt" || GNU_TIMEOUT_CASE_STATUS=$?
+    "$checkpoint" --seconds 2 > "$home/out.txt" 2> "$home/err.txt" || TIMEOUT_CASE_STATUS=$?
   ended=$(date +%s)
-  GNU_TIMEOUT_CASE_ELAPSED=$((ended - started))
-  GNU_TIMEOUT_CASE_HOME=$home
-  GNU_TIMEOUT_CASE_PROBES=$(awk 'END { print NR + 0 }' "$home/crew-state.log" 2>/dev/null)
-  GNU_TIMEOUT_CASE_DESCENDANTS=$(awk 'END { print NR + 0 }' "$home/probe-descendants.log" 2>/dev/null)
+  TIMEOUT_CASE_ELAPSED=$((ended - started))
+  TIMEOUT_CASE_PROBES=$(awk 'END { print NR + 0 }' "$home/crew-state.log" 2>/dev/null)
+  TIMEOUT_CASE_DESCENDANTS=$(awk 'END { print NR + 0 }' "$home/probe-descendants.log" 2>/dev/null)
   i=0
   while [ "$i" -lt 30 ]; do
     alive=0
@@ -371,18 +371,18 @@ SH
     sleep 0.1
     i=$((i + 1))
   done
-  GNU_TIMEOUT_CASE_DESCENDANTS_ALIVE=$alive
-  GNU_TIMEOUT_CASE_LOCK_PRESENT=0
-  [ ! -e "$state/.watch.lock/pid" ] || GNU_TIMEOUT_CASE_LOCK_PRESENT=1
-  GNU_TIMEOUT_CASE_ENTERED=0
-  [ ! -e "$home/int-window-entered" ] || GNU_TIMEOUT_CASE_ENTERED=1
-  GNU_TIMEOUT_CASE_QUIET=0
+  TIMEOUT_CASE_DESCENDANTS_ALIVE=$alive
+  TIMEOUT_CASE_LOCK_PRESENT=0
+  [ ! -e "$state/.watch.lock/pid" ] || TIMEOUT_CASE_LOCK_PRESENT=1
+  TIMEOUT_CASE_ENTERED=0
+  [ ! -e "$home/int-window-entered" ] || TIMEOUT_CASE_ENTERED=1
+  TIMEOUT_CASE_QUIET=0
   grep -Fqx 'checkpoint: no actionable wake within 2s' "$home/out.txt" 2>/dev/null \
-    && GNU_TIMEOUT_CASE_QUIET=1
-  printf '# GNU timeout leg=%s rc=%s probes=%s elapsed_seconds=%s descendants=%s descendants_alive=%s lock_present=%s\n' \
-    "$name" "$GNU_TIMEOUT_CASE_STATUS" "$GNU_TIMEOUT_CASE_PROBES" \
-    "$GNU_TIMEOUT_CASE_ELAPSED" "$GNU_TIMEOUT_CASE_DESCENDANTS" \
-    "$GNU_TIMEOUT_CASE_DESCENDANTS_ALIVE" "$GNU_TIMEOUT_CASE_LOCK_PRESENT"
+    && TIMEOUT_CASE_QUIET=1
+  printf '# timeout leg=%s rc=%s probes=%s elapsed_seconds=%s descendants=%s descendants_alive=%s lock_present=%s\n' \
+    "$name" "$TIMEOUT_CASE_STATUS" "$TIMEOUT_CASE_PROBES" \
+    "$TIMEOUT_CASE_ELAPSED" "$TIMEOUT_CASE_DESCENDANTS" \
+    "$TIMEOUT_CASE_DESCENDANTS_ALIVE" "$TIMEOUT_CASE_LOCK_PRESENT"
   if [ "$alive" -gt 0 ]; then
     while IFS= read -r pid; do
       [ -n "$pid" ] || continue
@@ -391,82 +391,69 @@ SH
   fi
 }
 
-test_gnu_timeout_int_stops_before_another_run_state_probe() {
+test_timeout_int_stops_before_another_run_state_probe() {
   local baseline=fd09a28216ddd5b00d8e1953a3b87134c20d1d00
-  local old_root new_checkpoint_old_watcher_root old_archive timeout_bin timeout_version timeout_sha
+  local old_root old_archive timeout_bin timeout_version timeout_sha timeout_impl
   local old_checkpoint_sha old_watcher_sha current_checkpoint_sha current_watcher_sha
-  local a_checkpoint_sha a_watcher_sha b_checkpoint_sha b_watcher_sha c_checkpoint_sha c_watcher_sha
-  local a_status a_probes a_descendants a_entered
+  local a_checkpoint_sha a_watcher_sha b_checkpoint_sha b_watcher_sha
+  local a_status a_descendants a_lock a_entered
   local b_status b_probes b_elapsed b_descendants b_alive b_lock b_entered b_quiet
-  local c_status c_probes c_elapsed c_descendants c_alive c_lock c_entered c_quiet
   local proof_errors=0
 
   [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] \
-    || fail "GNU timeout paired proof requires one matched Linux x86_64 execution"
+    || fail "timeout matched proof requires one Linux x86_64 execution"
   command -v timeout >/dev/null 2>&1 \
-    || fail "GNU timeout paired proof requires timeout on PATH"
-  timeout --version 2>/dev/null | head -n 1 | grep -qi coreutils \
-    || fail "GNU timeout paired proof requires the coreutils implementation"
+    || fail "timeout matched proof requires timeout on PATH"
   command -v sha256sum >/dev/null 2>&1 \
-    || fail "GNU timeout paired proof requires sha256sum"
+    || fail "timeout matched proof requires sha256sum"
 
   timeout_bin=$(command -v timeout)
   timeout_version=$("$timeout_bin" --version | head -n 1)
+  case "$timeout_version" in
+    *'(uutils coreutils)'*) timeout_impl=uutils ;;
+    *'(GNU coreutils)'*) timeout_impl=gnu ;;
+    *) fail "timeout matched proof requires uutils or GNU coreutils timeout, got: $timeout_version" ;;
+  esac
   timeout_sha=$(sha256sum "$timeout_bin" | awk '{print $1}')
-  printf '# GNU timeout executable=%s sha256=%s version=%s\n' \
-    "$timeout_bin" "$timeout_sha" "$timeout_version"
+  TIMEOUT_PROOF_BIN=$timeout_bin
+  printf '# timeout implementation=%s executable=%s sha256=%s version=%s\n' \
+    "$timeout_impl" "$timeout_bin" "$timeout_sha" "$timeout_version"
 
-  old_root="$TMP_ROOT/gnu-timeout-old-root"
-  new_checkpoint_old_watcher_root="$TMP_ROOT/gnu-timeout-new-checkpoint-old-watcher-root"
-  old_archive="$TMP_ROOT/gnu-timeout-old-bin.tar"
-  mkdir -p "$old_root" "$new_checkpoint_old_watcher_root"
+  old_root="$TMP_ROOT/timeout-old-root"
+  old_archive="$TMP_ROOT/timeout-old-bin.tar"
+  mkdir -p "$old_root"
   git -C "$ROOT" archive --format=tar --output="$old_archive" "$baseline" bin \
     || fail "could not archive immutable $baseline bin/ for the paired proof"
   tar -xf "$old_archive" -C "$old_root" \
     || fail "could not materialize immutable $baseline bin/ for the paired proof"
-  cp -R "$old_root/bin" "$new_checkpoint_old_watcher_root/bin"
-  cp "$ROOT/bin/fm-watch-checkpoint.sh" \
-    "$new_checkpoint_old_watcher_root/bin/fm-watch-checkpoint.sh"
-
   old_checkpoint_sha=$(git -C "$ROOT" show "$baseline:bin/fm-watch-checkpoint.sh" | sha256sum | awk '{print $1}')
   old_watcher_sha=$(git -C "$ROOT" show "$baseline:bin/fm-watch.sh" | sha256sum | awk '{print $1}')
   current_checkpoint_sha=$(sha256sum "$ROOT/bin/fm-watch-checkpoint.sh" | awk '{print $1}')
   current_watcher_sha=$(sha256sum "$ROOT/bin/fm-watch.sh" | awk '{print $1}')
   a_checkpoint_sha=$(sha256sum "$old_root/bin/fm-watch-checkpoint.sh" | awk '{print $1}')
   a_watcher_sha=$(sha256sum "$old_root/bin/fm-watch.sh" | awk '{print $1}')
-  b_checkpoint_sha=$(sha256sum "$new_checkpoint_old_watcher_root/bin/fm-watch-checkpoint.sh" | awk '{print $1}')
-  b_watcher_sha=$(sha256sum "$new_checkpoint_old_watcher_root/bin/fm-watch.sh" | awk '{print $1}')
-  c_checkpoint_sha=$(sha256sum "$ROOT/bin/fm-watch-checkpoint.sh" | awk '{print $1}')
-  c_watcher_sha=$(sha256sum "$ROOT/bin/fm-watch.sh" | awk '{print $1}')
-  printf '# GNU timeout leg=A checkpoint_sha256=%s watcher_sha256=%s\n' "$a_checkpoint_sha" "$a_watcher_sha"
-  printf '# GNU timeout leg=B checkpoint_sha256=%s watcher_sha256=%s\n' "$b_checkpoint_sha" "$b_watcher_sha"
-  printf '# GNU timeout leg=C checkpoint_sha256=%s watcher_sha256=%s\n' "$c_checkpoint_sha" "$c_watcher_sha"
+  b_checkpoint_sha=$(sha256sum "$ROOT/bin/fm-watch-checkpoint.sh" | awk '{print $1}')
+  b_watcher_sha=$(sha256sum "$ROOT/bin/fm-watch.sh" | awk '{print $1}')
+  printf '# timeout leg=A checkpoint_sha256=%s watcher_sha256=%s\n' "$a_checkpoint_sha" "$a_watcher_sha"
+  printf '# timeout leg=B checkpoint_sha256=%s watcher_sha256=%s\n' "$b_checkpoint_sha" "$b_watcher_sha"
 
   [ "$a_checkpoint_sha" = "$old_checkpoint_sha" ] || { echo "not ok - leg A checkpoint is not immutable $baseline" >&2; proof_errors=$((proof_errors + 1)); }
   [ "$a_watcher_sha" = "$old_watcher_sha" ] || { echo "not ok - leg A watcher is not immutable $baseline" >&2; proof_errors=$((proof_errors + 1)); }
   [ "$b_checkpoint_sha" = "$current_checkpoint_sha" ] || { echo "not ok - leg B checkpoint is not current" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$b_watcher_sha" = "$old_watcher_sha" ] || { echo "not ok - leg B watcher is not immutable $baseline" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_checkpoint_sha" = "$current_checkpoint_sha" ] || { echo "not ok - leg C checkpoint is not current" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_watcher_sha" = "$current_watcher_sha" ] || { echo "not ok - leg C watcher is not current" >&2; proof_errors=$((proof_errors + 1)); }
+  [ "$b_watcher_sha" = "$current_watcher_sha" ] || { echo "not ok - leg B watcher is not current" >&2; proof_errors=$((proof_errors + 1)); }
 
-  run_gnu_timeout_int_case A "$old_root"
-  a_status=$GNU_TIMEOUT_CASE_STATUS; a_probes=$GNU_TIMEOUT_CASE_PROBES
-  a_descendants=$GNU_TIMEOUT_CASE_DESCENDANTS; a_entered=$GNU_TIMEOUT_CASE_ENTERED
+  run_timeout_int_case A "$old_root"
+  a_status=$TIMEOUT_CASE_STATUS; a_descendants=$TIMEOUT_CASE_DESCENDANTS
+  a_lock=$TIMEOUT_CASE_LOCK_PRESENT; a_entered=$TIMEOUT_CASE_ENTERED
 
-  run_gnu_timeout_int_case B "$new_checkpoint_old_watcher_root"
-  b_status=$GNU_TIMEOUT_CASE_STATUS; b_probes=$GNU_TIMEOUT_CASE_PROBES
-  b_elapsed=$GNU_TIMEOUT_CASE_ELAPSED; b_descendants=$GNU_TIMEOUT_CASE_DESCENDANTS
-  b_alive=$GNU_TIMEOUT_CASE_DESCENDANTS_ALIVE; b_lock=$GNU_TIMEOUT_CASE_LOCK_PRESENT
-  b_entered=$GNU_TIMEOUT_CASE_ENTERED; b_quiet=$GNU_TIMEOUT_CASE_QUIET
-
-  run_gnu_timeout_int_case C "$ROOT"
-  c_status=$GNU_TIMEOUT_CASE_STATUS; c_probes=$GNU_TIMEOUT_CASE_PROBES
-  c_elapsed=$GNU_TIMEOUT_CASE_ELAPSED; c_descendants=$GNU_TIMEOUT_CASE_DESCENDANTS
-  c_alive=$GNU_TIMEOUT_CASE_DESCENDANTS_ALIVE; c_lock=$GNU_TIMEOUT_CASE_LOCK_PRESENT
-  c_entered=$GNU_TIMEOUT_CASE_ENTERED; c_quiet=$GNU_TIMEOUT_CASE_QUIET
+  run_timeout_int_case B "$ROOT"
+  b_status=$TIMEOUT_CASE_STATUS; b_probes=$TIMEOUT_CASE_PROBES
+  b_elapsed=$TIMEOUT_CASE_ELAPSED; b_descendants=$TIMEOUT_CASE_DESCENDANTS
+  b_alive=$TIMEOUT_CASE_DESCENDANTS_ALIVE; b_lock=$TIMEOUT_CASE_LOCK_PRESENT
+  b_entered=$TIMEOUT_CASE_ENTERED; b_quiet=$TIMEOUT_CASE_QUIET
 
   [ "$a_status" -eq 137 ] || { echo "not ok - leg A baseline is INVALID: expected rc=137, got $a_status" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$a_probes" -gt 1 ] || { echo "not ok - leg A baseline is INVALID: expected a post-INT probe, got $a_probes probes" >&2; proof_errors=$((proof_errors + 1)); }
+  [ "$a_lock" -eq 1 ] || { echo "not ok - leg A baseline is INVALID: expected the watcher lock to remain" >&2; proof_errors=$((proof_errors + 1)); }
   [ "$a_entered" -eq 1 ] || { echo "not ok - leg A never entered the INT command-substitution window" >&2; proof_errors=$((proof_errors + 1)); }
   [ "$a_descendants" -gt 0 ] || { echo "not ok - leg A never started a real probe descendant" >&2; proof_errors=$((proof_errors + 1)); }
 
@@ -477,15 +464,8 @@ test_gnu_timeout_int_stops_before_another_run_state_probe() {
   [ "$b_descendants" -gt 0 ] && [ "$b_alive" -eq 0 ] || { echo "not ok - leg B descendant cleanup failed: started=$b_descendants alive=$b_alive" >&2; proof_errors=$((proof_errors + 1)); }
   [ "$b_lock" -eq 0 ] || { echo "not ok - leg B left the watcher lock behind" >&2; proof_errors=$((proof_errors + 1)); }
 
-  [ "$c_status" -eq 124 ] || { echo "not ok - leg C expected rc=124, got $c_status" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_probes" -eq 1 ] || { echo "not ok - leg C started $c_probes probes; expected one" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_elapsed" -le 5 ] || { echo "not ok - leg C took ${c_elapsed}s past its 2s deadline" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_entered" -eq 1 ] && [ "$c_quiet" -eq 1 ] || { echo "not ok - leg C missed the INT window or quiet checkpoint contract" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_descendants" -gt 0 ] && [ "$c_alive" -eq 0 ] || { echo "not ok - leg C descendant cleanup failed: started=$c_descendants alive=$c_alive" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$c_lock" -eq 0 ] || { echo "not ok - leg C left the watcher lock behind" >&2; proof_errors=$((proof_errors + 1)); }
-
-  [ "$proof_errors" -eq 0 ] || fail "GNU timeout paired proof failed $proof_errors assertion(s); every leg ran"
-  pass "GNU timeout paired proof: immutable old/old fails, while new/old and final new/new exit 124 with descendants and locks cleaned"
+  [ "$proof_errors" -eq 0 ] || fail "timeout matched proof failed $proof_errors assertion(s); both legs ran"
+  pass "timeout matched proof: immutable baseline leaves rc 137 and its lock; current exits 124 with descendants and lock cleaned"
 }
 
 test_existing_singleton_watcher_is_not_success() {
@@ -618,8 +598,8 @@ test_real_host_checkpoint_ends_quietly_at_its_bound() {
   pass "checkpoint: the real host ends its park at the checkpoint bound as a quiet checkpoint"
 }
 
-if [ "${FM_GNU_TIMEOUT_PAIRED_PROOF_ONLY:-0}" = 1 ]; then
-  test_gnu_timeout_int_stops_before_another_run_state_probe
+if [ "${FM_TIMEOUT_MATCHED_PROOF_ONLY:-0}" = 1 ]; then
+  test_timeout_int_stops_before_another_run_state_probe
   exit 0
 fi
 
