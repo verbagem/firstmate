@@ -241,8 +241,11 @@ case "${1:-}" in
     # nothing captain-relevant (no durable queue rows, no open decisions, no
     # unread informational status lines). Uses the pure whole-file decisions
     # fold, not the cursor-backed incremental one, because a peek must leave
-    # every cursor untouched. Any scan failure reports "pending" so callers can
-    # only ever over-deliver, never suppress.
+    # every cursor untouched. A failed queue, decision, or status scan reports
+    # "pending" so callers can only ever over-deliver, never suppress. Record
+    # divergence instead follows the drain's own rule: a failed divergence
+    # scan presents nothing there, so it peeks quiet here rather than
+    # promising a presentation the drain will not make.
     [ "$#" -eq 1 ] || { echo "wake drain: --captain-work-pending takes no other arguments" >&2; exit 2; }
     if [ -s "$FM_WAKE_QUEUE" ]; then printf 'pending\n'; exit 0; fi
     if ! PEEK_OPEN=$(scan_open_decisions "$STATE") || [ -n "$PEEK_OPEN" ]; then
@@ -251,7 +254,8 @@ case "${1:-}" in
     if ! PEEK_UNREAD=$(scan_unread_surface_lines "$STATE") || [ -n "$PEEK_UNREAD" ]; then
       printf 'pending\n'; exit 0
     fi
-    if ! PEEK_DIVERGED=$(scan_record_divergence) || [ -n "$PEEK_DIVERGED" ]; then
+    PEEK_DIVERGED=$(scan_record_divergence) || PEEK_DIVERGED=
+    if [ -n "$PEEK_DIVERGED" ]; then
       printf 'pending\n'; exit 0
     fi
     printf 'quiet\n'

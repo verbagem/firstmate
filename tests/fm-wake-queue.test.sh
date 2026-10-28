@@ -3164,6 +3164,28 @@ EOF
     *) fail "the pending divergence was not emitted by the ordinary drain: $out" ;;
   esac
 
+  # A divergence helper that is present but fails with no output makes the
+  # ordinary drain present nothing, so the peek must agree and stay quiet.
+  local stub_root
+  stub_root="$dir/failing-divergence-root"
+  mkdir -p "$stub_root"
+  cp -R "$ROOT/bin" "$stub_root/bin"
+  printf '#!/usr/bin/env bash\nexit 3\n' > "$stub_root/bin/fm-captain-hold.sh"
+  chmod +x "$stub_root/bin/fm-captain-hold.sh"
+  snap_before=$(snapshot_state)
+  out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    "$stub_root/bin/fm-wake-drain.sh" --captain-work-pending 2>/dev/null) \
+    || fail "peek failed with a failing divergence scan"
+  [ "$out" = quiet ] || fail "a failed divergence scan must peek quiet like the drain, got: $out"
+  snap_after=$(snapshot_state)
+  [ "$snap_before" = "$snap_after" ] \
+    || fail "the failed-scan peek changed queue, cursor, or backlog state: $snap_before vs $snap_after"
+  out=$(PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    "$stub_root/bin/fm-wake-drain.sh" 2>/dev/null)
+  case "$out" in
+    *'RECORD DIVERGENCE'*) fail "a failed divergence scan unexpectedly presented divergence: $out" ;;
+  esac
+
   : > "$state/t1.status"
   printf '1700000000\t1\tsignal\tdemo\tsignal: demo\n' > "$state/.wake-queue"
   out=$(peek) || fail "peek failed with a queued row"
