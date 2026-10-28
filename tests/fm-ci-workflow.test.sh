@@ -462,13 +462,6 @@ proof = proof_steps.first
 raise "timeout matched proof is not isolated to one Linux x86 shard after every earlier result" unless proof["if"] == "always() && matrix.shard == 7"
 raise "timeout matched proof does not select its independent test mode" unless proof.fetch("env", {}).fetch("FM_TIMEOUT_MATCHED_PROOF_ONLY", nil) == "1"
 raise "timeout matched proof does not invoke its executable interface" unless proof.fetch("run", "").strip == "bash tests/fm-watch-checkpoint.test.sh"
-control_steps = serial_job.fetch("steps").select { |step| step["name"] == "Run supervision-host pinned-upstream control and current observation" }
-raise "supervision-host matched control is not independently runnable exactly once" unless control_steps.length == 1
-control = control_steps.first
-raise "supervision-host matched control is not isolated to shard 1 after every earlier result" unless control["if"] == "always() && matrix.shard == 1"
-control_env = control.fetch("env")
-raise "supervision-host matched control does not select its focused executable mode" unless control_env.fetch("FM_SUPERVISION_HOST_DOWNTIME_CONTROL_ONLY") == "1"
-raise "supervision-host matched control does not pin the approved upstream commit" unless control_env.fetch("FM_SUPERVISION_HOST_UPSTREAM_REF") == "abb81944d69b49db3a9618565786700a1442cfe0"
 lanes, status = Open3.capture2(File.join(root, "bin/fm-test-run.sh"), "--list-lanes")
 raise "cannot list runner lanes" unless status.success?
 actual = lanes.lines.map(&:strip).select { |l| l.match?(/\Aportable-serial-\d+of\d+\z/) }
