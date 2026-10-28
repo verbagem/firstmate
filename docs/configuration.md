@@ -1853,6 +1853,7 @@ Once opted in, the deferred network stage of `bin/fm-bootstrap.sh` checks `gh-ax
 For any whose installed version sorts strictly below the registry version it runs `npm install -g <pkg>@<version>`, pinned to the version it checked, and never downgrades a newer or pre-release install.
 It never installs a missing tool, never touches `treehouse` or `no-mistakes`, and never restarts a daemon or an active worker's tool.
 The sweep runs at most once per 24h (`state/.tool-autoupdate-checked`), only while the session still holds the fleet lock, and never in a read-only session.
+If the throttle marker cannot be recorded as a regular non-symlink file, the sweep reports `TOOL_AUTOUPDATE: could not record the 24-hour throttle marker; update check skipped` and performs no registry lookup or npm install.
 `FM_TOOL_AUTOUPDATE_TIMEOUT` (default 60 seconds) bounds it, and `FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS` (default 0) holds a release younger than that many days until a later run; non-numeric values fall back to the defaults.
 A completed update prints one `BOOTSTRAP_INFO: tool-autoupdate updated <pkg>@<version> ...` line.
 A failed install, failed registry or publish-date lookup, missing `npm`, or timeout prints an actionable `TOOL_AUTOUPDATE: ...` line.

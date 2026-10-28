@@ -77,8 +77,9 @@ When any diagnostic needs captain attention, report the plain consequence and re
   An unsafe-outbox variant requires path and file-type inspection before any retry.
 - `NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>` - secondmate convergence changed a running home's loaded instructions or inherited config, but the deterministic `fm-send.sh fm-<id>` re-read nudge failed.
   Inspect the reason, keep the pending marker under `state/.secondmate-nudge-pending/` intact, and rerun session start after the endpoint or metadata issue is fixed so bootstrap can retry the exact same marked send on the same local or remote route.
-- `TOOL_AUTOUPDATE: <diagnostic>` - the opt-in `config/tool-autoupdate` sweep (`docs/configuration.md` "Tool auto-update") could not finish for one package: a failed `npm install -g <pkg>@<version>`, a failed registry lookup, a missing `npm`, or a timed-out check.
-  This home already opted in, so no fresh consent is needed; report the plain failure and let the next 24h window retry, or investigate now if the captain needs that tool current.
+- `TOOL_AUTOUPDATE: <diagnostic>` - the opt-in `config/tool-autoupdate` sweep (`docs/configuration.md` "Tool auto-update") either could not record its 24-hour throttle marker and skipped every update check, or could not finish one package because of a failed `npm install -g <pkg>@<version>`, failed registry lookup, missing `npm`, or timed-out check.
+  For a throttle-marker refusal, fix the named home's state-directory or marker-file problem and let the next session retry; no package update was attempted and no 24-hour delay was recorded.
+  For a package failure, this home already opted in, so no fresh consent is needed; report the plain failure and let the next 24h window retry, or investigate now if the captain needs that tool current.
   A companion `BOOTSTRAP_INFO: tool-autoupdate updated ...` line needs no action.
 - `FMX: X mode on ...` / `FMX: X mode off ...` - bootstrap confirmed or removed the local Relay poll artifacts (`docs/configuration.md` "Relay (.env)"); the emitted line still carries Relay's former `X mode` wording.
   Only when a running watcher needs the cadence transition applied immediately, restart the home-scoped watcher through the emitted harness supervision protocol; bootstrap deliberately never restarts the watcher itself.

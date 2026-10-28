@@ -46,7 +46,7 @@ Pi treats an arm child whose process is already gone as an empty slot even while
 A failed follow-up never cancels continuity restoration.
 
 Pi treats a lone `check: rearm-resurface` as an extension-owned continuity handoff.
-After restoring the watcher and confirming the successor's handling state, it sends no follow-up and offers nothing to the supervision branch only when `bin/fm-wake-drain.sh --captain-work-pending` prints `quiet`: an empty durable wake queue, no open decisions, and no unread informational status lines.
+After restoring the watcher and confirming the successor's handling state, it sends no follow-up and offers nothing to the supervision branch only when `bin/fm-wake-drain.sh --captain-work-pending` prints `quiet`: an empty durable wake queue, no open decisions, no unread informational status lines, and no unresolved record divergence.
 The peek touches no cursor, and any pending result, failed peek, failed restoration, or unconfirmed handoff delivers the ordinary single wake.
 
 ### Pi session replacement
