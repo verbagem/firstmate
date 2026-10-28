@@ -1,0 +1,32 @@
+LIVE PRODUCT TRANSCRIPT
+target_commit=8a733ee54598b1b0f7d97583970ed660b8c4e3a8
+product_cli=bin/fm-wake-drain.sh --captain-work-pending
+tasks_axi=/Users/temp/.npm-global/bin/tasks-axi
+tasks_axi_version=0.2.6
+
+SCENARIO 1: genuine unresolved record divergence
+real_divergence_classifier=sample-peek-call	t1	sample-peek-call	Synthetic peek decision
+peek=pending
+state_digest_before=2752125125:62
+state_digest_after=2752125125:62
+ordinary_drain_output:
+RECORD DIVERGENCE (answered in the status log, still held in the backlog - nothing was closed automatically):
+sample-peek-call [key=sample-peek-call] reads resolved in t1's status log but is still held for the captain: Synthetic peek decision
+RECORD DIVERGENCE: reconcile each one - record the captain's own words with bin/fm-captain-hold.sh answer <task> --decision-file <path>, or re-open the status decision when that resolution was not the captain's word.
+result=PASS
+
+SCENARIO 2: empty real home
+peek=quiet
+state_digest_before=726408020:29
+state_digest_after=726408020:29
+result=PASS
+
+SCENARIO 3: divergence helper cannot execute
+fault=fm-captain-hold.sh lacks execute permission
+peek=quiet
+state_digest_before=726408020:29
+state_digest_after=726408020:29
+ordinary_drain_output=<empty>
+result=PASS
+
+ALL_SCENARIOS=PASS

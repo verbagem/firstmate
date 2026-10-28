@@ -1,0 +1,8 @@
+Reported-failure counterfactual
+fault=fm-captain-hold.sh lacks execute permission
+before_commit=f88082d43a79728cab8cf438896a8c7b7b8e5166
+before_peek=pending
+target_commit=8a733ee54598b1b0f7d97583970ed660b8c4e3a8
+target_peek=quiet
+expected_before=pending
+expected_target=quiet
