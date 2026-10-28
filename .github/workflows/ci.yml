@@ -241,13 +241,17 @@ jobs:
           # leaving a shard of the required lane unrun.
           FM_SERIAL_LANE: portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
           FM_SERIAL_SHARD: ${{ matrix.shard }}
-          FM_GNU_TIMEOUT_PAIRED_PROOF: "1"
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
           bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
+      - name: Run GNU timeout checkpoint paired proof
+        if: always() && matrix.shard == 7
+        env:
+          FM_GNU_TIMEOUT_PAIRED_PROOF_ONLY: "1"
+        run: bash tests/fm-watch-checkpoint.test.sh
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
         if: always()
         uses: actions/upload-artifact@v4

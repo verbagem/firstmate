@@ -511,15 +511,20 @@ start_shell_tree() {  # <dir> <leaf-name>
   ln -sf "$(command -v sleep)" "$dir/tree/$leaf"
   cat >"$dir/tree/wrapper" <<'SH'
 #!/usr/bin/env bash
-"$1" "$2"
-exit $?
+"$1" "$2" &
+child=$!
+printf '%s\n' "$child" >"$3"
+wait "$child"
 SH
   chmod +x "$dir/tree/wrapper"
-  bash -c '"$1" "$2" "$3" & wait' root "$dir/tree/wrapper" "$dir/tree/$leaf" "$FM_TEST_STUB_MAX_BLOCK_SECONDS" >/dev/null 2>&1 &
+  bash -c '"$1" "$2" "$3" "$4" & wait' root "$dir/tree/wrapper" "$dir/tree/$leaf" \
+    "$FM_TEST_STUB_MAX_BLOCK_SECONDS" "$dir/tree/leaf.pid" >/dev/null 2>&1 &
   TREE_ROOT=$!
   TREE_LEAF=
   while [ -z "$TREE_LEAF" ] && [ "$i" -lt 50 ]; do
-    TREE_LEAF=$(ps -axo pid=,args= | awk -v p="$dir/tree/$leaf" '$2 == p { print $1; exit }')
+    TREE_LEAF=$(cat "$dir/tree/leaf.pid" 2>/dev/null || true)
+    case "$TREE_LEAF" in ''|*[!0-9]*) TREE_LEAF= ;; esac
+    [ -z "$TREE_LEAF" ] || kill -0 "$TREE_LEAF" 2>/dev/null || TREE_LEAF=
     [ -n "$TREE_LEAF" ] || sleep 0.1
     i=$((i + 1))
   done
