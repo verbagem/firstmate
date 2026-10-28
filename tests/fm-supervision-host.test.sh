@@ -2080,10 +2080,69 @@ quiet_pass_through_successor() {  # <home>
     || fail "fixture: could not acknowledge the successor downtime"
 }
 
+downtime_resurface_observe() {  # <home>
+  local home=$1 state=$1/state label path path_kind bytes rows mtime pid alive kind host_pid arm_pid arm_count
+  printf '%s\n' '--- downtime-resurface observer ---' >&2
+  for label in park-go host-out host-rc watcher-down watcher-down-lock watch-lock last-watcher-beat wake-queue wake-queue-lock watch-cycle-log host-record host-log; do
+    case "$label" in
+      park-go) path=$home/park.go ;;
+      host-out) path=$home/host.out ;;
+      host-rc) path=$home/host.rc ;;
+      watcher-down) path=$state/.watcher-down ;;
+      watcher-down-lock) path=$state/.watcher-down.lock ;;
+      watch-lock) path=$state/.watch.lock ;;
+      last-watcher-beat) path=$state/.last-watcher-beat ;;
+      wake-queue) path=$state/.wake-queue ;;
+      wake-queue-lock) path=$state/.wake-queue.lock ;;
+      watch-cycle-log) path=$state/.watch-cycle-exits.log ;;
+      host-record) path=$state/.supervision-host ;;
+      host-log) path=$state/.supervision-host.log ;;
+    esac
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      if [ -d "$path" ]; then
+        path_kind='directory'
+        bytes='not-applicable'
+        rows='not-applicable'
+      else
+        path_kind='file'
+        bytes=$(wc -c < "$path" 2>/dev/null | tr -d ' ' || printf unreadable)
+        rows=$(wc -l < "$path" 2>/dev/null | tr -d ' ' || printf unreadable)
+      fi
+      mtime=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null || printf unknown)
+      printf 'path=%s present=1 kind=%s bytes=%s rows=%s mtime=%s\n' "$label" \
+        "$path_kind" "$bytes" "$rows" "$mtime" >&2
+    else
+      printf 'path=%s present=0\n' "$label" >&2
+    fi
+  done
+  kind=$(marker_kind "$home" 2>/dev/null || printf unreadable)
+  printf 'recovery_marker_kind=%s\n' "$kind" >&2
+  pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  alive=0
+  [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null || alive=1
+  printf 'watcher_pid=%s alive=%s\n' "${pid:-missing}" "$alive" >&2
+  host_pid=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$state/.supervision-host" 2>/dev/null || true)
+  alive=0
+  [ -z "$host_pid" ] || ! kill -0 "$host_pid" 2>/dev/null || alive=1
+  printf 'host_pid=%s alive=%s\n' "${host_pid:-missing}" "$alive" >&2
+  arm_count=0
+  while IFS= read -r arm_pid; do
+    [ "$arm_count" -lt 4 ] || break
+    alive=0
+    [ -z "$arm_pid" ] || ! kill -0 "$arm_pid" 2>/dev/null || alive=1
+    printf 'arm_index=%s pid=%s alive=%s\n' "$arm_count" "${arm_pid:-missing}" "$alive" >&2
+    arm_count=$((arm_count + 1))
+  done < <(awk -F '\t' '$1 == "arm" { print $2 }' "$state/.supervision-host" 2>/dev/null)
+  printf '%s\n' '--- end downtime-resurface observer ---' >&2
+}
+
 park_after_stop() {  # <home>
   rm -f "$1/host.rc"
   : > "$1/park.go"
-  wait_until 150 host_exited "$1" || fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"
+  if ! wait_until 150 host_exited "$1"; then
+    downtime_resurface_observe "$1"
+    fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"
+  fi
   [ "$(tail -1 "$1/host-ready-timeouts")" = 25 ] \
     || fail "fixture: the downtime-resurface park did not retain the default 25-second readiness bound"
   assert_re '^check: rearm-resurface' "$1/host.out" "fixture: the first close after the watcher stopped was not its resurface"
@@ -3392,6 +3451,11 @@ SH
   stop_home_processes "$home"
   pass "host+hook: hand-back retry submits only to the idle owning pane without replacing human input"
 }
+
+if [ "${FM_SUPERVISION_HOST_DOWNTIME_CONTROL_ONLY:-0}" = 1 ]; then
+  test_undelivered_dialog_is_fed_again_on_the_next_turn
+  exit 0
+fi
 
 test_main_only_close_after_handled_turn_restores_inherited_handling
 test_main_only_close_after_handled_turn_delivers_restore_failure

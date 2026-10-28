@@ -256,6 +256,44 @@ jobs:
           bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
+      - name: Run supervision-host pinned-upstream control and current observation
+        if: always() && matrix.shard == 1
+        env:
+          FM_SUPERVISION_HOST_DOWNTIME_CONTROL_ONLY: "1"
+          FM_SUPERVISION_HOST_UPSTREAM_REF: abb81944d69b49db3a9618565786700a1442cfe0
+        run: |
+          set -u
+          control_root="$RUNNER_TEMP/fm-supervision-host-upstream-control"
+          upstream_ref="$FM_SUPERVISION_HOST_UPSTREAM_REF"
+          resolved_upstream=$(git rev-parse "$upstream_ref^{commit}") || exit 1
+          [ "$resolved_upstream" = "$upstream_ref" ] || {
+            printf 'upstream identity mismatch: expected=%s observed=%s\n' "$upstream_ref" "$resolved_upstream" >&2
+            exit 1
+          }
+          mkdir -p "$control_root"
+          git archive "$upstream_ref" | tar -x -C "$control_root"
+          cp tests/fm-supervision-host.test.sh tests/wake-helpers.sh tests/lib.sh "$control_root/tests/"
+          printf 'matched_control upstream_commit=%s current_commit=%s\n' \
+            "$resolved_upstream" "$(git rev-parse HEAD)"
+          printf 'matched_control runner_image_os=%s runner_image_version=%s uname=%s\n' \
+            "${ImageOS:-unknown}" "${ImageVersion:-unknown}" "$(uname -srvmo)"
+          printf 'matched_control bash=%s node=%s timeout=%s\n' \
+            "${BASH_VERSION:-unknown}" "$(node --version)" "$(timeout --version | sed -n '1p')"
+          printf 'matched_control harness_sha256=%s\n' \
+            "$(sha256sum tests/fm-supervision-host.test.sh tests/wake-helpers.sh tests/lib.sh | sha256sum | awk '{ print $1 }')"
+          for source in bin/fm-supervision-host.sh bin/fm-watch-arm.sh bin/fm-watch.sh bin/fm-watch-checkpoint.sh bin/fm-wake-drain.sh bin/fm-wake-lib.sh; do
+            printf 'matched_control source=%s upstream_blob=%s current_blob=%s\n' "$source" \
+              "$(git rev-parse "$upstream_ref:$source")" "$(git hash-object "$source")"
+          done
+          set +e
+          (cd "$control_root" && bash tests/fm-supervision-host.test.sh)
+          upstream_status=$?
+          bash tests/fm-supervision-host.test.sh
+          current_status=$?
+          set -e
+          printf 'matched_control observed upstream_status=%s current_status=%s\n' \
+            "$upstream_status" "$current_status"
+          [ "$upstream_status" -eq 0 ] && [ "$current_status" -eq 0 ]
       - name: Run timeout checkpoint matched proof
         if: always() && matrix.shard == 7
         env:
