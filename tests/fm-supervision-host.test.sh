@@ -176,8 +176,6 @@ export FM_SUPERVISION_HOST_PRIMARY=claude
 export FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999
 # Keep the real engine watchdog/reaping path, but not its production grace in fixtures.
 export FM_SUPERVISION_ENGINE_GRACE=1
-# Keep real successor verification, with room for bounded retirement inside each fixture handback assertion.
-export FM_SUPERVISION_HOST_READY_TIMEOUT=5
 export FM_ARM_CONFIRM_TIMEOUT=30
 unset FM_SUPERVISION_ACTOR FM_BRANCH_REPORT_TURN FM_LEASE_HOLDER_PID PI_CODING_AGENT
 
@@ -276,6 +274,7 @@ start_host() {  # <home> [park options...]
         [ -f "$seed" ] || continue
         FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
       done
+      printf "%s\n" "${FM_SUPERVISION_HOST_READY_TIMEOUT:-25}" >> "$FM_HOME/host-ready-timeouts"
       "$0" park "$@" > "$FM_HOME/host.out" 2>&1
       printf "%s\n" "$?" > "$FM_HOME/host.rc"
     ' "$HOST" "$@" 2>> "$home/claude.err" &
@@ -2085,6 +2084,8 @@ park_after_stop() {  # <home>
   rm -f "$1/host.rc"
   : > "$1/park.go"
   wait_until 150 host_exited "$1" || fail "the watcher's downtime resurface did not reach main: $(cat "$1/host.out")"
+  [ "$(tail -1 "$1/host-ready-timeouts")" = 25 ] \
+    || fail "fixture: the downtime-resurface park did not retain the default 25-second readiness bound"
   assert_re '^check: rearm-resurface' "$1/host.out" "fixture: the first close after the watcher stopped was not its resurface"
   main_drain_and_ack "$1"
   quiet_pass_through_successor "$1"
@@ -2245,8 +2246,10 @@ test_attended_latch_keeps_closes_on_main_and_records_recovery_off_main() {
   local home handled
   home=$(make_home attended-latch attended)
   echo fail > "$home/stub-mode"
-  start_session "$home"
+  FM_SUPERVISION_HOST_READY_TIMEOUT=5 start_session "$home"
   park_again "$home"
+  [ "$(cat "$home/host-ready-timeouts")" = 5 ] \
+    || fail "fixture: attended-latch did not launch with its 5-second readiness bound"
   append_status "$home" 'first'
   wait_until 250 host_exited "$home" || fail "latch: the first engine error did not hand the wake back"
   assert_re '^supervision-host: the supervision session could not take this wake: the engine turn failed \(exit 3\); this wake is yours$' \
@@ -2556,8 +2559,10 @@ test_return_during_a_failed_turn_still_hands_its_outcomes_to_main() {
   local home
   home=$(make_home away-return-fail away)
   echo return-fail > "$home/stub-mode"
-  start_host "$home"
+  FM_SUPERVISION_HOST_READY_TIMEOUT=5 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "return-fail: the host never started a watcher cycle"
+  [ "$(cat "$home/host-ready-timeouts")" = 5 ] \
+    || fail "fixture: return-fail did not launch with its 5-second readiness bound"
   append_status "$home" 'mid-task, then a crash'
   wait_until 250 host_exited "$home" || fail "return-fail: the host did not hand the wake to main"
   expect_code 0 "$(cat "$home/host.rc")" "a failed turn's handback must exit 0 for the owner to deliver"
@@ -2934,6 +2939,7 @@ start_session() {  # <home>
             [ -f "$seed" ] || continue
             FM_ROOT_OVERRIDE="$MIRROR_ROOT" "$MIRROR_ROOT/bin/fm-host-mirror.sh" hook claude < "$seed"
           done
+          printf "%s\n" "${FM_SUPERVISION_HOST_READY_TIMEOUT:-25}" >> "$FM_HOME/host-ready-timeouts"
           "$0" park > "$FM_HOME/host.out" 2>&1
           printf "%s\n" "$?" > "$FM_HOME/host.rc"
         fi
