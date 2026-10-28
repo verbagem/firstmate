@@ -452,8 +452,16 @@ test_timeout_int_stops_before_another_run_state_probe() {
   b_alive=$TIMEOUT_CASE_DESCENDANTS_ALIVE; b_lock=$TIMEOUT_CASE_LOCK_PRESENT
   b_entered=$TIMEOUT_CASE_ENTERED; b_quiet=$TIMEOUT_CASE_QUIET
 
-  [ "$a_status" -eq 137 ] || { echo "not ok - leg A baseline is INVALID: expected rc=137, got $a_status" >&2; proof_errors=$((proof_errors + 1)); }
-  [ "$a_lock" -eq 1 ] || { echo "not ok - leg A baseline is INVALID: expected the watcher lock to remain" >&2; proof_errors=$((proof_errors + 1)); }
+  case "$timeout_impl" in
+    uutils)
+      [ "$a_status" -eq 137 ] || { echo "not ok - leg A uutils baseline is INVALID: expected rc=137, got $a_status" >&2; proof_errors=$((proof_errors + 1)); }
+      [ "$a_lock" -eq 1 ] || { echo "not ok - leg A uutils baseline is INVALID: expected the watcher lock to remain" >&2; proof_errors=$((proof_errors + 1)); }
+      ;;
+    gnu)
+      [ "$a_status" -eq 124 ] || { echo "not ok - leg A GNU baseline is INVALID: expected rc=124, got $a_status" >&2; proof_errors=$((proof_errors + 1)); }
+      [ "$a_lock" -eq 0 ] || { echo "not ok - leg A GNU baseline is INVALID: expected watcher cleanup" >&2; proof_errors=$((proof_errors + 1)); }
+      ;;
+  esac
   [ "$a_entered" -eq 1 ] || { echo "not ok - leg A never entered the INT command-substitution window" >&2; proof_errors=$((proof_errors + 1)); }
   [ "$a_descendants" -gt 0 ] || { echo "not ok - leg A never started a real probe descendant" >&2; proof_errors=$((proof_errors + 1)); }
 
@@ -465,7 +473,7 @@ test_timeout_int_stops_before_another_run_state_probe() {
   [ "$b_lock" -eq 0 ] || { echo "not ok - leg B left the watcher lock behind" >&2; proof_errors=$((proof_errors + 1)); }
 
   [ "$proof_errors" -eq 0 ] || fail "timeout matched proof failed $proof_errors assertion(s); both legs ran"
-  pass "timeout matched proof: immutable baseline leaves rc 137 and its lock; current exits 124 with descendants and lock cleaned"
+  pass "timeout matched proof: immutable baseline matches $timeout_impl timeout semantics; current exits 124 with descendants and lock cleaned"
 }
 
 test_existing_singleton_watcher_is_not_success() {
