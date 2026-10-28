@@ -2136,6 +2136,117 @@ downtime_resurface_observe() {  # <home>
   printf '%s\n' '--- end downtime-resurface observer ---' >&2
 }
 
+return_fail_observe() {  # <home> <wait-start-epoch> <wait-status>
+  local home=$1 started=$2 wait_status=$3 state=$1/state now elapsed stage
+  local label path present rows host_pid watcher_pid engine_pid arm_pid arm_count=0
+  local pid pgid process_state alive zombie engine_status host_status stage_epoch stage_elapsed
+  now=$(date +%s)
+  elapsed=$((now - started))
+  engine_status=$(awk -F '\t' '$2 == "failed" {
+    for (i = 3; i <= NF; i++) if ($i ~ /^rc=/) { sub(/^rc=/, "", $i); rc = $i }
+  } END { print rc }' "$state/.supervision-host.log" 2>/dev/null)
+  stage_epoch=$(awk -F '\t' '$2 == "to-main" { at = $1 } END { print at }' \
+    "$state/.supervision-host.log" 2>/dev/null)
+  if [ -n "$stage_epoch" ]; then
+    stage='child-reap'
+  elif grep -q $'\tfailed\t' "$state/.supervision-host.log" 2>/dev/null; then
+    stage='handback-publication'
+    while IFS= read -r arm_pid; do
+      if kill -0 "$arm_pid" 2>/dev/null; then
+        stage='retirement'
+        break
+      fi
+    done < <(awk -F '\t' '$1 == "arm" { print $2 }' "$state/.supervision-host" 2>/dev/null)
+  elif [ -e "$state/.supervision-host.engine-pid" ] || [ -e "$state/.supervision-host-turn" ]; then
+    stage='engine-return'
+  else
+    stage='successor-readiness'
+  fi
+  printf '%s\n' '--- return-fail observer ---' >&2
+  printf 'stage=%s wait_status=%s wait_started=%s observed=%s elapsed_seconds=%s\n' \
+    "$stage" "$wait_status" "$started" "$now" "$elapsed" >&2
+  host_status=$(sed -n '1p' "$home/host.rc" 2>/dev/null || true)
+  printf 'original_engine_exit_status=%s host_exit_status=%s\n' \
+    "${engine_status:-not-recorded}" "${host_status:-not-recorded}" >&2
+  for label in successor-ready engine-return handback-publication; do
+    stage_epoch=
+    case "$label" in
+      successor-ready)
+        path=$(find "$home" -maxdepth 1 -name 'engine-call.*' -print 2>/dev/null | head -n 1)
+        [ -z "$path" ] || stage_epoch=$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null || true)
+        ;;
+      engine-return)
+        stage_epoch=$(awk -F '\t' '$2 == "failed" { at = $1 } END { print at }' \
+          "$state/.supervision-host.log" 2>/dev/null)
+        ;;
+      handback-publication)
+        stage_epoch=$(awk -F '\t' '$2 == "to-main" { at = $1 } END { print at }' \
+          "$state/.supervision-host.log" 2>/dev/null)
+        ;;
+    esac
+    if [ -n "$stage_epoch" ]; then
+      stage_elapsed=$((stage_epoch - started))
+      printf 'stage_marker=%s present=1 epoch=%s elapsed_seconds=%s\n' \
+        "$label" "$stage_epoch" "$stage_elapsed" >&2
+    else
+      printf 'stage_marker=%s present=0\n' "$label" >&2
+    fi
+  done
+  for label in watcher-down successor-left handoff-pending branch-claim-owner branch-claim-rows turn-receipts outcome-store; do
+    case "$label" in
+      watcher-down) path=$state/.watcher-down ;;
+      successor-left) path=$state/.supervision-host-left ;;
+      handoff-pending) path=$state/.supervision-handoff-pending ;;
+      branch-claim-owner) path=$state/.branch-eligible-owner ;;
+      branch-claim-rows) path=$state/.branch-eligible-rows ;;
+      turn-receipts) path=$state/.supervision-host-receipts ;;
+      outcome-store) path=$state/branch-outcomes.jsonl ;;
+    esac
+    present=0
+    rows=0
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      present=1
+      [ -f "$path" ] && rows=$(wc -l < "$path" 2>/dev/null | tr -d ' ' || printf unreadable)
+    fi
+    printf 'marker=%s present=%s rows=%s\n' "$label" "$present" "$rows" >&2
+  done
+  rows=$(wc -l < "$state/.wake-queue" 2>/dev/null | tr -d ' ' || printf 0)
+  printf 'wake_queue_rows=%s\n' "$rows" >&2
+  awk -F '\t' 'NF >= 3 { printf "wake_queue_row=%d kind=%s sequence=%s\n", ++row, $3, $2 }' \
+    "$state/.wake-queue" 2>/dev/null >&2
+  host_pid=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$state/.supervision-host" 2>/dev/null || true)
+  watcher_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+  engine_pid=$(cut -f1 "$state/.supervision-host.engine-pid" 2>/dev/null || true)
+  for label in host watcher engine; do
+    case "$label" in host) pid=$host_pid ;; watcher) pid=$watcher_pid ;; engine) pid=$engine_pid ;; esac
+    pgid=missing
+    process_state=missing
+    if [ -n "$pid" ]; then
+      read -r pgid process_state < <(ps -o pgid= -o stat= -p "$pid" 2>/dev/null || true)
+    fi
+    alive=0
+    [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null || alive=1
+    zombie=0
+    case "${process_state:-}" in *Z*) zombie=1 ;; esac
+    printf 'process=%s pid=%s pgid=%s state=%s alive=%s zombie=%s\n' \
+      "$label" "${pid:-missing}" "${pgid:-missing}" "${process_state:-missing}" "$alive" "$zombie" >&2
+  done
+  while IFS= read -r arm_pid; do
+    [ "$arm_count" -lt 4 ] || break
+    pgid=missing
+    process_state=missing
+    read -r pgid process_state < <(ps -o pgid= -o stat= -p "$arm_pid" 2>/dev/null || true)
+    alive=0
+    ! kill -0 "$arm_pid" 2>/dev/null || alive=1
+    zombie=0
+    case "${process_state:-}" in *Z*) zombie=1 ;; esac
+    printf 'process=arm index=%s pid=%s pgid=%s state=%s alive=%s zombie=%s\n' \
+      "$arm_count" "$arm_pid" "${pgid:-missing}" "${process_state:-missing}" "$alive" "$zombie" >&2
+    arm_count=$((arm_count + 1))
+  done < <(awk -F '\t' '$1 == "arm" { print $2 }' "$state/.supervision-host" 2>/dev/null)
+  printf '%s\n' '--- end return-fail observer ---' >&2
+}
+
 park_after_stop() {  # <home>
   rm -f "$1/host.rc"
   : > "$1/park.go"
@@ -2615,15 +2726,21 @@ test_report_without_acknowledgement_hands_the_wake_to_main() {
 }
 
 test_return_during_a_failed_turn_still_hands_its_outcomes_to_main() {
-  local home
+  local home wait_started wait_status
   home=$(make_home away-return-fail away)
   echo return-fail > "$home/stub-mode"
   FM_SUPERVISION_HOST_READY_TIMEOUT=5 start_host "$home"
   wait_until 150 watcher_live "$home" || fail "return-fail: the host never started a watcher cycle"
   [ "$(cat "$home/host-ready-timeouts")" = 5 ] \
     || fail "fixture: return-fail did not launch with its 5-second readiness bound"
+  wait_started=$(date +%s)
   append_status "$home" 'mid-task, then a crash'
-  wait_until 250 host_exited "$home" || fail "return-fail: the host did not hand the wake to main"
+  wait_status=0
+  wait_until 250 host_exited "$home" || wait_status=$?
+  if [ "$wait_status" -ne 0 ]; then
+    return_fail_observe "$home" "$wait_started" "$wait_status"
+    fail "return-fail: the host did not hand the wake to main"
+  fi
   expect_code 0 "$(cat "$home/host.rc")" "a failed turn's handback must exit 0 for the owner to deliver"
   assert_absent "$home/state/.afk-contract" "fixture: the stub's return did not archive the record"
   assert_re '^supervision-host: the away session could not take this wake: the engine turn failed \(exit 3\); .*captain returned during its turn.*store rows 1[,)]' "$home/host.out" \
