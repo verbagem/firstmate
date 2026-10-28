@@ -296,15 +296,9 @@ SH
   pass "checkpoint owns and cleans a blocked run-state probe process group"
 }
 
-test_gnu_timeout_int_stops_before_another_run_state_probe() {
-  local home state fakebin window task capture status started ended elapsed probes real_tr timeout_kind
-  timeout_kind=perl-fallback
-  if command -v timeout >/dev/null 2>&1 \
-    && timeout --version 2>/dev/null | head -n 1 | grep -qi coreutils; then
-    timeout_kind=gnu-coreutils
-  fi
-
-  home=$(make_case gnu-timeout-int)
+run_gnu_timeout_int_case() {  # <name> <checkpoint>
+  local name=$1 checkpoint=$2 home state fakebin window task capture started ended real_tr
+  home=$(make_case "$name")
   state="$home/state"
   fakebin="$home/fakebin"
   mkdir -p "$home/data" "$home/config"
@@ -331,7 +325,7 @@ exec "$FM_REAL_TR" "$@"
 SH
   chmod +x "$fakebin/tr"
 
-  status=0
+  GNU_TIMEOUT_CASE_STATUS=0
   started=$(date +%s)
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
     FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -341,24 +335,63 @@ SH
     FM_REAL_TR="$real_tr" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
     FM_STALE_ESCALATE_SECS=240 FM_PAUSE_RESURFACE_SECS=240 \
     FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
-    "$CHECKPOINT" --seconds 2 > "$home/out.txt" 2> "$home/err.txt" || status=$?
+    "$checkpoint" --seconds 2 > "$home/out.txt" 2> "$home/err.txt" || GNU_TIMEOUT_CASE_STATUS=$?
   ended=$(date +%s)
-  elapsed=$((ended - started))
+  GNU_TIMEOUT_CASE_ELAPSED=$((ended - started))
+  GNU_TIMEOUT_CASE_HOME=$home
+  GNU_TIMEOUT_CASE_PROBES=$(awk 'END { print NR + 0 }' "$home/crew-state.log" 2>/dev/null)
+}
 
-  expect_code 124 "$status" "GNU timeout INT checkpoint: $(cat "$home/out.txt" "$home/err.txt")"
-  assert_contains "$(cat "$home/out.txt")" "checkpoint: no actionable wake within 2s" \
+test_gnu_timeout_int_stops_before_another_run_state_probe() {
+  local old_root old_checkpoint old_status old_probes old_home
+  [ "${FM_GNU_TIMEOUT_PAIRED_PROOF:-0}" = 1 ] || return 0
+  command -v timeout >/dev/null 2>&1 \
+    || fail "GNU timeout paired proof requires timeout on PATH"
+  timeout --version 2>/dev/null | head -n 1 | grep -qi coreutils \
+    || fail "GNU timeout paired proof requires the coreutils implementation"
+
+  old_root="$TMP_ROOT/gnu-timeout-old-root"
+  mkdir -p "$old_root"
+  cp -R "$ROOT/bin" "$old_root/bin"
+  git -C "$ROOT" show fd09a28216ddd5b00d8e1953a3b87134c20d1d00:bin/fm-watch.sh \
+    > "$old_root/bin/fm-watch.sh" \
+    || fail "could not materialize fd09a282 fm-watch.sh for the paired proof"
+  chmod +x "$old_root/bin/fm-watch.sh"
+  old_checkpoint="$old_root/bin/fm-watch-checkpoint.sh"
+
+  run_gnu_timeout_int_case gnu-timeout-int-old "$old_checkpoint"
+  old_status=$GNU_TIMEOUT_CASE_STATUS
+  old_probes=$GNU_TIMEOUT_CASE_PROBES
+  old_home=$GNU_TIMEOUT_CASE_HOME
+  [ -e "$old_home/int-window-entered" ] \
+    || fail "fd09a282 never entered the run-state marker command substitution"
+  [ -n "$old_probes" ] \
+    || fail "fd09a282 paired leg never started its initial crew-state group"
+  [ "$old_status" -eq 137 ] \
+    || fail "fd09a282 paired leg did not reproduce the GNU timeout kill: expected 137, got $old_status"
+  [ "$old_probes" -gt 1 ] \
+    || fail "fd09a282 paired leg did not start a post-INT crew-state group: probes=$old_probes"
+  printf '# GNU timeout paired fd09a282 status=%s probes=%s\n' "$old_status" "$old_probes"
+
+  run_gnu_timeout_int_case gnu-timeout-int-current "$CHECKPOINT"
+
+  expect_code 124 "$GNU_TIMEOUT_CASE_STATUS" \
+    "corrected GNU timeout INT checkpoint: $(cat "$GNU_TIMEOUT_CASE_HOME/out.txt" "$GNU_TIMEOUT_CASE_HOME/err.txt")"
+  assert_contains "$(cat "$GNU_TIMEOUT_CASE_HOME/out.txt")" "checkpoint: no actionable wake within 2s" \
     "GNU timeout INT did not return the quiet checkpoint contract"
-  [ -e "$home/int-window-entered" ] \
+  [ -e "$GNU_TIMEOUT_CASE_HOME/int-window-entered" ] \
     || fail "GNU timeout regression never entered the run-state marker command substitution"
-  [ -s "$home/crew-state.log" ] \
+  [ -s "$GNU_TIMEOUT_CASE_HOME/crew-state.log" ] \
     || fail "GNU timeout regression never started its initial crew-state group"
-  probes=$(awk 'END { print NR + 0 }' "$home/crew-state.log")
-  [ "$probes" -eq 1 ] \
-    || fail "the watcher started $probes crew-state groups; expected none after GNU timeout sent INT"
-  [ "$elapsed" -le 5 ] \
-    || fail "the quiet checkpoint took ${elapsed}s after a 2s timeout deadline"
-  assert_absent "$state/.watch.lock/pid" "watch lock pid survived GNU timeout INT cleanup"
-  pass "$timeout_kind checkpoint INT exits through cleanup before another run-state probe starts"
+  [ "$GNU_TIMEOUT_CASE_PROBES" -eq 1 ] \
+    || fail "the corrected watcher started $GNU_TIMEOUT_CASE_PROBES crew-state groups; expected none after GNU timeout sent INT"
+  [ "$GNU_TIMEOUT_CASE_ELAPSED" -le 5 ] \
+    || fail "the corrected quiet checkpoint took ${GNU_TIMEOUT_CASE_ELAPSED}s after a 2s timeout deadline"
+  assert_absent "$GNU_TIMEOUT_CASE_HOME/state/.watch.lock/pid" \
+    "watch lock pid survived corrected GNU timeout INT cleanup"
+  printf '# GNU timeout paired corrected status=%s probes=%s elapsed_seconds=%s\n' \
+    "$GNU_TIMEOUT_CASE_STATUS" "$GNU_TIMEOUT_CASE_PROBES" "$GNU_TIMEOUT_CASE_ELAPSED"
+  pass "GNU timeout paired proof: fd09a282 fails and the corrected watcher exits through cleanup before another run-state probe starts"
 }
 
 test_existing_singleton_watcher_is_not_success() {
@@ -491,6 +524,7 @@ test_real_host_checkpoint_ends_quietly_at_its_bound() {
   pass "checkpoint: the real host ends its park at the checkpoint bound as a quiet checkpoint"
 }
 
+test_gnu_timeout_int_stops_before_another_run_state_probe
 test_quiet_checkpoint_exits_124_cleanly
 test_perl_timeout_fallback_honors_cleanup_bound_before_escalating
 test_announced_recovery_is_not_reannounced_by_next_checkpoint
@@ -499,7 +533,6 @@ test_queue_append_during_checkpoint_still_resurfaces
 test_signal_passes_through_and_exits_zero
 test_registered_check_uses_preserved_watcher_environment
 test_checkpoint_owns_a_blocked_run_state_probe_group
-test_gnu_timeout_int_stops_before_another_run_state_probe
 test_existing_singleton_watcher_is_not_success
 test_host_checkpoint_bounds_the_park_by_posture
 test_host_checkpoint_passes_a_handback_and_reports_a_stand_down

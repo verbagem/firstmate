@@ -241,6 +241,7 @@ jobs:
           # leaving a shard of the required lane unrun.
           FM_SERIAL_LANE: portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
           FM_SERIAL_SHARD: ${{ matrix.shard }}
+          FM_GNU_TIMEOUT_PAIRED_PROOF: "1"
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"

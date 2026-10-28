@@ -413,11 +413,14 @@ test_ci_matrices_match_executable_partitions() {
   ruby -ryaml -ropen3 - "$CI_WORKFLOW" "$ROOT" <<'RUBY' || fail "CI partition contract"
 jobs = YAML.load_file(ARGV[0]).fetch("jobs")
 root = ARGV[1]
-serial = jobs.fetch("tests-portable-serial").fetch("strategy")
+serial_job = jobs.fetch("tests-portable-serial")
+serial = serial_job.fetch("strategy")
 raise "serial failures must not cancel other shards" unless serial.fetch("fail-fast") == false
 matrix = serial.fetch("matrix")
 raise "unexpected serial dimensions" unless matrix.keys == ["shard"]
 shards = matrix.fetch("shard")
+serial_run = serial_job.fetch("steps").find { |step| step["name"] == "Run portable serial shard ${{ matrix.shard }}" }
+raise "portable serial does not require the GNU timeout paired proof" unless serial_run&.fetch("env", {})&.fetch("FM_GNU_TIMEOUT_PAIRED_PROOF", nil) == "1"
 lanes, status = Open3.capture2(File.join(root, "bin/fm-test-run.sh"), "--list-lanes")
 raise "cannot list runner lanes" unless status.success?
 actual = lanes.lines.map(&:strip).select { |l| l.match?(/\Aportable-serial-\d+of\d+\z/) }

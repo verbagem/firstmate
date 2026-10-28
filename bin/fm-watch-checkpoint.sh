@@ -124,14 +124,25 @@ run_bounded() {  # <seconds> <signal> <kill-after-seconds> <command...>
     [ "$cleanup_lock_bound" -gt "$kill_after" ] || cleanup_lock_bound=$kill_after
     kill_after=$cleanup_lock_bound
   fi
+  # INT is handled by the watcher itself so its EXIT trap can stop only the
+  # process groups it recorded. Keep GNU timeout outside that signal group;
+  # TERM-bounded supervision-host calls retain their existing group behavior.
   if command -v timeout >/dev/null 2>&1; then
-    if [ "$kill_after" -gt 0 ]; then
+    if [ "$signal" = INT ] && [ "$kill_after" -gt 0 ]; then
+      timeout --foreground --signal="$signal" --kill-after="${kill_after}s" "$seconds" "$@"
+    elif [ "$signal" = INT ]; then
+      timeout --foreground --signal="$signal" "$seconds" "$@"
+    elif [ "$kill_after" -gt 0 ]; then
       timeout --signal="$signal" --kill-after="${kill_after}s" "$seconds" "$@"
     else
       timeout --signal="$signal" "$seconds" "$@"
     fi
   elif command -v gtimeout >/dev/null 2>&1; then
-    if [ "$kill_after" -gt 0 ]; then
+    if [ "$signal" = INT ] && [ "$kill_after" -gt 0 ]; then
+      gtimeout --foreground --signal="$signal" --kill-after="${kill_after}s" "$seconds" "$@"
+    elif [ "$signal" = INT ]; then
+      gtimeout --foreground --signal="$signal" "$seconds" "$@"
+    elif [ "$kill_after" -gt 0 ]; then
       gtimeout --signal="$signal" --kill-after="${kill_after}s" "$seconds" "$@"
     else
       gtimeout --signal="$signal" "$seconds" "$@"
