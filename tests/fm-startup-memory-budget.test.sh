@@ -16,7 +16,8 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" node chrome-devtools-axi
-  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
+  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.80
+  fm_fake_version_tool "$fakebin" backpass FM_FAKE_BACKPASS_VERSION 0.1.16
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
@@ -27,7 +28,7 @@ SH
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'quota-axi 0.1.29 (fake)'
+  printf '%s\n' 'quota-axi 0.1.51 (fake)'
 fi
 exit 0
 SH
@@ -37,6 +38,7 @@ exit 0
 SH
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
   printf '%s\n' 'Usage: treehouse get [--lease]'
 fi
@@ -50,16 +52,10 @@ if [ "${1:-}" = --version ]; then
   printf '%s\n' 'no-mistakes version v1.60.2 (fake)'
 fi
 SH
-  cat > "$fakebin/backpass" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --version ]; then
-  printf '%s\n' '0.1.16'
-fi
-SH
   cat > "$fakebin/tasks-axi" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}:${2:-}" in
-  --version:*) printf '%s\n' '0.2.4' ;;
+  --version:*) printf '%s\n' '0.2.6' ;;
   update:--help) printf '%s\n' '--archive-body' ;;
   mv:--help) printf '%s\n' 'usage: tasks-axi mv <id> [<id>...]' ;;
 esac
@@ -71,6 +67,7 @@ case "$*" in
   *display-message*'#{pane_current_command}'*) printf '%s\n' codex ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1' ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0 ;;
+  *list-windows*) printf '%s\n' fm-sm ;;
   *capture-pane*) printf '❯\n' ;;
 esac
 exit 0
@@ -288,7 +285,7 @@ test_primary_budget_converges_with_exact_reread_and_safe_failures() {
     "budget propagation did not enqueue the pointer to its exact reread generation"
   assert_contains "$(<"$log")" "Firstmate instruction waiting: list " \
     "budget propagation did not ring the durable inbox doorbell"
-  assert_contains "$(<"$log")" "/state/sm.inbox/*.msg" \
+  assert_contains "$(<"$log")" "'sm.inbox' steering inbox" \
     "budget propagation doorbell did not identify the durable inbox"
 
   outside="$world/unsafe-budget"

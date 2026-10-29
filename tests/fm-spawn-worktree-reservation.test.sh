@@ -87,8 +87,18 @@ case "$*" in
 esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows|has-session|new-session|set-window-option|kill-window) exit 0 ;;
+  has-session|new-session|set-window-option) exit 0 ;;
+  # Track the one task window so spawn's endpoint-existence checks see it.
+  list-windows) cat "$(dirname "$0")/.spawn-window" 2>/dev/null; exit 0 ;;
+  kill-window) : > "$(dirname "$0")/.spawn-window"; exit 0 ;;
   new-window)
+    name=
+    previous=
+    for arg in "$@"; do
+      [ "$previous" = -n ] && name=$arg
+      previous=$arg
+    done
+    printf '%s\n' "$name" > "$(dirname "$0")/.spawn-window"
     printf '%s\n' '@reservation-window'
     exit 0
     ;;
@@ -129,6 +139,8 @@ make_case() {  # <name> <slot-count>
   origin="$case_dir/origin.git"
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
   printf 'codex\n' > "$home/config/crew-harness"
+  # No backlog item: the manual backend keeps spawn off the tasks-axi gate.
+  printf 'manual\n' > "$home/config/backlog-backend"
   touch "$home/state/.last-watcher-beat"
   fm_git_init_commit "$project"
   fm_git_add_origin "$project" "$origin"
@@ -162,7 +174,8 @@ write_brief() {  # <task-id>
   local id=$1
   mkdir -p "$HOME_DIR/data/$id"
   {
-    printf '# Task\n\n'
+    printf "# Task\n## Captain's intent\nbrief for %s\n\n" "$id"
+    printf '## Firstmate spec\nExercise the reservation behavior under test.\n\n'
     printf 'Delivery contract: mode=no-mistakes\n'
   } > "$HOME_DIR/data/$id/brief.md"
 }
@@ -394,6 +407,34 @@ test_lost_recorded_lease_refuses_without_leasing_again() {
   pass "a lost recorded lease refuses without an orphan lease and recovers by dropping the stale lease lines"
 }
 
+
+# A t3code record already holds its own `treehouse get --lease --lease-holder <id>`
+# reservation under the bare task id, so reconciliation skips it instead of
+# refusing every later fresh spawn in the project over the holder spelling.
+test_t3code_record_keeps_its_own_lease() {
+  local rec old_id new_id old_slot out status
+  old_id=t3-thread-task
+  new_id=after-t3-scout
+  rec=$(make_case t3code-skip 2)
+  read_case "$rec"
+  old_slot="$CASE_DIR/slot-1"
+  write_preserved_meta "$old_id" "$old_slot"
+  printf 'backend=t3code\n' >> "$HOME_DIR/state/$old_id.meta"
+  jq --arg path "$old_slot" --arg holder "$old_id" '
+    map(if .path == $path then .status = "leased" | .lease_id = "t3-lease" | .lease_holder = $holder else . end)
+  ' "$TREEHOUSE_STATE" > "$TREEHOUSE_STATE.tmp" && mv "$TREEHOUSE_STATE.tmp" "$TREEHOUSE_STATE"
+  write_brief "$new_id"
+
+  out=$(run_spawn "$new_id" --scout)
+  status=$?
+  expect_code 0 "$status" "a t3code record's own lease must not block a fresh spawn: $out"
+  [ "$(jq -r --arg path "$old_slot" '.[] | select(.path == $path) | .lease_holder' "$TREEHOUSE_STATE")" = "$old_id" ] \
+    || fail "reconciliation rewrote the t3code record's own lease"
+  assert_not_contains "$(cat "$HOME_DIR/state/$old_id.meta")" "treehouse_lease_holder=" \
+    "reconciliation recorded a firstmate lease on the t3code record"
+  pass "a t3code record keeps its own get --lease reservation and does not block a fresh spawn"
+}
+
 test_preserved_ship_is_leased_before_scout_allocation
 test_genuinely_free_slot_still_allocates
 test_duplicate_preserved_owners_refuse_before_reset
@@ -401,5 +442,6 @@ test_record_under_lifecycle_action_refuses_before_reset
 test_abort_after_fresh_lease_reports_unowned_lease
 test_abort_release_command_names_treehouse_listed_path_under_symlinked_root
 test_lost_recorded_lease_refuses_without_leasing_again
+test_t3code_record_keeps_its_own_lease
 
 echo "# all fm-spawn worktree reservation tests passed"

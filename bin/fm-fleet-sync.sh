@@ -12,7 +12,9 @@
 # ... - needs attention" warning rather than a quiet drift. Nothing is ever forced,
 # stashed, or discarded.
 # Still skips (benignly) local-only/no-origin projects, missing remotes/branches,
-# and fetch failures.
+# and fetch failures. A project whose registry entry bin/fm-project-mode.sh
+# refuses is skipped too, naming that command so its refusal is readable, rather
+# than synced under a guessed posture.
 # A candidate under projects/ must be the root of its own work tree: git discovery
 # walks up, so a plain nested directory would otherwise resolve to the enclosing
 # repository (the firstmate checkout) and be synced under that directory's label.
@@ -300,7 +302,6 @@ report_stuck() {
 sync_project() {
   PROJ=$1
   label=$(project_label)
-  mode_err=
 
   if [ ! -d "$PROJ" ]; then
     echo "$label: skipped: not a directory"
@@ -318,34 +319,29 @@ sync_project() {
     echo "$label: skipped: not a git repo"
     return 0
   fi
-  # Both sides are physical paths (git resolves --show-toplevel through symlinks),
-  # so a symlinked clone dir still compares equal to its own root.
+  # Compare filesystem identity, not spelling: the question is whether git's root
+  # and $PROJ are the same directory, and a string compare of the two paths also
+  # fails when they merely differ in case (case-insensitive volume) or in how a
+  # symlink is spelled.
   proj_abs=$(cd "$PROJ" && pwd -P) || proj_abs=""
-  if [ "$proj_top" != "$proj_abs" ]; then
+  if [ -z "$proj_abs" ] || ! [ "$proj_top" -ef "$proj_abs" ]; then
     echo "$label: skipped: not a clone root (git would act on $proj_top)"
     return 0
   fi
-  mode_err=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync-mode.XXXXXX") || {
-    echo "$label: skipped: could not create mode lookup temp file"
-    return 0
-  }
-  if mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" --with-name --path "$PROJ" 2>"$mode_err"); then
-    IFS=' ' read -r mode_name mode _ <<EOF
-$mode_line
-EOF
-    if ! grep -q -e 'no project registered for path' -e 'no registry at' "$mode_err"; then
-      label=$mode_name
-    fi
-  else
-    reason="registered mode lookup failed"
-    if [ -s "$mode_err" ]; then
-      reason="$reason: $(first_line "$(cat "$mode_err")")"
-    fi
-    rm -f "$mode_err"
-    echo "$label: skipped: $reason"
+  mode_err=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync-mode.XXXXXX") || mode_err=/dev/null
+  if ! mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" --raw --with-name --path "$proj_abs" 2>"$mode_err"); then
+    [ "$mode_err" = /dev/null ] || rm -f "$mode_err"
+    echo "$label: skipped: registry entry does not resolve to a delivery posture (run bin/fm-project-mode.sh --path $proj_abs for the refusal)"
     return 0
   fi
-  rm -f "$mode_err"
+  # "<name> <mode> <yolo>": the registry name may contain spaces, so peel the last two words.
+  mode_rest=${mode_line% *}
+  mode=${mode_rest##* }
+  # A registered project reports under its registry name; an unregistered path keeps its full label.
+  if ! grep -q -e 'no project registered for path' -e 'no registry at' "$mode_err" 2>/dev/null; then
+    label=${mode_rest% *}
+  fi
+  [ "$mode_err" = /dev/null ] || rm -f "$mode_err"
   if [ "$mode" = "local-only" ]; then
     echo "$label: skipped: local-only project"
     return 0

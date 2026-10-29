@@ -1,7 +1,7 @@
 ---
 name: exceptional-worker-graph
 description: >-
-  Agent-only contract for rare, high-complexity work that needs a specialist planner or adjudicator before Firstmate dispatches a bounded worker graph.
+  Load before requesting or acting on a specialist planner/adjudicator graph for exceptional complex work, including any Fable 5.1 use; routine work and primary Pi supervision stay on existing dispatch paths.
 user-invocable: false
 metadata:
   internal: true

@@ -1,12 +1,21 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   classifyFirstmateCurrentOperationalText,
   encodeFirstmateOperationalInput,
+  firstmateShellInvocation,
 } from "./lib/fm-operational-input.ts";
 
 let guardFollowupActive = false;
@@ -36,6 +45,16 @@ function pidAlive(pid: string): boolean {
   }
 }
 
+// The session lock names a local pid or, on Windows, a tagged `win:<pid>`
+// (fm_session_pid_valid in bin/fm-session-lock-lib.sh owns that shape). Native
+// Node on Windows sees Windows pids directly, so a tagged holder is compared
+// and probed by its digits. Any other value is no usable identity, "".
+function lockHolderPid(lockPid: string): string {
+  const tagged = process.platform === "win32" ? /^win:([0-9]+)$/.exec(lockPid) : null;
+  const pid = tagged ? tagged[1] : lockPid;
+  return /^[0-9]+$/.test(pid) && pid !== "1" ? pid : "";
+}
+
 function lockOwnership(): LockOwnership {
   let lockPid = "";
   try {
@@ -43,18 +62,44 @@ function lockOwnership(): LockOwnership {
   } catch {
     return "missing";
   }
-  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1") return "other";
+  const holderPid = lockHolderPid(lockPid);
+  if (!holderPid) return "other";
   let pid = String(process.pid);
   for (let i = 0; i < 8; i += 1) {
-    if (pid === lockPid) return "owned";
+    if (pid === holderPid) return "owned";
     pid = parentPid(pid);
     if (!pid || pid === "1") break;
   }
-  return pidAlive(lockPid) ? "other" : "missing";
+  return pidAlive(holderPid) ? "other" : "missing";
+}
+
+// A Pi command started from inside the live session, such as the `pi --help`
+// capability probe in bin/fm-spawn.sh, auto-loads this extension too and passes
+// lockOwnership() through the same ancestor walk. Its pid dies at once, so the
+// marker must keep naming the live session above it (#5202). Pid equality with
+// the lock is not required because a wrapper such as pi-signed may hold the lock
+// while the extension host runs as its child.
+function markerNamesLiveAncestor(): boolean {
+  let markerPid = "";
+  try {
+    markerPid = readFileSync(marker, "utf8").split(/\r?\n/)[1] ?? "";
+  } catch {
+    return false;
+  }
+  if (!/^[0-9]+$/.test(markerPid) || markerPid === String(process.pid) || !pidAlive(markerPid)) {
+    return false;
+  }
+  let pid = String(process.pid);
+  for (let i = 0; i < 8; i += 1) {
+    pid = parentPid(pid);
+    if (!pid || pid === "1") return false;
+    if (pid === markerPid) return true;
+  }
+  return false;
 }
 
 function markLoaded(): void {
-  if (!existsSync(state) || lockOwnership() === "other") return;
+  if (!existsSync(state) || lockOwnership() === "other" || markerNamesLiveAncestor()) return;
   writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
 }
 
@@ -99,10 +144,6 @@ function startupRebuildSource(ctx: SessionStartContext): "resume" | "fork" | und
 const sessionstartTruncatedMarker =
   "\n\nPI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB. " +
   "Treat omitted context as unread and inspect the named files directly before acting on it.";
-const sessionstartManualFallback =
-  "Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.";
-const sessionstartIneligibleExit = 3;
-const sessionstartRetireTimeoutMs = 1000;
 
 // Private digest slot, one per Pi process: session-start/compact overwrites
 // this process's own file every time, and the pid qualifier keeps two Pi
@@ -130,6 +171,48 @@ function sweepDeadSessionstartDigests(): void {
   } catch {
   }
 }
+
+// An unencoded digest is the full session-start payload - up to hundreds of
+// KiB - and must not be inlined into a Pi message (docs/sessionstart-nudge.md
+// "Digest delivery is a pointer, not inline content"). It goes to this
+// process's private slot and only a short pointer travels in the message.
+function sessionstartDigestPointer(raw: string): string {
+  let writeError: unknown;
+  let temporary = "";
+  sweepDeadSessionstartDigests();
+  try {
+    temporary = `${sessionstartDigestFile}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, raw, { flag: "wx", mode: 0o600 });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, sessionstartDigestFile);
+    temporary = "";
+  } catch (error) {
+    writeError = error ?? new Error("unknown error");
+    if (temporary) {
+      try {
+        unlinkSync(temporary);
+      } catch {
+      }
+    }
+  }
+  const truncationNotice = raw.endsWith(sessionstartTruncatedMarker)
+    ? " PI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB, so treat omitted " +
+      "context as unread and inspect the named files directly."
+    : "";
+  return writeError === undefined
+    ? `Session-start digest written to ${sessionstartDigestFile} ` +
+      `(${Buffer.byteLength(raw, "utf8")} bytes). ` +
+      "Read that file now, in full, before executing any other instructions." +
+      truncationNotice
+    : `Session-start digest could not be written to ${sessionstartDigestFile} ` +
+      `(${writeError instanceof Error ? writeError.message : String(writeError)}). ` +
+      "Run bin/fm-session-start.sh now and read its full output before executing any " +
+      "other instructions." + truncationNotice;
+}
+const sessionstartManualFallback =
+  "Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions.";
+const sessionstartIneligibleExit = 3;
+const sessionstartRetireTimeoutMs = 1000;
 
 // One active generation owns native startup from child launch through context
 // claim. Replacement activates first, serially retires every predecessor, and
@@ -279,19 +362,26 @@ function runSessionstartHook(generation: SessionstartGeneration): Promise<Sessio
     };
     const supervised = process.platform !== "win32";
     const runner = `${root}/bin/fm-sessionstart-run.sh`;
+    const invocation = supervised
+      ? {
+          command: "node",
+          args: [
+            `${extensionDir}/lib/fm-sessionstart-supervisor.mjs`,
+            runner,
+            "--source",
+            generation.source,
+            "--pi-prerequisite",
+          ],
+        }
+      : firstmateShellInvocation(
+          runner,
+          ["--source", generation.source, "--pi-prerequisite"],
+        );
     let child: ChildProcess;
     try {
       child = spawn(
-        supervised ? "node" : runner,
-        supervised
-          ? [
-              `${extensionDir}/lib/fm-sessionstart-supervisor.mjs`,
-              runner,
-              "--source",
-              generation.source,
-              "--pi-prerequisite",
-            ]
-          : ["--source", generation.source, "--pi-prerequisite"],
+        invocation.command,
+        invocation.args,
         {
           detached: supervised,
           stdio: supervised
@@ -426,8 +516,7 @@ function sessionstartMessage(
   generation: SessionstartGeneration,
   result: SessionstartResult,
 ): SessionstartMessage | undefined {
-  const isDigest = result.kind === "ready";
-  let raw = isDigest ? result.raw : "";
+  let raw = result.kind === "ready" ? result.raw : "";
   if (!raw && result.kind === "failed") {
     raw = sessionstartManualFallback;
   } else if (!raw && ["startup", "clear", "compact"].includes(generation.source) &&
@@ -436,47 +525,15 @@ function sessionstartMessage(
   }
   if (!raw) return undefined;
   try {
-    // Pi is the only adapter that injects a MESSAGE rather than hook stdout, so
-    // whatever it injects must carry operational provenance or the Ahoy skill
-    // would have to guess whether it was captain-authored. The wrapper already
-    // returns an encoded nudge on a context-preserving open (a short line, e.g.
-    // "run bin/fm-session-start.sh now"), which is small enough to inject
-    // as-is, and so is the short manual fallback prompt - only a genuine ready
-    // digest is the full session-start payload - up to hundreds of KiB - and
-    // must not be inlined into the message: see docs/sessionstart-nudge.md
-    // "Digest delivery is a pointer, not inline content" for why. It is
-    // written to this process's private digest slot instead, and only a short
-    // pointer travels through the returned message.
-    let content: string;
-    if (classifyFirstmateCurrentOperationalText(raw)) {
-      content = raw;
-    } else if (!isDigest) {
-      content = encodeFirstmateOperationalInput("session-start", raw);
-    } else {
-      let writeError: unknown;
-      sweepDeadSessionstartDigests();
-      try {
-        writeFileSync(sessionstartDigestFile, raw);
-      } catch (error) {
-        writeError = error ?? new Error("unknown error");
-      }
-      const truncationNotice = raw.endsWith(sessionstartTruncatedMarker)
-        ? " PI SESSION-START DELIVERY TRUNCATED - the digest exceeded 512 KiB, so treat omitted " +
-          "context as unread and inspect the named files directly."
-        : "";
-      content = encodeFirstmateOperationalInput(
+    // The wrapper already returns an encoded nudge on a context-preserving
+    // open, so only an unencoded digest or fallback needs the marker added;
+    // a digest travels as a pointer to its private slot, never inline.
+    const content = classifyFirstmateCurrentOperationalText(raw)
+      ? raw
+      : encodeFirstmateOperationalInput(
         "session-start",
-        writeError === undefined
-          ? `Session-start digest written to ${sessionstartDigestFile} ` +
-            `(${Buffer.byteLength(raw, "utf8")} bytes). ` +
-            "Read that file now, in full, before executing any other instructions." +
-            truncationNotice
-          : `Session-start digest could not be written to ${sessionstartDigestFile} ` +
-            `(${writeError instanceof Error ? writeError.message : String(writeError)}). ` +
-            "Run bin/fm-session-start.sh now and read its full output before executing any " +
-            "other instructions." + truncationNotice,
+        raw === sessionstartManualFallback ? raw : sessionstartDigestPointer(raw),
       );
-    }
     return {
       customType: "firstmate-sessionstart-nudge",
       content,
@@ -504,16 +561,24 @@ async function claimSessionstartMessage(
 
 function runGuard(): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/fm-turnend-guard.sh`, {
-      stdio: ["pipe", "ignore", "pipe"],
-    });
+    const invocation = firstmateShellInvocation(`${root}/bin/fm-turnend-guard.sh`, []);
+    let child: ChildProcess;
+    try {
+      child = spawn(invocation.command, invocation.args, {
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+    } catch {
+      resolveResult({ code: 0, stderr: "" });
+      return;
+    }
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       stderr += chunk.toString();
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));
     child.on("close", (code) => resolveResult({ code: code ?? 0, stderr }));
-    child.stdin.end('{"stop_hook_active":false}');
+    child.stdin?.on("error", () => {});
+    child.stdin?.end('{"stop_hook_active":false}');
   });
 }
 
@@ -526,11 +591,21 @@ function runGuard(): Promise<{ code: number; stderr: string }> {
 // script owns its own decision and is inert outside the real primary checkout.
 function runChecker(script: string, command: string): Promise<{ code: number; stderr: string }> {
   return new Promise((resolveResult) => {
-    const child = spawn(`${root}/bin/${script}`, ["--command", command], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
+    const invocation = firstmateShellInvocation(
+      `${root}/bin/${script}`,
+      ["--command", command],
+    );
+    let child: ChildProcess;
+    try {
+      child = spawn(invocation.command, invocation.args, {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch {
+      resolveResult({ code: 0, stderr: "" });
+      return;
+    }
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
+    child.stderr?.on("data", (chunk) => {
       stderr += chunk.toString();
     });
     child.on("error", () => resolveResult({ code: 0, stderr: "" }));

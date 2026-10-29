@@ -11,6 +11,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 EXT="$ROOT/.pi/extensions/fm-task-recap.ts"
@@ -21,35 +23,7 @@ TMP_ROOT=$(fm_test_tmproot fm-task-recap-extension)
 # make_spawn_case) ---------------------------------------------------------
 
 make_launch_capturing_tmux() {
-  local dir=$1 fakebin="$1/fakebin"
-  mkdir -p "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
-  send-keys)
-    if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
-      prev=
-      for a in "$@"; do
-        if [ "$prev" = "-l" ]; then
-          printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG"
-        fi
-        prev=$a
-      done
-    fi
-    exit 0
-    ;;
-esac
-SH
-  chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse pi claude
-  printf '%s\n' "$fakebin"
+  fm_test_make_spawn_fakebin "$1" pi claude
 }
 
 make_spawn_case() {  # <name> <harness> <id> -> "<home>|<proj>|<wt>|<fakebin>"
@@ -59,24 +33,17 @@ make_spawn_case() {  # <name> <harness> <id> -> "<home>|<proj>|<wt>|<fakebin>"
   proj="$case_dir/project"
   wt="$case_dir/wt"
   fakebin=$(make_launch_capturing_tmux "$case_dir/fake")
-  mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
-  printf '%s\n' "$harness" > "$home/config/crew-harness"
+  fm_test_spawn_home "$home" "$harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
-  touch "$home/state/.last-watcher-beat"
-  mkdir -p "$home/data/$id"
-  printf 'brief for %s\n' "$id" > "$home/data/$id/brief.md"
+  fm_test_spawn_brief "$home" "$id"
   printf '%s|%s|%s|%s' "$home" "$proj" "$wt" "$fakebin"
 }
 
 run_spawn() {  # <home> <wt> <fakebin> <launchlog> <spawn-args...>
   local home=$1 wt=$2 fakebin=$3 launchlog=$4
   shift 4
-  FM_ROOT_OVERRIDE='' FM_HOME="$home" \
-    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" FM_FAKE_LAUNCH_LOG="$launchlog" TMUX="fake,1,0" \
-    GROK_HOME="$home/grok-home" PATH="$fakebin:$PATH" \
-    "$SPAWN" "$@" 2>&1
+  FM_FAKE_LAUNCH_LOG="$launchlog" GROK_HOME="$home/grok-home" \
+    fm_test_run_spawn "$home" "$wt" "$fakebin" "$@"
 }
 
 test_ship_pi_spawn_wires_the_recap_extension_and_env_vars() {
@@ -112,6 +79,7 @@ test_secondmate_pi_spawn_never_wires_the_recap_extension() {
   printf '# Firstmate\n' > "$sm_home/AGENTS.md"
   printf '%s\n' "$id" > "$sm_home/.fm-secondmate-home"
   printf 'charter\n' > "$sm_home/data/charter.md"
+  fm_git_init_commit "$sm_home"
   launchlog="$TMP_ROOT/wire-secondmate.launch"
   out=$(FM_ROOT_OVERRIDE='' FM_HOME="$primary_home" FM_SPAWN_NO_GUARD=1 \
     FM_FAKE_LAUNCH_LOG="$launchlog" TMUX="fake,1,0" GROK_HOME="$primary_home/grok-home" \

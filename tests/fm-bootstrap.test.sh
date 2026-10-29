@@ -3,18 +3,20 @@
 #
 # Bootstrap prints one block or line per actionable problem, optional verbose
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
-# all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
-# 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
-# 'MISSING: gh-axi (install: ...)', 'MISSING: lavish-axi (install: ...)',
-# 'MISSING: backpass (install: ...)', and 'BOOTSTRAP_INFO: ...' lines, so those
-# contracts are pinned verbatim. The cases are table-driven over the inputs that
-# vary: whether `treehouse get --help` advertises --lease, which (if any)
-# tasks-axi version is on PATH, whether tasks-axi update advertises
-# --archive-body, whether its mv help advertises multi-ID moves, whether
-# quota-axi is on PATH, whether the local backend config opts out of tasks-axi
-# backlog mutations, which no-mistakes version is on PATH, which backpass
-# version is on PATH, which gh-axi version is on PATH, and which lavish-axi
-# version is on PATH.
+# all is well. firstmate consumes the exact 'MISSING: <tool> (install: ...)',
+# 'OUTDATED: <tool> (installed: ...; requires ...; upgrade: ...)',
+# 'PRESENTATION_UNAVAILABLE: lavish-axi ...', and 'BOOTSTRAP_INFO: ...' lines, so
+# those contracts are pinned verbatim. An absent tool reports MISSING while a
+# present-but-below-floor tool reports OUTDATED instead. The cases
+# are table-driven over the inputs that vary: whether `treehouse get --help`
+# advertises --lease or treehouse is absent, which (if any) tasks-axi version is
+# on PATH, whether tasks-axi update advertises --archive-body, whether its mv help advertises
+# multi-ID moves, whether quota-axi is on PATH or which version it reports,
+# whether the local backend config opts out of tasks-axi backlog mutations,
+# which no-mistakes version is on PATH, which backpass version is on PATH, which
+# gh-axi version is on PATH, and which lavish-axi version is on PATH.
+# Dedicated tool-autoupdate cases pin the opt-in config/tool-autoupdate sweep:
+# default-off, pinned installs, the 24h throttle, failures, and the timeout.
 # Dedicated fleet-sync cases pin the computed bootstrap timeout, explicit
 # override, blank-env defaulting, partial-output relay, and pre-launch timeout
 # scan.
@@ -33,12 +35,22 @@ export FM_BACKEND_CMUX_BUNDLE_BIN="$TMP_ROOT/no-bundled-cmux"
 
 # Hermetic runtime-backend detection. These cases pin the backend per-home via
 # config/backend; the dev shell's ambient runtime markers ($TMUX inside tmux,
-# HERDR_ENV inside herdr, CMUX_* inside a cmux terminal) must not leak into
+# HERDR_ENV inside herdr, CMUX_* inside a cmux terminal, PASEO_AGENT_ID inside a
+# Paseo agent) must not leak into
 # fm_backend_name and flip a default-backend case onto a non-tmux backend. Unset
 # them once so the suite resolves the tmux reference backend unless a case says
 # otherwise - the same hermeticity discipline as pinning PATH via BASE_PATH.
-unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
+unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH PASEO_AGENT_ID __CFBundleIdentifier \
   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_SOCKET_PATH CMUX_TAB_ID CMUX_PANEL_ID 2>/dev/null || true
+
+# A case that simulates a tool as absent removes it from the fake bin directory,
+# which is not enough on its own: bootstrap keeps searching the fallback
+# BASE_PATH, so on a host where that tool is really installed in one of those
+# directories the case would find the host binary instead of the absence it means
+# to pin, and the expected MISSING line would depend on the machine. Every such
+# case curates its base path with tests/lib.sh's fm_test_base_path_sans, which
+# resolves every other tool as before while hiding the named one. Every other
+# case keeps bare BASE_PATH.
 
 # A fake toolchain where every required tool is present and gh is authenticated.
 # Treehouse advertises both required lease surfaces when
@@ -48,7 +60,8 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
-  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
+  fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.80
+  fm_fake_version_tool "$fakebin" backpass FM_FAKE_BACKPASS_VERSION 0.1.16
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
@@ -68,6 +81,11 @@ SH
   chmod +x "$fakebin/gh"
   cat > "$fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
+[ "${1:-}:${2:-}" != status:--json ] || { printf '[]\n'; exit 0; }
+if [ "${1:-}" = --version ]; then
+  printf '%s\n' "${FM_FAKE_TREEHOUSE_VERSION:-treehouse version v0.4.2 (fake)}"
+  exit 0
+fi
 if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
   if [ "${FM_FAKE_TREEHOUSE_LEASE_HELP:-}" = 1 ]; then
     printf '%s\n' 'Usage: treehouse get [--lease] [--lease-holder <holder>]'
@@ -95,16 +113,7 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
-  cat > "$fakebin/backpass" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --version ] || [ "${1:-}" = -v ]; then
-  printf '%s\n' "${FM_FAKE_BACKPASS_VERSION:-0.1.16}"
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/backpass"
-  add_tasks_axi "$fakebin" "0.2.4"
+  add_tasks_axi "$fakebin" "0.2.6"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
 }
@@ -114,7 +123,7 @@ add_quota_axi() {
   cat > "$fakebin/quota-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_QUOTA_AXI_VERSION:-0.1.29}"
+  printf '%s\n' "${FM_FAKE_QUOTA_AXI_VERSION:-0.1.51}"
   exit 0
 fi
 exit 0
@@ -154,6 +163,13 @@ add_real_jq() {
   real_jq=$(command -v jq 2>/dev/null) || fail "jq is required for dispatch profile validation tests"
   cat > "$fakebin/jq" <<SH
 #!/usr/bin/env bash
+if [ -n "\${FM_TEST_CHILD_ENV_LOG:-}" ]; then
+  if [ -n "\${TYPESAFE_API_KEY+x}" ] || [ -n "\${TYPESAFE_API_KEY_PRIVATE+x}" ]; then
+    printf 'secret-present\n' >> "\$FM_TEST_CHILD_ENV_LOG"
+  else
+    printf 'clean\n' >> "\$FM_TEST_CHILD_ENV_LOG"
+  fi
+fi
 exec '$real_jq' "\$@"
 SH
   chmod +x "$fakebin/jq"
@@ -264,7 +280,7 @@ assert_timeout_report() {
 #   mode=exact -> output must equal <expect>
 #   mode=grep  -> output must contain <expect> (fixed string); <notcontains> must not appear
 test_bootstrap_reporting() {
-  local label lease tasks quota backend mode expect notcontains case_dir fakebin out n archive_body multi_id
+  local label lease tasks quota backend mode expect notcontains case_dir fakebin base out n archive_body multi_id quota_version
   n=0
   while IFS='^' read -r label lease tasks quota backend mode expect notcontains; do
     [ -n "$label" ] || continue
@@ -276,18 +292,32 @@ test_bootstrap_reporting() {
       printf '%s\n' "$backend" > "$case_dir/home/config/backlog-backend"
     fi
     fakebin=$(make_fake_toolchain "$case_dir")
+    base=$BASE_PATH
+    if [ "$lease" = absent ]; then
+      rm -f "$fakebin/treehouse"
+      base=$(fm_test_base_path_sans "$base" treehouse)
+    fi
     if [ "$tasks" = "-" ]; then
       rm -f "$fakebin/tasks-axi"
+      base=$(fm_test_base_path_sans "$base" tasks-axi)
     else
       archive_body=yes
       multi_id=yes
       case "$tasks" in
+        *:noarchive:nomulti)
+          archive_body=no
+          multi_id=no
+          tasks=${tasks%:noarchive:nomulti}
+          ;;
+        *:nomulti:noarchive)
+          archive_body=no
+          multi_id=no
+          tasks=${tasks%:nomulti:noarchive}
+          ;;
         *:noarchive)
           archive_body=no
           tasks=${tasks%:noarchive}
           ;;
-      esac
-      case "$tasks" in
         *:nomulti)
           multi_id=no
           tasks=${tasks%:nomulti}
@@ -295,14 +325,18 @@ test_bootstrap_reporting() {
       esac
       add_tasks_axi "$fakebin" "$tasks" "$archive_body" "$multi_id"
     fi
+    quota_version=0.1.51
     if [ "$quota" = "0" ]; then
       rm -f "$fakebin/quota-axi"
+      base=$(fm_test_base_path_sans "$base" quota-axi)
+    elif [ "$quota" != "1" ]; then
+      quota_version=$quota
     fi
     # FM_ROOT_OVERRIDE points the worktree-tangle check at the non-git home dir so
     # it stays inert: this suite pins tool detection, not the tangle guard, and the
     # ambient checkout (CI runs on a feature branch) must not leak a TANGLE line in.
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP="$lease" "$ROOT/bin/fm-bootstrap.sh")
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP="$lease" FM_FAKE_QUOTA_AXI_VERSION="$quota_version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
@@ -316,25 +350,58 @@ test_bootstrap_reporting() {
         ;;
     esac
   done <<'ROWS'
-treehouse task-lease support is accepted silently^1^0.2.4^1^manual^empty^^
-treehouse without task leases reports an upgrade, gh auth is fine^0^0.2.4^1^-^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
-compatible tasks-axi is silent by default^1^0.2.4^1^-^empty^^
+treehouse --lease support is accepted silently^1^0.2.6^1^manual^empty^^
+absent treehouse reports a missing tool^absent^0.2.6^1^-^grep^MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)^NEEDS_GH_AUTH
+treehouse without --lease reports an upgrade, gh auth is fine^0^0.2.6^1^-^grep^OUTDATED: treehouse (installed: 0.4.2; requires --lease support; upgrade: treehouse update)^NEEDS_GH_AUTH
+compatible tasks-axi is silent by default^1^0.2.6^1^-^empty^^
 missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-tasks-axi without archive-body is required by default^1^0.2.4:noarchive^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-tasks-axi without multi-id mv is required by default^1^0.2.4:nomulti^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-missing quota-axi is required by default^1^0.2.4^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
+incompatible tasks-axi reports an upgrade by default^1^0.1.0^1^-^exact^OUTDATED: tasks-axi (installed: 0.1.0; requires 0.2.6; upgrade: npm install -g tasks-axi)^
+tasks-axi without archive-body reports an upgrade by default^1^0.2.6:noarchive^1^-^exact^OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with update --archive-body; upgrade: npm install -g tasks-axi)^
+tasks-axi without multi-id mv reports an upgrade by default^1^0.2.6:nomulti^1^-^exact^OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with mv multi-ID; upgrade: npm install -g tasks-axi)^
+missing quota-axi is required by default^1^0.2.6^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
+outdated quota-axi reports an upgrade by default^1^0.2.6^0.1.50^manual^exact^OUTDATED: quota-axi (installed: 0.1.50; requires 0.1.51; upgrade: quota-axi update)^
 manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-manual backlog backend suppresses tasks-axi availability^1^0.2.4^1^manual^empty^^
+manual backlog backend suppresses tasks-axi availability^1^0.2.6^1^manual^empty^^
 ROWS
   pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
 }
 
+# A case that simulates a tool as absent must hide that tool from the fallback
+# base PATH too, not only from the fake bin directory: on a host where the tool
+# really sits in one of those directories the fixture would find the host binary,
+# and the pinned MISSING line would silently depend on the machine. The contrast
+# below is the proof the fixture is real - the bare fallback resolves the host
+# install, the curated fallback does not - so the absent-tool cases in this suite
+# stay machine-independent.
+test_absent_tool_cases_hide_a_real_install_in_the_base_path() {
+  local case_dir fakebin hostbin out
+  case_dir="$TMP_ROOT/absent-host-install"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  rm -f "$fakebin/tasks-axi"
+  hostbin="$case_dir/hostbin"
+  mkdir -p "$hostbin"
+  fm_fake_version_tool "$hostbin" tasks-axi FM_FAKE_TASKS_AXI_VERSION 0.2.6
+
+  out=$(PATH="$fakebin:$hostbin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_not_contains "$out" 'MISSING: tasks-axi' \
+    "the fixture's host install was not resolvable, so the contrast below would prove nothing"
+
+  out=$(PATH="$fakebin:$(fm_test_base_path_sans "$hostbin:$BASE_PATH" tasks-axi)" \
+    FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" 'MISSING: tasks-axi (install: npm install -g tasks-axi)' \
+    "a real install in the fallback base path defeated the absent-tool simulation"
+  pass "bootstrap: an absent-tool case hides the tool in the fallback base path"
+}
+
 test_no_mistakes_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode installed expect case_dir fakebin base out missing n
   missing='MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)'
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version mode installed; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/no-mistakes-$n"
@@ -342,108 +409,100 @@ test_no_mistakes_min_version() {
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    base=$BASE_PATH
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/no-mistakes"
+      base=$(fm_test_base_path_sans "$base" no-mistakes)
+    fi
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NO_MISTAKES_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      outdated)
+        expect="OUTDATED: no-mistakes (installed: $installed; requires 1.60.2; upgrade: no-mistakes update)"
+        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum no-mistakes version is accepted^no-mistakes version v1.60.2 (fake)^empty
-newer no-mistakes minor is accepted^no-mistakes version v1.61.0 (fake)^empty
-newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty
-two-digit no-mistakes major is accepted^no-mistakes version v10.0.0 (fake)^empty
-two-digit no-mistakes minor is accepted^no-mistakes version v1.100.0 (fake)^empty
-older no-mistakes patch reports an upgrade^no-mistakes version v1.60.1 (fake)^missing
-pre-restamp no-mistakes reports an upgrade^no-mistakes version v1.53.0 (fake)^missing
-unparseable no-mistakes version reports an upgrade^no-mistakes development build^missing
+minimum no-mistakes version is accepted^no-mistakes version v1.60.2 (fake)^empty^
+newer no-mistakes minor is accepted^no-mistakes version v1.61.0 (fake)^empty^
+newer no-mistakes major is accepted^no-mistakes version v2.0.0 (fake)^empty^
+two-digit no-mistakes major is accepted^no-mistakes version v10.0.0 (fake)^empty^
+two-digit no-mistakes minor is accepted^no-mistakes version v1.100.0 (fake)^empty^
+absent no-mistakes reports a missing tool^absent^missing^
+older no-mistakes patch reports an upgrade^no-mistakes version v1.60.1 (fake)^outdated^1.60.1
+pre-restamp no-mistakes reports an upgrade^no-mistakes version v1.53.0 (fake)^outdated^1.53.0
+unparseable no-mistakes version reports an upgrade^no-mistakes development build^outdated^unparseable
 ROWS
-  pass "bootstrap enforces no-mistakes minimum version"
+  pass "bootstrap separates an absent no-mistakes from one below its version floor"
 }
 
 test_backpass_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode installed expect case_dir fakebin base out missing n
   missing='MISSING: backpass (install: npm install -g backpass)'
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version mode installed; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/backpass-$n"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    base=$BASE_PATH
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/backpass"
+      base=$(fm_test_base_path_sans "$base" backpass)
+    fi
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_BACKPASS_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      outdated)
+        expect="OUTDATED: backpass (installed: $installed; requires 0.1.16; upgrade: npm install -g backpass)"
+        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum backpass version is accepted^0.1.16^empty
-newer backpass minor is accepted^0.1.17^empty
-newer backpass major is accepted^1.0.0^empty
-older backpass patch reports an upgrade^0.1.15^missing
-unparseable backpass version reports an upgrade^development build^missing
+minimum backpass version is accepted^0.1.16^empty^
+newer backpass patch is accepted^0.1.17^empty^
+newer backpass major is accepted^1.0.0^empty^
+absent backpass reports a missing tool^absent^missing^
+older backpass patch reports an upgrade^0.1.15^outdated^0.1.15
+unparseable backpass version reports an upgrade^backpass development build^outdated^unparseable
 ROWS
-  pass "bootstrap enforces backpass minimum version"
+  pass "bootstrap separates an absent backpass from one below its version floor"
 }
 
-test_backpass_absent_reports_missing() {
-  local case_dir fakebin out missing
-  missing='MISSING: backpass (install: npm install -g backpass)'
-  case_dir="$TMP_ROOT/backpass-absent"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  rm -f "$fakebin/backpass"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "$missing" "an absent backpass must report MISSING like any other common tool"
-  pass "bootstrap reports backpass MISSING when absent from PATH"
-}
-
-# Fake npm for the tool-autoupdate sweep: reports each package's fake
-# "installed" and "latest" versions via env vars, a controllable publish date
-# for the "latest" version (default old enough to clear the 14-day supply-chain
-# hold), and either succeeds or fails `npm install -g` per
-# FM_FAKE_NPM_INSTALL_FAIL.
+# Fake npm for the tool-autoupdate sweep: per-package installed and latest
+# versions come from env vars, with a controllable publish date for the latest
+# version, and `npm install -g` succeeds or fails per FM_FAKE_NPM_INSTALL_FAIL.
 add_fake_npm() {
   local fakebin=$1
   cat > "$fakebin/npm" <<'SH'
 #!/usr/bin/env bash
+pkg=${3:-}
+[ "$1" != view ] || pkg=$2
+case "$pkg" in
+  gh-axi) inst=${FM_FAKE_NPM_GH_AXI_INSTALLED:-}; latest=${FM_FAKE_NPM_GH_AXI_LATEST:-}; iso=${FM_FAKE_NPM_GH_AXI_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
+  backpass) inst=${FM_FAKE_NPM_BACKPASS_INSTALLED:-}; latest=${FM_FAKE_NPM_BACKPASS_LATEST:-}; iso=${FM_FAKE_NPM_BACKPASS_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
+  *) inst=; latest=; iso= ;;
+esac
 if [ "$1" = list ] && [ "$2" = -g ]; then
-  pkg=$3
-  case "$pkg" in
-    gh-axi) inst=${FM_FAKE_NPM_GH_AXI_INSTALLED:-} ;;
-    backpass) inst=${FM_FAKE_NPM_BACKPASS_INSTALLED:-} ;;
-    *) exit 1 ;;
-  esac
   [ -n "$inst" ] || exit 1
   printf '/x/lib\n'
   printf '└── %s@%s\n' "$pkg" "$inst"
   exit 0
 fi
 if [ "$1" = view ] && [ "$3" = version ]; then
-  case "$2" in
-    gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-} ;;
-    backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-} ;;
-    *) exit 1 ;;
-  esac
   [ -n "$latest" ] || exit 1
   printf '%s\n' "$latest"
   exit 0
 fi
 if [ "$1" = view ] && [ "$3" = time ]; then
-  pkg=$2
-  case "$pkg" in
-    gh-axi) latest=${FM_FAKE_NPM_GH_AXI_LATEST:-}; iso=${FM_FAKE_NPM_GH_AXI_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
-    backpass) latest=${FM_FAKE_NPM_BACKPASS_LATEST:-}; iso=${FM_FAKE_NPM_BACKPASS_PUBLISHED:-2020-01-01T00:00:00.000Z} ;;
-    *) exit 1 ;;
-  esac
   [ -n "$latest" ] || exit 1
   printf "{ '%s': '%s' }\n" "$latest" "$iso"
   exit 0
@@ -459,297 +518,240 @@ SH
   chmod +x "$fakebin/npm"
 }
 
-test_tool_autoupdate_disabled_by_default() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-default-off"
-  mkdir -p "$case_dir/home/config"
+# autoupdate_case <name> <opted-in: yes|no> -> prints the case dir; the fake
+# toolchain with npm lives in <dir>/fakebin (see fm_fakebin).
+autoupdate_case() {
+  local name=$1 optin=$2 case_dir
+  case_dir="$TMP_ROOT/tool-autoupdate-$name"
+  mkdir -p "$case_dir/home/config" "$case_dir/home/state"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # config/tool-autoupdate is absent: this is the plain, unmodified template
-  # contract every non-opted-in home keeps.
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
+  [ "$optin" != yes ] || printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  add_fake_npm "$(make_fake_toolchain "$case_dir")"
+  printf '%s\n' "$case_dir"
+}
+
+# run_autoupdate <case-dir> [env...] -> bootstrap output (stdout and stderr).
+run_autoupdate() {
+  local case_dir=$1
+  shift
+  env PATH="$(fm_fakebin "$case_dir"):$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$@" "$ROOT/bin/fm-bootstrap.sh" 2>&1
+}
+
+test_tool_autoupdate_disabled_by_default() {
+  local case_dir out
+  case_dir=$(autoupdate_case default-off no)
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    FM_FAKE_NPM_INSTALL_LOG="$case_dir/npm-install.log")
   assert_not_contains "$out" "TOOL_AUTOUPDATE" "an un-opted-in home must never run the auto-update sweep"
   assert_not_contains "$out" "tool-autoupdate updated" "an un-opted-in home must never auto-install anything"
-  pass "bootstrap: tool auto-update stays off without an explicit config/tool-autoupdate opt-in"
+  [ ! -e "$case_dir/npm-install.log" ] || fail "npm install must never run without the opt-in flag"
+  pass "bootstrap: tool auto-update stays off without config/tool-autoupdate"
 }
 
 test_tool_autoupdate_updates_outdated_and_skips_current() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-mixed"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+  local case_dir out log
+  case_dir=$(autoupdate_case mixed yes)
+  log="$case_dir/npm-install.log"
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_INSTALL_LOG="$log" \
     FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.16 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "an outdated opted-in package must be auto-updated"
-  assert_contains "$out" "gh-axi@0.1.35" "the update summary must name the outdated package and its new version"
-  assert_not_contains "$out" "backpass@0.1.16" "an already-current package must not appear in the update summary"
+    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.16)
+  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "an outdated opted-in package must be updated"
+  assert_contains "$(cat "$log")" "install -g gh-axi@0.1.35" "the install must pin the exact version checked, not @latest"
+  assert_not_contains "$out" "backpass@" "an already-current package must not be installed"
   [ -f "$case_dir/home/state/.tool-autoupdate-checked" ] || fail "the 24h throttle marker must be written after a run"
-  pass "bootstrap: tool auto-update installs an outdated package and leaves a current one alone"
+  pass "bootstrap: tool auto-update installs a pinned newer version and leaves a current package alone"
 }
 
-test_tool_autoupdate_installs_pinned_verified_version() {
-  local case_dir fakebin out log
-  case_dir="$TMP_ROOT/tool-autoupdate-pinned"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
+test_tool_autoupdate_holds_when_throttle_marker_is_unwritable() {
+  local case_dir out log state
+  case_dir=$(autoupdate_case marker-unwritable yes)
   log="$case_dir/npm-install.log"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_LOG="$log" \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "gh-axi@0.1.35" "the reported version must be the one that was installed"
-  assert_contains "$(cat "$log")" "install -g gh-axi@0.1.35" "the install must pin the exact version whose publish date was age-checked, not re-resolve @latest"
-  pass "bootstrap: tool auto-update installs the exact version it age-checked"
+  state="$case_dir/home/state"
+  chmod a-w "$state"
+  out=$(run_autoupdate "$case_dir" FM_BOOTSTRAP_NETWORK=only FM_FAKE_NPM_INSTALL_LOG="$log" \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  chmod u+w "$state"
+  assert_contains "$out" "TOOL_AUTOUPDATE: could not record the 24-hour throttle marker; update check skipped" \
+    "an opted-in sweep must report when its durable throttle cannot be recorded"
+  [ ! -e "$log" ] || fail "npm install must not run without a durable throttle marker (ran: $(cat "$log"))"
+  pass "bootstrap: tool auto-update holds when its throttle marker cannot be written"
 }
 
 test_tool_autoupdate_never_downgrades_a_newer_install() {
-  local case_dir fakebin out log
-  case_dir="$TMP_ROOT/tool-autoupdate-newer-pinned"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
+  local case_dir out log
+  case_dir=$(autoupdate_case newer yes)
   log="$case_dir/npm-install.log"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_LOG="$log" \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.2.0-beta.1 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.16 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "tool-autoupdate updated" "an install that sorts above the registry's latest must be left alone"
-  assert_not_contains "$out" "TOOL_AUTOUPDATE:" "a deliberately newer install is not a failure to report"
-  [ ! -e "$log" ] || fail "npm install must never run for a newer or equal install (ran: $(cat "$log"))"
-  pass "bootstrap: tool auto-update never downgrades a deliberately newer install"
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_INSTALL_LOG="$log" \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.2.0-beta.1 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_not_contains "$out" "tool-autoupdate updated" "an install above the registry version must be left alone"
+  assert_not_contains "$out" "TOOL_AUTOUPDATE:" "a deliberately newer install is not a failure"
+  [ ! -e "$log" ] || fail "npm install must not run for a newer install (ran: $(cat "$log"))"
+  pass "bootstrap: tool auto-update never downgrades a newer install"
 }
 
 test_tool_autoupdate_holds_when_versions_cannot_be_compared() {
-  local case_dir fakebin out log
-  case_dir="$TMP_ROOT/tool-autoupdate-unparseable"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
+  local case_dir out log
+  case_dir=$(autoupdate_case unparseable yes)
   log="$case_dir/npm-install.log"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_LOG="$log" \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=nightly \
-    "$ROOT/bin/fm-bootstrap.sh")
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_INSTALL_LOG="$log" \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=nightly)
   assert_contains "$out" "TOOL_AUTOUPDATE:" "an unparseable registry version must surface as a diagnostic"
-  assert_not_contains "$out" "tool-autoupdate updated" "an unparseable version must not be treated as behind"
-  [ ! -e "$log" ] || fail "npm install must not run when the versions cannot be compared"
-  pass "bootstrap: tool auto-update holds instead of assuming behind when versions cannot be compared"
+  [ ! -e "$log" ] || fail "npm install must not run when versions cannot be compared"
+  pass "bootstrap: tool auto-update holds when versions cannot be compared"
 }
 
-test_tool_autoupdate_malformed_age_days_falls_back_to_default() {
-  local case_dir fakebin out recent
-  case_dir="$TMP_ROOT/tool-autoupdate-bad-age-days"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
+test_tool_autoupdate_reports_failed_install() {
+  local case_dir out
+  case_dir=$(autoupdate_case install-fail yes)
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_INSTALL_FAIL=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_contains "$out" "TOOL_AUTOUPDATE: npm install -g gh-axi@0.1.35 failed (was 0.1.29)" "a failed install must print an actionable diagnostic"
+  assert_not_contains "$out" "tool-autoupdate updated" "a failed install must not be reported as updated"
+  pass "bootstrap: tool auto-update reports a failed install"
+}
+
+test_tool_autoupdate_reports_unavailable_npm() {
+  local case_dir out
+  case_dir=$(autoupdate_case no-npm yes)
+  rm -f "$(fm_fakebin "$case_dir")/npm"
+  out=$(PATH="$(fm_fakebin "$case_dir"):$(fm_test_base_path_sans "$BASE_PATH" npm)" \
+    FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
+  assert_contains "$out" "TOOL_AUTOUPDATE: npm not found on PATH" "an opted-in home without npm must say so"
+  pass "bootstrap: tool auto-update reports an unavailable npm"
+}
+
+test_tool_autoupdate_malformed_env_falls_back_to_defaults() {
+  local case_dir out recent
+  case_dir=$(autoupdate_case bad-env yes)
   recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14d \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
-    "$ROOT/bin/fm-bootstrap.sh") || fail "a malformed FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS must never abort bootstrap (exit $?)"
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "a malformed age value must fall back to the default (0), not hold or abort"
-  pass "bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS instead of aborting"
+  out=$(run_autoupdate "$case_dir" FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14d FM_TOOL_AUTOUPDATE_TIMEOUT=60s \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent") \
+    || fail "a malformed override must never abort bootstrap"
+  assert_not_contains "$out" "integer expression expected" "a malformed timeout must fall back to the default"
+  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "malformed overrides must fall back to the defaults"
+  pass "bootstrap: tool auto-update ignores malformed timeout and age overrides"
 }
 
 test_tool_autoupdate_timeout_relays_completed_updates() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-timeout"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # gh-axi updates first; the backpass install then hangs past the timeout.
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_TIMEOUT=2 FM_FAKE_NPM_INSTALL_HANG=backpass \
+  local case_dir out
+  case_dir=$(autoupdate_case timeout yes)
+  out=$(run_autoupdate "$case_dir" FM_TOOL_AUTOUPDATE_TIMEOUT=2 FM_FAKE_NPM_INSTALL_HANG=backpass \
     FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.17 \
-    "$ROOT/bin/fm-bootstrap.sh")
+    FM_FAKE_NPM_BACKPASS_INSTALLED=0.1.16 FM_FAKE_NPM_BACKPASS_LATEST=0.1.17)
   assert_contains "$out" "TOOL_AUTOUPDATE: check timed out" "a hung install must hit the wall-clock timeout"
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "updates completed before the timeout must still be reported"
+  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "updates finished before the timeout must still be reported"
   assert_not_contains "$out" "backpass@0.1.17" "the interrupted install must not be reported as completed"
-  pass "bootstrap: tool auto-update relays already-completed updates when the sweep times out"
+  pass "bootstrap: tool auto-update relays completed updates when the sweep times out"
 }
 
 test_tool_autoupdate_compares_multidigit_components_numerically() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-multidigit"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+  local case_dir out
+  case_dir=$(autoupdate_case multidigit yes)
+  out=$(run_autoupdate "$case_dir" \
     FM_FAKE_NPM_GH_AXI_INSTALLED=9.9.9 FM_FAKE_NPM_GH_AXI_LATEST=10.0.0 \
-    FM_FAKE_NPM_BACKPASS_INSTALLED=0.10.0 FM_FAKE_NPM_BACKPASS_LATEST=0.9.9 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "gh-axi@10.0.0" "9.9.9 must sort below 10.0.0 and be updated"
+    FM_FAKE_NPM_BACKPASS_INSTALLED=0.10.0 FM_FAKE_NPM_BACKPASS_LATEST=0.9.9)
+  assert_contains "$out" "gh-axi@10.0.0" "9.9.9 must sort below 10.0.0"
   assert_not_contains "$out" "backpass@0.9.9" "0.10.0 must sort above 0.9.9 and never be downgraded"
-  pass "bootstrap: tool auto-update compares multi-digit version components numerically"
+  pass "bootstrap: tool auto-update compares version components numerically"
 }
 
-test_tool_autoupdate_malformed_timeout_falls_back_to_default() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-bad-timeout"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_TIMEOUT=60s \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh" 2>&1)
-  assert_not_contains "$out" "integer expression expected" "a malformed timeout must fall back to the default, not break the deadline check"
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated gh-axi@0.1.35" "the sweep must still complete under the default timeout"
-  pass "bootstrap: tool auto-update ignores a malformed FM_TOOL_AUTOUPDATE_TIMEOUT instead of running unbounded"
-}
-
-test_tool_autoupdate_installs_same_day_release_by_default() {
-  local case_dir fakebin out recent
-  case_dir="$TMP_ROOT/tool-autoupdate-trusted-default"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # The publish-age gate defaults to 0 for this curated, captain-trusted
-  # package list, so a release published seconds ago is still installed.
+test_tool_autoupdate_age_gate() {
+  local case_dir out recent
   recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BOOTSTRAP_INFO: tool-autoupdate updated" "the default age gate (0) must not hold a same-day release for this trusted list"
-  assert_contains "$out" "gh-axi@0.1.35" "a same-day release must still be installed under the default age gate"
-  pass "bootstrap: tool auto-update installs a same-day release by default for the trusted package list"
-}
-
-test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set() {
-  local case_dir fakebin out recent
-  case_dir="$TMP_ROOT/tool-autoupdate-recent-hold"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  # An operator who sets FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS explicitly restores
-  # the standing supply-chain wait for their own opted-in auto-update.
-  recent=$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent" \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "tool-autoupdate updated" "an explicit age gate must hold a release still inside its window"
-  assert_not_contains "$out" "gh-axi@0.1.35" "a held release must not appear in any update summary"
-  pass "bootstrap: tool auto-update holds a release still inside an explicitly configured age window"
+  case_dir=$(autoupdate_case age-default yes)
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
+    FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent")
+  assert_contains "$out" "gh-axi@0.1.35" "the default age gate (0) must not hold a same-day release"
+  case_dir=$(autoupdate_case age-held yes)
+  out=$(run_autoupdate "$case_dir" FM_TOOL_AUTOUPDATE_MIN_AGE_DAYS=14 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 FM_FAKE_NPM_GH_AXI_PUBLISHED="$recent")
+  assert_not_contains "$out" "gh-axi@0.1.35" "an explicit age gate must hold a release still inside its window"
+  pass "bootstrap: tool auto-update age gate defaults to 0 and holds when set"
 }
 
 test_tool_autoupdate_respects_24h_throttle() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-throttled"
-  mkdir -p "$case_dir/home/config" "$case_dir/home/state"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
+  local case_dir out
+  case_dir=$(autoupdate_case throttled yes)
   date +%s > "$case_dir/home/state/.tool-autoupdate-checked"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "TOOL_AUTOUPDATE" "a fresh marker must suppress the registry check entirely"
-  assert_not_contains "$out" "tool-autoupdate updated" "a fresh marker must skip the install, not just its diagnostics"
-  pass "bootstrap: tool auto-update rate-limits registry checks to once per 24h"
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_not_contains "$out" "tool-autoupdate updated" "a fresh marker must skip the sweep"
+  echo $(( $(date +%s) - 90000 )) > "$case_dir/home/state/.tool-autoupdate-checked"
+  out=$(run_autoupdate "$case_dir" FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_contains "$out" "tool-autoupdate updated gh-axi@0.1.35" "a marker older than 24h must allow the sweep"
+  pass "bootstrap: tool auto-update is rate-limited to once per 24h"
 }
 
-test_tool_autoupdate_reports_install_failure() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-install-fail"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_fake_npm "$fakebin"
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_NPM_INSTALL_FAIL=1 \
-    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35 \
-    "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "TOOL_AUTOUPDATE:" "a failed npm install must surface as an actionable diagnostic"
-  assert_not_contains "$out" "tool-autoupdate updated" "a failed install must not be reported as a success"
-  pass "bootstrap: tool auto-update reports a failed npm install as an actionable diagnostic"
+test_tool_autoupdate_runs_only_in_network_phase_and_not_detect_only() {
+  local case_dir out
+  case_dir=$(autoupdate_case phases yes)
+  out=$(run_autoupdate "$case_dir" FM_BOOTSTRAP_NETWORK=skip \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_not_contains "$out" "tool-autoupdate" "the local phase must never run the sweep"
+  out=$(run_autoupdate "$case_dir" FM_BOOTSTRAP_DETECT_ONLY=1 \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_not_contains "$out" "tool-autoupdate" "a read-only session must never run the sweep"
+  out=$(run_autoupdate "$case_dir" FM_BOOTSTRAP_NETWORK=only \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_contains "$out" "tool-autoupdate updated gh-axi@0.1.35" "the network phase must run the sweep"
+  pass "bootstrap: tool auto-update runs only in the network phase and never when detect-only"
 }
 
-test_tool_autoupdate_reports_npm_unavailable() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/tool-autoupdate-no-npm"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf 'on\n' > "$case_dir/home/config/tool-autoupdate"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "TOOL_AUTOUPDATE:" "a missing npm must be reported, not silently skipped"
-  pass "bootstrap: tool auto-update reports when npm itself is unavailable"
+test_tool_autoupdate_skipped_when_lock_holder_changed() {
+  local case_dir out
+  case_dir=$(autoupdate_case lock yes)
+  out=$(run_autoupdate "$case_dir" FM_BOOTSTRAP_NETWORK=only FM_BOOTSTRAP_NETWORK_LOCK_PID=$$ \
+    FM_FAKE_NPM_GH_AXI_INSTALLED=0.1.29 FM_FAKE_NPM_GH_AXI_LATEST=0.1.35)
+  assert_contains "$out" "NETWORK_CHECKS: the recorded fleet lock holder changed before tool auto-update" "a stale worker must skip the sweep"
+  assert_not_contains "$out" "tool-autoupdate updated" "a stale worker must not install anything"
+  pass "bootstrap: tool auto-update honors the fleet lock gate"
 }
 
 test_gh_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode installed expect case_dir fakebin base out missing n
   missing='MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)'
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version mode installed; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/gh-axi-$n"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    base=$BASE_PATH
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/gh-axi"
+      base=$(fm_test_base_path_sans "$base" gh-axi)
+    fi
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_GH_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      outdated)
+        expect="OUTDATED: gh-axi (installed: $installed; requires 0.1.29; upgrade: gh-axi update)"
+        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum gh-axi version is accepted^0.1.29^empty
-newer gh-axi patch is accepted^0.1.30^empty
-newer gh-axi minor is accepted^0.2.0^empty
-newer gh-axi major is accepted^1.0.0^empty
-older gh-axi patch reports an upgrade^0.1.19^missing
-much older gh-axi minor reports an upgrade^0.0.9^missing
-unparseable gh-axi version reports an upgrade^gh-axi development build^missing
+minimum gh-axi version is accepted^0.1.29^empty^
+newer gh-axi patch is accepted^0.1.30^empty^
+newer gh-axi minor is accepted^0.2.0^empty^
+newer gh-axi major is accepted^1.0.0^empty^
+absent gh-axi reports a missing tool^absent^missing^
+older gh-axi patch reports an upgrade^0.1.19^outdated^0.1.19
+much older gh-axi minor reports an upgrade^0.0.9^outdated^0.0.9
+unparseable gh-axi version reports an upgrade^gh-axi development build^outdated^unparseable
 ROWS
-  pass "bootstrap enforces gh-axi minimum version"
+  pass "bootstrap separates an absent gh-axi from one below its version floor"
 }
 
 test_lavish_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
-  missing='MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)'
+  local label version mode case_dir fakebin base out unavailable upgrade n
+  unavailable='PRESENTATION_UNAVAILABLE: lavish-axi (requires >=0.1.77; install: npm install -g lavish-axi && lavish-axi setup hooks) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish'
+  upgrade='BOOTSTRAP_INFO: lavish-axi >=0.1.80 enables confirmed board replies; this older compatible version retains the legacy reply path, but upgrade to prevent handing back a board before its reply is accepted'
   n=0
   while IFS='^' read -r label version mode; do
     [ -n "$label" ] || continue
@@ -758,105 +760,148 @@ test_lavish_axi_min_version() {
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_LAVISH_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
+    base=$BASE_PATH
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/lavish-axi"
+      base=$(fm_test_base_path_sans "$base" lavish-axi)
+    fi
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_LAVISH_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh") \
+      || fail "$label: optional presentation must not fail bootstrap"
+    assert_not_contains "$out" 'MISSING:' "$label: optional presentation must not block nonvisual dispatch"
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
-      missing)
-        [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      upgrade)
+        [ "$out" = "$upgrade" ] || fail "$label: expected '$upgrade', got: $out" ;;
+      unavailable)
+        [ "$out" = "$unavailable" ] || fail "$label: expected '$unavailable', got: $out" ;;
     esac
   done <<'ROWS'
-minimum lavish-axi version is accepted^0.1.46^empty
-newer lavish-axi patch is accepted^0.1.47^empty
+absent lavish-axi permits text fallback^absent^unavailable
+lavish-axi reply feature floor is accepted^0.1.80^empty
+older compatible lavish-axi retains boards and recommends upgrade^0.1.79^upgrade
+minimum legacy board version is accepted with upgrade advice^0.1.77^upgrade
+newer lavish-axi patch is accepted^0.1.81^empty
 newer lavish-axi minor is accepted^0.2.0^empty
 newer lavish-axi major is accepted^1.0.0^empty
-the patch just below the floor reports an upgrade^0.1.45^missing
-much older lavish-axi minor reports an upgrade^0.0.9^missing
-unparseable lavish-axi version reports an upgrade^lavish-axi development build^missing
+the patch just below the board compatibility floor permits text fallback^0.1.76^unavailable
+much older lavish-axi minor permits text fallback^0.0.9^unavailable
+unparseable lavish-axi version permits text fallback^lavish-axi development build^unavailable
 ROWS
-  pass "bootstrap enforces lavish-axi minimum version"
+  pass "bootstrap preserves legacy Lavish boards while recommending synchronous reply support"
 }
 
 test_tasks_axi_min_version() {
-  local label version mode case_dir fakebin out missing n archive_body multi_id
+  local label version mode requirement case_dir fakebin base out missing n archive_body multi_id installed requires expect
   missing='MISSING: tasks-axi (install: npm install -g tasks-axi)'
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version mode requirement; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/tasks-axi-$n"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    archive_body=yes
-    multi_id=yes
-    case "$version" in
-      *:noarchive)
-        archive_body=no
-        version=${version%:noarchive}
-        ;;
-    esac
-    case "$version" in
-      *:nomulti)
-        multi_id=no
-        version=${version%:nomulti}
-        ;;
-    esac
-    add_tasks_axi "$fakebin" "$version" "$archive_body" "$multi_id"
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    base=$BASE_PATH
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/tasks-axi"
+      base=$(fm_test_base_path_sans "$base" tasks-axi)
+    else
+      archive_body=yes
+      multi_id=yes
+      case "$version" in
+        *:noarchive:nomulti)
+          archive_body=no
+          multi_id=no
+          version=${version%:noarchive:nomulti}
+          ;;
+        *:nomulti:noarchive)
+          archive_body=no
+          multi_id=no
+          version=${version%:nomulti:noarchive}
+          ;;
+        *:noarchive)
+          archive_body=no
+          version=${version%:noarchive}
+          ;;
+        *:nomulti)
+          multi_id=no
+          version=${version%:nomulti}
+          ;;
+      esac
+      add_tasks_axi "$fakebin" "$version" "$archive_body" "$multi_id"
+    fi
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      outdated)
+        installed=${requirement%%|*}
+        requires=${requirement#*|}
+        expect="OUTDATED: tasks-axi (installed: $installed; requires $requires; upgrade: npm install -g tasks-axi)"
+        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum tasks-axi version is accepted^0.2.4^empty
-newer tasks-axi patch is accepted^0.2.5^empty
-newer tasks-axi minor is accepted^0.3.0^empty
-newer tasks-axi major is accepted^1.0.0^empty
-older tasks-axi with features reports an upgrade^0.1.1^missing
-the patch just below the floor reports an upgrade^0.2.3^missing
-unparseable tasks-axi version reports an upgrade^tasks-axi development build^missing
-tasks-axi at floor without archive-body reports an upgrade^0.2.4:noarchive^missing
-tasks-axi at floor without multi-id reports an upgrade^0.2.4:nomulti^missing
+minimum tasks-axi version is accepted^0.2.6^empty^
+newer tasks-axi patch is accepted^0.2.7^empty^
+newer tasks-axi minor is accepted^0.3.0^empty^
+newer tasks-axi major is accepted^1.0.0^empty^
+absent tasks-axi reports a missing tool^absent^missing^
+older tasks-axi with features reports an upgrade^0.1.1^outdated^0.1.1|0.2.6
+the patch just below the floor reports an upgrade^0.2.5^outdated^0.2.5|0.2.6
+unparseable tasks-axi version reports an upgrade^tasks-axi development build^outdated^unparseable|0.2.6
+tasks-axi at floor without archive-body reports an upgrade^0.2.6:noarchive^outdated^0.2.6|0.2.6 with update --archive-body
+tasks-axi at floor without multi-id reports an upgrade^0.2.6:nomulti^outdated^0.2.6|0.2.6 with mv multi-ID
+tasks-axi at floor without archive-body or multi-id names both capabilities^0.2.6:noarchive:nomulti^outdated^0.2.6|0.2.6 with update --archive-body and mv multi-ID
 ROWS
-  pass "bootstrap enforces tasks-axi minimum version"
+  pass "bootstrap separates an absent tasks-axi from one below its floor or feature probe"
 }
 
 # These rows exercise the real bootstrap check with a fake quota-axi answering
-# --version: below the floor produces MISSING, while at or above is silent.
+# --version: absent produces MISSING, below the floor produces OUTDATED, while at
+# or above is silent.
 test_quota_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
+  local label version mode installed expect case_dir fakebin base out missing n
   missing='MISSING: quota-axi (install: npm install -g quota-axi)'
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label version mode installed; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/quota-axi-$n"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    base=$BASE_PATH
+    if [ "$version" = absent ]; then
+      rm -f "$fakebin/quota-axi"
+      base=$(fm_test_base_path_sans "$base" quota-axi)
+    fi
+    out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_QUOTA_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
+      outdated)
+        expect="OUTDATED: quota-axi (installed: $installed; requires 0.1.51; upgrade: quota-axi update)"
+        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
     esac
   done <<'ROWS'
-minimum quota-axi version is accepted^0.1.29^empty
-newer quota-axi patch is accepted^0.1.30^empty
-newer quota-axi minor is accepted^0.2.0^empty
-newer quota-axi major is accepted^1.0.0^empty
-the patch just below the floor reports an upgrade^0.1.28^missing
-much older quota-axi minor reports an upgrade^0.0.9^missing
-unparseable quota-axi version reports an upgrade^quota-axi development build^missing
+minimum quota-axi version is accepted^0.1.51^empty^
+newer quota-axi patch is accepted^0.1.52^empty^
+newer quota-axi minor is accepted^0.2.0^empty^
+newer quota-axi major is accepted^1.0.0^empty^
+absent quota-axi reports a missing tool^absent^missing^
+the patch just below the floor reports an upgrade^0.1.50^outdated^0.1.50
+much older quota-axi minor reports an upgrade^0.0.9^outdated^0.0.9
+unparseable quota-axi version reports an upgrade^quota-axi development build^outdated^unparseable
 ROWS
-  pass "bootstrap enforces quota-axi minimum version"
+  pass "bootstrap separates an absent quota-axi from one below its version floor"
 }
 
 test_git_is_required_with_supported_install_instruction() {
@@ -894,7 +939,7 @@ test_orca_backend_gates_orca_tool_only_when_selected() {
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
   printf '%s\n' orca > "$case_dir/home/config/backend"
   fakebin=$(make_fake_toolchain "$case_dir")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" orca)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ "$out" = "$missing_orca" ] || fail "backend=orca should require only the Orca-specific missing tool, got: $out"
 
@@ -935,12 +980,14 @@ test_session_provider_backends_do_not_require_tmux() {
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir" "$cli")
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      REX_BIN_DIR="$case_dir/no-rex-bin-dir" FM_BACKEND_REX_BUNDLE_BIN="$case_dir/no-rex" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     [ -z "$out" ] || fail "backend=$backend with tmux absent but its own deps present should be silent, got: $out"
   done <<'ROWS'
 herdr^herdr
 zellij^zellij
 cmux^cmux
+rex^rex
 ROWS
   pass "bootstrap: session-provider backends require their own CLI + jq + treehouse, never tmux"
 }
@@ -958,22 +1005,28 @@ test_session_provider_backends_gate_own_cli_not_tmux() {
     # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
     fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-    if [ "$backend" = herdr ]; then
-      missing="MISSING_MANUAL: herdr (instructions: https://herdr.dev)"
-    else
-      missing="MISSING: $cli"
-    fi
+      FM_BACKEND_PASEO_BUNDLE_BIN="$case_dir/no-paseo" REX_BIN_DIR="$case_dir/no-rex-bin-dir" \
+      FM_BACKEND_REX_BUNDLE_BIN="$case_dir/no-rex" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+    case "$backend" in
+      herdr) missing="MISSING_MANUAL: herdr (instructions: https://herdr.dev)" ;;
+      paseo) missing="MISSING_MANUAL: paseo (instructions: https://paseo.sh)" ;;
+      rex) missing="MISSING_MANUAL: rex (instructions: https://www.superlogical.com/rex)" ;;
+      *) missing="MISSING: $cli" ;;
+    esac
     assert_contains "$out" "$missing" "backend=$backend must fail closed on its own missing session CLI"
-    if [ "$backend" = herdr ]; then
-      assert_not_contains "$out" "MISSING: herdr (install:" \
-        "backend=herdr must not advertise manual guidance as an executable install command"
-    fi
+    case "$backend" in
+      herdr|paseo|rex)
+        assert_not_contains "$out" "MISSING: $backend (install:" \
+          "backend=$backend must not advertise manual guidance as an executable install command"
+        ;;
+    esac
     assert_not_contains "$out" "MISSING: tmux" "backend=$backend must not demand tmux when its own CLI is missing"
   done <<'ROWS'
 herdr^herdr
 zellij^zellij
 cmux^cmux
+paseo^paseo
+rex^rex
 ROWS
   pass "bootstrap: a session-provider backend gates its own CLI, never a false tmux requirement"
 }
@@ -1012,7 +1065,7 @@ test_unknown_backend_reports_invalid_configuration() {
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux)" \
+  assert_contains "$out" "BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux paseo rex t3code)" \
     "bootstrap should report an unknown resolved backend"
   assert_not_contains "$out" "MISSING: tmux" "an unknown backend should not silently fall back to tmux dependencies"
   pass "bootstrap: unknown resolved backends fail closed with an actionable diagnostic"
@@ -1064,7 +1117,7 @@ test_treehouse_lease_check_follows_resolved_backend() {
   local case_dir fakebin out
   # A treehouse that lacks durable --lease support is only a problem for a backend
   # that actually uses treehouse. Orca owns its own worktrees, so an old treehouse
-  # must NOT trip MISSING: treehouse under backend=orca...
+  # must NOT trip the treehouse report under backend=orca...
   case_dir="$TMP_ROOT/orca-old-treehouse"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
@@ -1086,7 +1139,7 @@ test_treehouse_lease_check_follows_resolved_backend() {
   fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "MISSING: treehouse" "backend=herdr must still require treehouse with durable lease support"
+  assert_contains "$out" "OUTDATED: treehouse" "backend=herdr must still require treehouse with durable lease support"
   assert_not_contains "$out" "MISSING: tmux" "backend=herdr must not demand tmux even when treehouse is too old"
 
   # `get --lease` alone protects only newly acquired leases. Firstmate also
@@ -1100,7 +1153,7 @@ test_treehouse_lease_check_follows_resolved_backend() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_TREEHOUSE_EXISTING_LEASE_HELP=0 \
     "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "MISSING: treehouse" \
+  assert_contains "$out" "OUTDATED: treehouse" \
     "backend=herdr must reject treehouse without state-only lease takeover"
   pass "bootstrap: the treehouse lease check follows the resolved backend's worktree provider"
 }
@@ -1292,17 +1345,17 @@ exit 1
 SH
   chmod +x "$fakebin/gh"
 
-  all_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  all_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$all_out" "MISSING: node (install:" "the unsplit run lost its local diagnostic"
   assert_contains "$all_out" "NEEDS_GH_AUTH" "the unsplit run lost its network diagnostic"
 
-  skip_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  skip_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=skip "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$skip_out" "MISSING: node (install:" "the local half lost its own diagnostic"
   assert_not_contains "$skip_out" "NEEDS_GH_AUTH" "the local half still made a network call"
 
-  only_out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  only_out=$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=only "$ROOT/bin/fm-bootstrap.sh")
   assert_contains "$only_out" "NEEDS_GH_AUTH" "the network half lost its own diagnostic"
   assert_not_contains "$only_out" "MISSING: node" "the network half repeated the local half's work"
@@ -1313,7 +1366,7 @@ SH
 
   # A typo must never silently drop a safety sweep, so anything unrecognized
   # resolves to the complete run.
-  [ "$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+  [ "$(PATH="$fakebin:$(fm_test_base_path_sans "$BASE_PATH" node)" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_NETWORK=sikp "$ROOT/bin/fm-bootstrap.sh")" = "$all_out" ] \
     || fail "an unrecognized FM_BOOTSTRAP_NETWORK value did not fall back to the complete run"
   pass "bootstrap: FM_BOOTSTRAP_NETWORK partitions one run into local and network halves"
@@ -1425,42 +1478,113 @@ test_tasks_axi_verdict_handoff_is_consumed_once() {
   mkdir -p "$case_dir/home/config"
   fakebin=$(make_fake_toolchain "$case_dir")
   log="$case_dir/tasks-axi.log"
+  # Every invocation is logged, so each case can assert exactly how many probes a
+  # run paid for. The default build is below the floor and advertises multi-ID mv,
+  # so the capability cases switch only the archive-body probe off.
   cat > "$fakebin/tasks-axi" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FM_FAKE_TASKS_AXI_LOG:?}"
-printf '0.0.1\n'
+if [ "${1:-}" = --version ]; then
+  printf '%s\n' "${FM_FAKE_TASKS_AXI_VERSION:-0.0.1}"
+  exit 0
+fi
+if [ "${1:-}" = update ] && [ "${2:-}" = --help ]; then
+  [ "${FM_FAKE_TASKS_AXI_ARCHIVE_BODY:-0}" = 1 ] && printf '%s\n' 'usage: tasks-axi update --archive-body'
+  exit 0
+fi
+if [ "${1:-}" = mv ] && [ "${2:-}" = --help ]; then
+  printf '%s\n' "${FM_FAKE_TASKS_AXI_MV_USAGE:-usage: tasks-axi mv <id> [<id>...] --to <dir>}"
+  exit 0
+fi
 exit 0
 SH
   chmod +x "$fakebin/tasks-axi"
 
-  # Without the handoff, the incompatible stub is probed and reported.
+  # Without the handoff, the incompatible stub is probed and reported. A build
+  # below the floor is answered by the version, so the run must not also pay for
+  # the capability probes it could never use.
   : > "$log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "MISSING: tasks-axi (install:" "the unaided run did not probe tasks-axi"
+  assert_contains "$out" "OUTDATED: tasks-axi (installed:" "the unaided run did not probe tasks-axi"
   assert_grep '--version' "$log" "the unaided run never ran the probe"
+  [ "$(grep -c -F -- '--help' "$log")" = 0 ] \
+    || fail "a below-floor build ran capability probes its verdict never used: $(cat "$log")"
 
-  # With it, the probe is skipped entirely and the handed-in verdict is used.
+  # A build at the floor runs each capability probe once, and the requirement text
+  # reuses those results instead of running them again.
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_TASKS_AXI_VERSION=0.2.6 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" \
+    'OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with update --archive-body; upgrade: npm install -g tasks-axi)' \
+    "the at-floor build did not name the capability it lacks"
+  [ "$(grep -c -F -- '--help' "$log")" = 2 ] \
+    || fail "the requirement text repeated a capability probe: $(cat "$log")"
+
+  # With the verdict alone, the probe is skipped entirely and the handed-in
+  # verdict is used.
   : > "$log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
     FM_TASKS_AXI_COMPATIBLE=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_not_contains "$out" "MISSING: tasks-axi" "the handed-in verdict was ignored"
+  assert_not_contains "$out" "OUTDATED: tasks-axi" "the handed-in verdict was ignored"
   [ ! -s "$log" ] || fail "the handed-in verdict did not save the probe: $(cat "$log")"
+
+  # An incompatible verdict carries its reason, so the child's OUTDATED line is as
+  # specific as the parent's probe and still costs no probe of its own beyond the
+  # version it prints as "installed:".
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_TASKS_AXI_VERSION=0.2.6 \
+    FM_TASKS_AXI_COMPATIBLE=0 FM_TASKS_AXI_CHECK_REASON=update-archive-body "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" \
+    'OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with update --archive-body; upgrade: npm install -g tasks-axi)' \
+    "the handed-in reason did not reach the requirement text"
+  [ "$(grep -c -F -- '--help' "$log")" = 0 ] \
+    || fail "the handed-in reason did not save the capability probes: $(cat "$log")"
+
+  # Both capabilities are named, in the vocabulary's fixed order.
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_TASKS_AXI_VERSION=0.2.6 \
+    FM_TASKS_AXI_COMPATIBLE=0 FM_TASKS_AXI_CHECK_REASON=update-archive-body,mv-multi-id "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" \
+    'OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with update --archive-body and mv multi-ID; upgrade: npm install -g tasks-axi)' \
+    "the handed-in reason did not name both capabilities"
+  [ "$(grep -c -F -- '--help' "$log")" = 0 ] \
+    || fail "the handed-in reason did not save the capability probes: $(cat "$log")"
 
   # A malformed value is not a verdict.
   : > "$log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
     FM_TASKS_AXI_COMPATIBLE=yes "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "MISSING: tasks-axi (install:" "a malformed handoff value was trusted"
+  assert_contains "$out" "OUTDATED: tasks-axi (installed:" "a malformed handoff value was trusted"
+
+  # A malformed reason is not a reason either: the child falls back to its own
+  # probes rather than trusting text outside the vocabulary.
+  : > "$log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    FM_FAKE_TASKS_AXI_VERSION=0.2.6 \
+    FM_TASKS_AXI_COMPATIBLE=0 FM_TASKS_AXI_CHECK_REASON=bogus "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" \
+    'OUTDATED: tasks-axi (installed: 0.2.6; requires 0.2.6 with update --archive-body; upgrade: npm install -g tasks-axi)' \
+    "a malformed handoff reason suppressed the probes"
+  assert_grep 'update --help' "$log" "a malformed handoff reason was trusted instead of probing"
 
   # And the handoff never reaches a grandchild: bootstrap spawns agents, and a
-  # verdict cached into an agent's environment would outlive the tool it describes.
-  out=$(FM_TASKS_AXI_COMPATIBLE=1 bash -c '. "$1"; printf "%s\n" "${FM_TASKS_AXI_COMPATIBLE-unset}"' \
+  # verdict or reason cached into an agent's environment would outlive the tool
+  # they describe.
+  out=$(FM_TASKS_AXI_COMPATIBLE=1 FM_TASKS_AXI_CHECK_REASON=compatible bash -c \
+    '. "$1"; printf "%s %s\n" "${FM_TASKS_AXI_COMPATIBLE-unset}" "${FM_TASKS_AXI_CHECK_REASON-unset}"' \
     _ "$ROOT/bin/fm-tasks-axi-lib.sh")
-  [ "$out" = unset ] || fail "sourcing the library left the handoff in the environment: $out"
-  pass "bootstrap: the tasks-axi compatibility verdict travels exactly one process hop"
+  [ "$out" = 'unset unset' ] || fail "sourcing the library left the handoff in the environment: $out"
+  pass "bootstrap: the tasks-axi compatibility verdict and reason travel exactly one process hop"
 }
 
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
@@ -1484,8 +1608,32 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
 
+# config/pr-health-monitor is the only thing that arms the PR health monitor.
+test_pr_health_monitor_arms_only_with_its_flag() {
+  local case_dir fakebin out flag
+  for flag in on off; do
+    case_dir="$TMP_ROOT/pr-health-$flag"
+    mkdir -p "$case_dir/home/config" "$case_dir/home/data" "$case_dir/home/state"
+    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+    [ "$flag" = off ] || : > "$case_dir/home/config/pr-health-monitor"
+    fakebin=$(make_fake_toolchain "$case_dir")
+    add_real_jq "$fakebin"
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+    [ -z "$out" ] || fail "bootstrap with the PR health flag $flag printed: $out"
+    if [ "$flag" = on ]; then
+      [ -f "$case_dir/home/state/pr-health.check.sh" ] && [ -f "$case_dir/home/state/pr-health.check-trust" ] \
+        || fail "bootstrap did not register the PR health monitor: $(ls -A "$case_dir/home/state")"
+    else
+      [ -z "$(ls -A "$case_dir/home/state")" ] \
+        || fail "bootstrap without the PR health flag left state: $(ls -A "$case_dir/home/state")"
+    fi
+  done
+  pass "bootstrap arms the PR health monitor only when config/pr-health-monitor exists"
+}
+
 test_crew_dispatch_validation() {
-  local label body expect mode case_dir fakebin out n
+  local label body expect mode case_dir fakebin out child_env n
   n=0
   while IFS='^' read -r label body mode expect; do
     [ -n "$label" ] || continue
@@ -1497,7 +1645,7 @@ test_crew_dispatch_validation() {
     fakebin=$(make_fake_toolchain "$case_dir")
     add_real_jq "$fakebin"
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+      TYPESAFE_API_KEY=test-key FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
@@ -1509,14 +1657,26 @@ test_crew_dispatch_validation() {
   done <<'ROWS'
 malformed dispatch config is flagged^{"rules":[^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON
 unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: spaceship
-unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
+codex Luna max effort is accepted^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5.6-luna","effort":"max"}}]}^empty^
+codex unsupported model max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
 unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:max
 unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:xhigh
-pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
-pi-signed max effort is accepted^{"rules":[{"when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
+native pi ultra is accepted^{"rules":[],"default":{"harness":"pi","model":"codex-native/gpt-6-astra","effort":"ultra","provider":"codex"}}^empty^
+native signed pi ultra is accepted^{"rules":[{"when":"native reasoning","use":{"harness":"pi-signed","model":"codex-native/gpt-6-astra","effort":"ultra","provider":"codex"}}]}^empty^
+ordinary pi ultra is refused^{"default":{"harness":"pi","model":"openai-codex/gpt-6-astra","effort":"ultra","provider":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
+missing native model ultra is refused^{"default":{"harness":"pi","effort":"ultra","provider":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
+empty native model ultra is refused^{"default":{"harness":"pi","model":"codex-native/","effort":"ultra","provider":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: pi:ultra
+codex harness ultra is refused^{"default":{"harness":"codex","model":"codex-native/gpt-6-astra","effort":"ultra"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:ultra
+pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max","provider":"codex"}}]}^empty^
+pi-signed max effort is accepted^{"rules":[{"when":"signed coding","use":{"harness":"pi-signed","model":"openai-codex/gpt-5.6-sol","effort":"max","provider":"codex"}}]}^empty^
 muse shared efforts are accepted^{"rules":[{"when":"muse low","use":{"harness":"muse","effort":"low"}},{"when":"muse medium","use":{"harness":"muse","effort":"medium"}},{"when":"muse high","use":{"harness":"muse","effort":"high"}},{"when":"muse xhigh","use":{"harness":"muse","effort":"xhigh"}},{"when":"muse max","use":{"harness":"muse","effort":"max"}}]}^empty^
 unsupported muse ultra effort is flagged^{"rules":[{"when":"muse ultra","use":{"harness":"muse","effort":"ultra"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: muse:ultra
-unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
+agy model profile is accepted^{"rules":[{"when":"agy work","use":{"harness":"agy","model":"gemini-3.8-flash-high"}}]}^empty^
+gemini profile with explicit provider is accepted^{"rules":[{"when":"gemini work","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}^empty^
+agy low medium high efforts are accepted^{"rules":[{"when":"agy low","use":{"harness":"agy","effort":"low"}},{"when":"agy medium","use":{"harness":"agy","effort":"medium"}},{"when":"agy high","use":{"harness":"agy","effort":"high"}}]}^empty^
+unsupported agy xhigh effort is flagged^{"rules":[{"when":"agy xhigh","use":{"harness":"agy","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:xhigh
+unsupported agy max effort is flagged^{"rules":[{"when":"agy max","use":{"harness":"agy","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: agy:max
+unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high","provider":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
 kimi model profile is accepted^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3"}}]}^empty^
 unsupported kimi effort is flagged^{"rules":[{"when":"kimi work","use":{"harness":"kimi","model":"kimi-code/k3","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: kimi:high
 cursor model profile is accepted^{"rules":[{"when":"cursor work","use":{"harness":"cursor","model":"cursor-grok-4.5-high"}}]}^empty^
@@ -1525,61 +1685,114 @@ array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":
 array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
 one-element array use is accepted^{"rules":[{"when":"focused feature","use":[{"harness":"claude"}]}]}^empty^
 default array is accepted^{"default":[{"harness":"pi","model":"anthropic/claude-sonnet-5"},{"harness":"grok"}]}^empty^
+provider-less multi-provider profile remains accepted without opt-in^{"rules":[{"when":"cross-provider work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}^empty^
 one-element default array is accepted^{"default":[{"harness":"codex"}]}^empty^
 empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
 array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
-array profile with malformed model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","model":5}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present
+array profile with malformed model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","model":5}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
+resolve fields are accepted^{"rules":[{"when":"hard design","approval":"captain","floor":{"scope":"model:fable","min_percent":20,"provider":"claude"},"use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"codex"},{"harness":"codex","model":"gpt-5.6-sol","floor":{"scope":"all_models","min_percent":50}}]}],"default":[{"harness":"pi","model":"kimi-code/k3","provider":"kimi","floor":{"scope":"all_models","min_percent":10}}]}^empty^
+rule min_confidence is accepted^{"rules":[{"when":"hard design","min_confidence":0.9,"use":{"harness":"claude"}}]}^empty^
+rule min_confidence out of range is flagged^{"rules":[{"when":"hard design","min_confidence":1.2,"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - min_confidence must be a number from 0 through 1 when present
+non-captain approval is flagged^{"rules":[{"when":"hard design","approval":"firstmate","use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - approval must be "captain" when present
+rule floor without provider is flagged^{"rules":[{"when":"hard design","floor":{"scope":"model:fable","min_percent":20},"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z
+rule floor uppercase provider is flagged^{"rules":[{"when":"hard design","floor":{"scope":"model:fable","min_percent":20,"provider":"CLAUDE"},"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z
+rule floor out of range is flagged^{"rules":[{"when":"hard design","floor":{"scope":"model:fable","min_percent":120,"provider":"claude"},"use":{"harness":"claude"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z
+empty profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":""}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
+whitespace profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":" claude"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
+newline profile provider is flagged^{"rules":[{"when":"images","use":[{"harness":"pi","model":"openai-codex/gpt-5.6-sol","provider":"claude\n"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
+profile floor without scope is flagged^{"rules":[{"when":"images","use":[{"harness":"codex","floor":{"min_percent":50}}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
+profile floor provider override is flagged^{"rules":[{"when":"images","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":50,"provider":"claude"}}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - use profile floor needs scope and min_percent 0..100
 unknown select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"mystery"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown select: mystery
-array profile unsupported effort is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
+array profile codex max without Luna model is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
 empty default array is flagged^{"default":[]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default needs at least one profile
 non-object default array entry is flagged^{"default":["codex"]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile must be an object
 default array profile without harness is flagged^{"default":[{"model":"gpt-5.5"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each default profile needs harness
-default array malformed effort is flagged^{"default":[{"harness":"codex","effort":3}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings when present
+default array malformed effort is flagged^{"default":[{"harness":"codex","effort":3}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present
+default profile floor without min_percent is flagged^{"default":[{"harness":"codex","floor":{"scope":"all_models"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile floor needs scope and min_percent 0..100
+default profile floor provider override is flagged^{"default":{"harness":"codex","floor":{"scope":"all_models","min_percent":50,"provider":"claude"}}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - default profile floor needs scope and min_percent 0..100
 ROWS
-  pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
-}
 
-test_crew_dispatch_typed_validation_is_opt_in() {
-  local case_dir fakebin out
-  case_dir="$TMP_ROOT/dispatch-typed"
+  case_dir="$TMP_ROOT/dispatch-opt-in-gate"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf '%s\n' '{"rules":[{"when":"typed","approval":"firstmate","use":{"harness":"claude","provider":"CLAUDE","floor":{"scope":"all_models","min_percent":101}}}]}' \
-    > "$case_dir/home/config/crew-dispatch.json"
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
 
+  printf '%s\n' '{"rules":[{"when":"legacy malformed model","use":{"harness":"codex","model":5}}]}' > "$case_dir/home/config/crew-dispatch.json"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ -z "$out" ] || fail "typed resolver-only fields must be inert without TYPESAFE_API_KEY, got: $out"
+  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings when present' ] \
+    || fail "no-key use-profile diagnostic changed from main, got: $out"
 
-  printf '%s\n' 'TYPESAFE_API_KEY=test-key-not-secret' > "$case_dir/home/.env"
+  printf '%s\n' '{"default":{"harness":"codex","effort":3}}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - default profile model and effort must be non-empty strings when present' ] \
+    || fail "no-key default-profile diagnostic changed from main, got: $out"
+
+  printf '%s\n' '{"rules":[{"when":"legacy metadata","approval":"firstmate","floor":{"scope":"all_models","min_percent":200,"provider":"CLAUDE"},"use":{"harness":"claude","provider":"Anthropic","floor":{"scope":"all_models"}}}]}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "resolver-only fields must be ignored without the typed key, got: $out"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$case_dir/home/.env"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
   [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - use profile model and effort must be non-empty strings, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' ] \
-    || fail "typed resolver-only fields must be validated with TYPESAFE_API_KEY, got: $out"
+    || fail "typed .env key must activate resolver-field validation, got: $out"
 
-  pass "bootstrap validates typed dispatch fields only when TYPESAFE_API_KEY opts in"
+  rm -f "$case_dir/home/.env"
+  printf '%s\n' '{"default":{"harness":"devin","model":"swe-2-medium"}}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "no-key bootstrap must accept the verified devin worker adapter, got: $out"
+  printf '%s\n' '{"default":{"harness":"cortex","model":"claude-sonnet-5-5"}}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "no-key bootstrap must accept the verified cortex worker adapter, got: $out"
+  printf '%s\n' '{"rules":[{"when":"small clear task","use":{"harness":"commandcode","model":"deepseek/deepseek-v4.1-flash","effort":"low"}}]}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "no-key bootstrap must accept the verified commandcode worker adapter, got: $out"
+  printf '%s\n' '{"rules":[{"when":"gemini work","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}' > "$case_dir/home/config/crew-dispatch.json"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ "$out" = 'CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: gemini' ] \
+    || fail "no-key bootstrap must preserve its former verified-harness baseline, got: $out"
+  printf '%s\n' 'TYPESAFE_API_KEY=test-key' > "$case_dir/home/.env"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "typed resolution should add verified Gemini crewmate routing, got: $out"
+
+  rm -f "$case_dir/home/.env"
+  : > "$case_dir/child-env.log"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    TYPESAFE_API_KEY=test-key FM_TEST_CHILD_ENV_LOG="$case_dir/child-env.log" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "environment-key validation should remain silent, got: $out"
+  child_env=$(cat "$case_dir/child-env.log")
+  [ -n "$child_env" ] || fail "bootstrap child environment probe did not run"
+  assert_not_contains "$child_env" 'secret-present' "bootstrap children never inherit the typesafe key"
+  pass "bootstrap gates resolver fields and additive harnesses on the typed key"
 }
 
 test_bootstrap_reporting
+test_absent_tool_cases_hide_a_real_install_in_the_base_path
 test_no_mistakes_min_version
 test_backpass_min_version
-test_backpass_absent_reports_missing
 test_tool_autoupdate_disabled_by_default
 test_tool_autoupdate_updates_outdated_and_skips_current
-test_tool_autoupdate_installs_pinned_verified_version
+test_tool_autoupdate_holds_when_throttle_marker_is_unwritable
 test_tool_autoupdate_never_downgrades_a_newer_install
 test_tool_autoupdate_holds_when_versions_cannot_be_compared
-test_tool_autoupdate_malformed_age_days_falls_back_to_default
+test_tool_autoupdate_reports_failed_install
+test_tool_autoupdate_reports_unavailable_npm
+test_tool_autoupdate_malformed_env_falls_back_to_defaults
 test_tool_autoupdate_timeout_relays_completed_updates
 test_tool_autoupdate_compares_multidigit_components_numerically
-test_tool_autoupdate_malformed_timeout_falls_back_to_default
-test_tool_autoupdate_installs_same_day_release_by_default
-test_tool_autoupdate_holds_a_too_recent_release_when_age_gate_is_set
+test_tool_autoupdate_age_gate
 test_tool_autoupdate_respects_24h_throttle
-test_tool_autoupdate_reports_install_failure
-test_tool_autoupdate_reports_npm_unavailable
+test_tool_autoupdate_runs_only_in_network_phase_and_not_detect_only
+test_tool_autoupdate_skipped_when_lock_holder_changed
 test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version
@@ -1605,5 +1818,5 @@ test_network_sweeps_recheck_lock_ownership
 test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
+test_pr_health_monitor_arms_only_with_its_flag
 test_crew_dispatch_validation
-test_crew_dispatch_typed_validation_is_opt_in

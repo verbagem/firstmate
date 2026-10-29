@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Poll the linear_dispatch_queue Supabase table (the Vercel webhook's bridge
 // table - see ops/linear-dispatch-webhook/) for Linear issues that entered
-// Next + agent-ready, claim them, and dispatch a real Firstmate crewmate for
+// Next + agent-ready, claim them, and publish a durable Firstmate intake for
 // each. This is Component 2's Firstmate-side half of
 // resources/modern-ai-productivity-pack/01-SHARED-WORKSPACE.md's dispatch flow.
 //
@@ -10,13 +10,14 @@
 //   Linear (Next + agent-ready) -> Vercel webhook -> Supabase queue row (pending)
 //     -> this poller claims it (compare-and-swap on status='pending') and:
 //        1. best-effort creates a Notion Task under the matching business
-//           Project (plan-before-dispatch; skipped gracefully if no mapping
-//           exists yet for that business - never blocks dispatch)
-//        2. scaffolds a crewmate brief via fm-brief.sh
-//        3. spawns a crewmate via fm-spawn.sh
-//        4. moves the Linear issue to Doing and posts a "starting" comment
-//        5. marks the Supabase row dispatched (or failed, with the error kept
-//           in the row for inspection)
+//           Project (skipped gracefully if no mapping exists yet)
+//        2. writes a complete local intake scaffold
+//        3. marks the Supabase row waiting_for_dispatch
+// Firstmate still owns task classification, delivery mode, merge authority,
+// model-profile resolution, and worker launch.
+// Intake publication is exclusive and atomic. A retry reuses only a byte-identical
+// regular brief and does not call Notion again; a divergent existing path refuses
+// before any Notion side effect and leaves the claimed row in a failed state.
 //
 // Run manually (one pass) or wire into a periodic wakeup; this script does
 // not loop or daemonize itself - one invocation is one pass over pending rows.
@@ -27,8 +28,8 @@
 // rather than one shared team holding a Project per business). The webhook
 // is workspace-wide (allPublicTeams) so it fires for issues in any team.
 
-import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -75,7 +76,6 @@ function loadEnv(envPath) {
 }
 
 const env = loadEnv(ENV_PATH);
-const LINEAR_API_KEY = env.LINEAR_API_KEY;
 const SUPABASE_URL = env.BH1VE_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = env.BH1VE_SUPABASE_SERVICE_KEY;
 const NOTION_API_KEY = env.NOTION_API_KEY;
@@ -85,13 +85,12 @@ function fail(message) {
   process.exitCode = 1;
 }
 
-if (!LINEAR_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  fail("missing LINEAR_API_KEY / BH1VE_SUPABASE_URL / BH1VE_SUPABASE_SERVICE_KEY in _config/.env");
+if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  fail("missing BH1VE_SUPABASE_URL / BH1VE_SUPABASE_SERVICE_KEY in _config/.env");
   process.exit(1);
 }
 // NOTION_API_KEY is optional: if absent, createNotionTask logs and skips
-// rather than blocking dispatch (Notion documentation matters, but a missing
-// key should never be the reason a real crewmate dispatch doesn't happen).
+// rather than blocking intake publication.
 
 async function supabase(pathAndQuery, init = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${pathAndQuery}`, {
@@ -109,30 +108,6 @@ async function supabase(pathAndQuery, init = {}) {
     throw new Error(`supabase ${init.method || "GET"} ${pathAndQuery} -> ${res.status}: ${body}`);
   }
   return res.json();
-}
-
-async function linearGraphQL(query, variables) {
-  const res = await fetch("https://api.linear.app/graphql", {
-    method: "POST",
-    headers: { Authorization: LINEAR_API_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await res.json();
-  if (json.errors) throw new Error(`linear graphql error: ${JSON.stringify(json.errors)}`);
-  return json.data;
-}
-
-const stateIdCache = new Map();
-async function stateIdByName(teamId, name) {
-  const key = `${teamId}:${name}`;
-  if (stateIdCache.has(key)) return stateIdCache.get(key);
-  const data = await linearGraphQL(
-    `query($teamId: String!) { team(id: $teamId) { states { nodes { id name } } } }`,
-    { teamId },
-  );
-  for (const state of data.team.states.nodes) stateIdCache.set(`${teamId}:${state.name}`, state.id);
-  if (!stateIdCache.has(key)) throw new Error(`no Linear state named "${name}" on team ${teamId}`);
-  return stateIdCache.get(key);
 }
 
 async function claimPendingRows() {
@@ -162,10 +137,6 @@ async function markRow(id, fields) {
 
 function slugify(identifier) {
   return `linear-${identifier.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-}
-
-function run(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { cwd: FM_ROOT, encoding: "utf8", ...opts });
 }
 
 function notionProjectPageId(notionProjectUrl) {
@@ -213,7 +184,35 @@ async function createNotionTask(routing, row) {
   return page.id;
 }
 
-async function dispatchOne(row) {
+function matchingExistingIntake(briefPath, scaffold) {
+  let stat;
+  try {
+    stat = lstatSync(briefPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+  if (!stat.isFile() || readFileSync(briefPath, "utf8") !== scaffold) {
+    throw new Error(`existing brief differs from Linear intake: ${briefPath}`);
+  }
+  return true;
+}
+
+function publishIntakeBrief(briefPath, scaffold) {
+  const tmpPath = `${briefPath}.tmp.${process.pid}.${randomUUID()}`;
+  writeFileSync(tmpPath, scaffold, { flag: "wx", mode: 0o600 });
+  try {
+    linkSync(tmpPath, briefPath);
+    return true;
+  } catch (error) {
+    if (error.code !== "EEXIST" || !matchingExistingIntake(briefPath, scaffold)) throw error;
+    return false;
+  } finally {
+    unlinkSync(tmpPath);
+  }
+}
+
+async function publishIntake(row) {
   const routing = TEAM_ROUTING[row.linear_team_id];
   if (!routing) {
     await markRow(row.id, { status: "failed" });
@@ -223,33 +222,29 @@ async function dispatchOne(row) {
 
   const taskId = slugify(row.linear_identifier);
   try {
-    await createNotionTask(routing, row);
-
-    run("bin/fm-brief.sh", [taskId, routing.repo]);
-    const briefPath = path.join(FM_ROOT, "data", taskId, "brief.md");
-    const brief = readFileSync(briefPath, "utf8");
+    const taskDir = path.join(FM_ROOT, "data", taskId);
+    const briefPath = path.join(taskDir, "brief.md");
     const businessLine = routing.business ? `Business area: \`${routing.business}\`.\n\n` : "";
     const taskText =
       `${businessLine}${row.title}\n\n${row.description || "(no description on the Linear issue)"}\n\n` +
-      `Source: Linear issue ${row.linear_identifier} — ${row.linear_url}\n` +
-      `When done, the result should also be summarized as a comment back on that Linear issue ` +
-      `(firstmate posts it after you report done — you do not need Linear access yourself).`;
-    writeFileSync(briefPath, brief.replace("{TASK}", taskText));
+      `Source: Linear issue ${row.linear_identifier} — ${row.linear_url}`;
+    const scaffold = `# Linear intake\n\n` +
+      `Status: waiting-for-dispatch\n` +
+      `Task id: ${taskId}\n` +
+      `Project: projects/${routing.repo}\n\n` +
+      `# Task\n\n## Captain's intent\n\n${taskText}\n\n` +
+      `## Firstmate spec\n\n` +
+      `Firstmate must classify this intake, write the implementation or research specification, ` +
+      `choose any delivery mode and merge authority, and resolve the dispatch profile before launch.\n\n` +
+      `# Unresolved dispatch decisions\n\n` +
+      `- Task kind\n- Delivery mode\n- Merge authority\n- Dispatch profile\n`;
+    mkdirSync(taskDir, { recursive: true });
+    if (publishIntakeBrief(briefPath, scaffold)) {
+      await createNotionTask(routing, row);
+    }
 
-    run("bin/fm-spawn.sh", [taskId, `projects/${routing.repo}`, "--effort", "medium"]);
-
-    const doingId = await stateIdByName(row.linear_team_id, "Doing");
-    await linearGraphQL(
-      `mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }`,
-      { id: row.linear_issue_id, input: { stateId: doingId } },
-    );
-    await linearGraphQL(
-      `mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }`,
-      { input: { issueId: row.linear_issue_id, body: `Starting — dispatched to Firstmate crewmate \`${taskId}\`.` } },
-    );
-
-    await markRow(row.id, { status: "dispatched", firstmate_task_id: taskId });
-    process.stdout.write(`dispatched ${row.linear_identifier} -> ${taskId}\n`);
+    await markRow(row.id, { status: "waiting_for_dispatch", firstmate_task_id: taskId });
+    process.stdout.write(`waiting-for-dispatch ${row.linear_identifier} -> ${taskId}\n`);
   } catch (error) {
     await markRow(row.id, { status: "failed" });
     process.stdout.write(`failed ${row.linear_identifier}: ${error.message}\n`);
@@ -263,7 +258,7 @@ async function main() {
     return;
   }
   for (const row of claimed) {
-    await dispatchOne(row);
+    await publishIntake(row);
   }
 }
 

@@ -131,6 +131,40 @@ test_owned_lock_is_silent() {
   pass "fm-sessionstart-nudge: a lock holder in process ancestry is already run"
 }
 
+# A firstmate running inside a PID namespace - a container, or `codex sandbox` -
+# holds its home lock from a harness that IS pid 1, so this hook must recognize
+# that owner. The old walk rejected a lock pid of 1 outright and stopped before
+# comparing pid 1, so the hook nudged a session that had already run.
+# A fake ps cannot reach this path: `kill -0` is a shell builtin gating the lock
+# pid, and on a host `kill -0 1` fails for an unprivileged user, so the case
+# needs a real namespace where pid 1 is this user's own process.
+test_namespace_pid1_lock_holder_is_silent() {
+  local root="$TMP_ROOT/namespace-pid1" out status=0
+  if ! command -v unshare >/dev/null 2>&1 \
+    || ! unshare -rpf --mount-proc true >/dev/null 2>&1; then
+    printf '# skip: unprivileged PID namespaces are unavailable here, so the namespace pid 1 lock owner is unverified\n'
+    return 0
+  fi
+  make_primary "$root"
+
+  # Non-vacuity: inside the same namespace, with no lock at all, the hook must
+  # still produce its nudge, so silence below means the owner was recognized.
+  out=$(unshare -rpf --mount-proc bash -c \
+    "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'; exit \$?") || status=$?
+  expect_code 0 "$status" "namespace nudge without a lock"
+  [ "$out" = "$NUDGE_LINE" ] \
+    || fail "the namespace fixture did not nudge without a lock, so its silence proves nothing: $out"
+
+  printf '1\n' > "$root/state/.lock"
+  status=0
+  out=$(unshare -rpf --mount-proc bash -c \
+    "FM_GATE_REFUSE_BYPASS=0 FM_ROOT_OVERRIDE='$root' FM_HOME='$root' '$NUDGE'; exit \$?") || status=$?
+  expect_code 0 "$status" "namespace pid 1 lock nudge"
+  [ -z "$out" ] \
+    || fail "a lock held by the harness at namespace pid 1 was not recognized, got: $out"
+  pass "fm-sessionstart-nudge: a lock holder that is pid 1 of its own namespace is already run"
+}
+
 test_opencode_plugin_delivers_exact_nudge_once() {
   local root="$TMP_ROOT/opencode-primary" out status=0
   make_primary "$root"
@@ -565,6 +599,14 @@ const pi = {
   on(event, handler) { handlers.set(event, handler); },
   sendMessage(message) { sent.push(message); },
 };
+import { readFileSync as readDigestSlot } from "node:fs";
+// The digest travels as a pointer to a private slot (docs/sessionstart-nudge.md
+// "Digest delivery is a pointer, not inline content"); read through it.
+const payloadOf = (message) => {
+  const content = message?.content ?? "";
+  const slot = /Session-start digest written to (\S+) \(/.exec(content);
+  return slot ? content + "\n" + readDigestSlot(slot[1], "utf8") : content;
+};
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?generation=${Date.now()}`);
 extension.default(pi);
 process.argv.splice(1, process.argv.length, "pi");
@@ -612,14 +654,6 @@ const pidFor = (index) => Number(launchLines().find((line) => line.startsWith(`l
 const supervisorFor = (index) => Number(launchLines().find((line) => line.startsWith(`launch:${index}:`))?.split(":")[5]);
 const grandchildFor = (index) => Number(readFileSync(`${state}/grandchild-${index}`, "utf8").trim());
 const startupMessages = () => providerCalls.map((call) => call.message).filter(Boolean);
-// A genuine ready digest now delivers only a short pointer message (the
-// digest itself is written to the private per-process slot); read the named
-// file to inspect the actual digest content the caller must act on.
-const digestContent = (message) => {
-  const named = /digest written to (\S+) \(/.exec(message?.content ?? "");
-  if (!named) throw new Error(`message did not carry a digest pointer: ${message?.content}`);
-  return readFileSync(named[1], "utf8");
-};
 
 // The failing immediate-prompt path is now a prerequisite: no provider call is
 // observable until the matching slow native generation settles.
@@ -631,7 +665,7 @@ await delay(100);
 assert(providerCalls.length === 0, "provider call escaped before the startup prerequisite settled");
 release(1);
 const immediateResult = await immediateCall;
-assert(digestContent(immediateResult?.message).includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
+assert(payloadOf(immediateResult?.message).includes("GENERATION_DIGEST_1"), "first payload lost matching startup context");
 assert(launchLines().length === 1, "immediate generation executed more than once");
 assert((await handlers.get("before_agent_start")({ prompt: "second prompt" }, immediate)) === undefined,
   "one generation delivered startup context more than once");
@@ -644,8 +678,8 @@ plan(2, "success");
 const proven = begin("new", "session-proven");
 await waitFor(() => existsSync(`${state}/completed-2`), "proven generation never completed");
 const provenResult = await providerCall(proven, "proven prompt");
-assert(digestContent(provenResult?.message).includes("GENERATION_DIGEST_2"), "proven path lost startup context");
-assert(!provenResult.message.content.includes("Run `bin/fm-session-start.sh`"), "proven path used manual fallback");
+assert(payloadOf(provenResult?.message).includes("GENERATION_DIGEST_2"), "proven path lost startup context");
+assert(!payloadOf(provenResult?.message).includes("Run `bin/fm-session-start.sh`"), "proven path used manual fallback");
 const provenSupervisor = supervisorFor(2);
 assert(alive(provenSupervisor), "completed generation lost its stable supervisor owner");
 const originalKill = process.kill;
@@ -681,14 +715,11 @@ const staleCall = handlers.get("before_agent_start")({ prompt: "stale" }, stale)
 begin("new", "session-replaced-once");
 const newest = begin("new", "session-replaced-twice");
 const newestResult = await providerCall(newest, "newest");
-assert(digestContent(newestResult?.message).includes("GENERATION_DIGEST_5"), "newest replacement lost its context");
+assert(payloadOf(newestResult?.message).includes("GENERATION_DIGEST_5"), "newest replacement lost its context");
 assert((await staleCall) === undefined, "stale generation delivered after replacement");
 assert(launchLines().length === 5, "rapid replacements launched the cancelled middle generation");
-assert(!startupMessages().some((message) => message.content.includes("STALE_DIGEST_4")),
+assert(!startupMessages().some((message) => payloadOf(message).includes("STALE_DIGEST_4")),
   "stale completion reached model context");
-const digestSlot = `${state}/.session-start-digest.${process.pid}.txt`;
-assert(!existsSync(digestSlot) || !readFileSync(digestSlot, "utf8").includes("STALE_DIGEST_4"),
-  "stale completion reached the private digest file");
 const events = readFileSync(`${state}/events`, "utf8");
 assert(events.indexOf("stale-close:4") < events.indexOf("launch:5"),
   "newest generation started before stale child retirement completed");
@@ -699,14 +730,14 @@ plan(6, "empty");
 const empty = begin("new", "session-empty");
 const emptyResult = await providerCall(empty, "empty");
 assert(existsSync(`${state}/completed-6`), "empty attempt had not settled before fallback delivery");
-assert(emptyResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions."),
+assert(payloadOf(emptyResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once, before executing any other instructions."),
   "empty output lost the exact manual fallback");
 
 renameSync(runner, `${runner}.missing`);
 const spawnError = begin("new", "session-spawn-error");
 const spawnErrorResult = await providerCall(spawnError, "spawn error");
 renameSync(`${runner}.missing`, runner);
-assert(spawnErrorResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(spawnErrorResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "spawn error lost the manual fallback");
 
 plan(7, "ineligible");
@@ -717,19 +748,19 @@ assert((await providerCall(ineligible, "ineligible")) === undefined,
 plan(8, "error");
 const failed = begin("new", "session-failed");
 const failedResult = await providerCall(failed, "failed");
-assert(failedResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(failedResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "failed eligible attempt lost the manual fallback");
 
 plan(9, "error");
 const failedResume = begin("resume", "session-failed-resume");
 const failedResumeResult = await providerCall(failedResume, "failed resume");
-assert(failedResumeResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(failedResumeResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "failed eligible resume lost the manual fallback");
 
 plan(10, "error");
 const failedFork = begin("fork", "session-failed-fork");
 const failedForkResult = await providerCall(failedFork, "failed fork");
-assert(failedForkResult?.message?.content.includes("Run `bin/fm-session-start.sh` now, exactly once"),
+assert(payloadOf(failedForkResult?.message).includes("Run `bin/fm-session-start.sh` now, exactly once"),
   "failed eligible fork lost the manual fallback");
 
 plan(11, "empty");
@@ -752,23 +783,22 @@ await delay(100);
 assert(!providerCalls.some((call) => call.prompt === "timeout"), "timeout provider call escaped before settlement");
 release(13);
 const timedResult = await timedCall;
-assert(digestContent(timedResult?.message).includes("STARTUP TRUNCATED - stage=bootstrap"), "timeout banner was lost");
-assert(!timedResult.message.content.includes("Run `bin/fm-session-start.sh`"), "bounded timeout incorrectly used manual fallback");
+assert(payloadOf(timedResult?.message).includes("STARTUP TRUNCATED - stage=bootstrap"), "timeout banner was lost");
+assert(!payloadOf(timedResult?.message).includes("Run `bin/fm-session-start.sh`"), "bounded timeout incorrectly used manual fallback");
 
 plan(14, "truncate");
 const truncated = begin("new", "session-truncated");
 const truncatedResult = await providerCall(truncated, "truncated");
-assert(digestContent(truncatedResult?.message).includes("TRUNCATION_PREFIX_14"), "truncated digest lost its prefix");
-assert(truncatedResult.message.content.includes("PI SESSION-START DELIVERY TRUNCATED"), "truncated digest was not loud");
-assert(!truncatedResult.message.content.includes("TRUNCATION_SUFFIX_14"), "truncated digest exceeded its bound");
+assert(payloadOf(truncatedResult?.message).includes("TRUNCATION_PREFIX_14"), "truncated digest lost its prefix");
+assert(payloadOf(truncatedResult?.message).includes("PI SESSION-START DELIVERY TRUNCATED"), "truncated digest was not loud");
+assert(!payloadOf(truncatedResult?.message).includes("TRUNCATION_SUFFIX_14"), "truncated digest exceeded its bound");
 
 // Compaction keeps its supported asynchronous transport for retry-without-
 // preflight, but it shares the same generation cancellation and exactly-once claim.
 plan(15, "success");
 const compactContext = ctx("session-truncated");
 await handlers.get("session_compact")({}, compactContext);
-assert(sent.length === 1, "compaction lost its existing persistent delivery");
-assert(digestContent(sent[0]).includes("GENERATION_DIGEST_15"),
+assert(sent.length === 1 && payloadOf(sent[0]).includes("GENERATION_DIGEST_15"),
   "compaction lost its existing persistent delivery");
 assert((await handlers.get("before_agent_start")({ prompt: "post compact" }, compactContext)) === undefined,
   "compaction delivered the same context twice");
@@ -922,8 +952,8 @@ JS
   pass "Pi reload shutdown releases its exit listener and stale startup generation"
 }
 
-test_pi_large_sessionstart_digest_is_a_pointer_not_inline_content() {
-  local fixture out status=0 digest_file digest_content
+test_pi_large_sessionstart_digest_is_delivered_loudly() {
+  local fixture out status=0
   command -v node >/dev/null 2>&1 || {
     echo "skip: node not found for Pi large session-start delivery test"
     return 0
@@ -955,12 +985,22 @@ SH
   out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
     FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" FM_GATE_REFUSE_BYPASS=1 \
     node --input-type=module 2>&1 <<'JS'
-import { writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+const digestSlot = `${process.env.FM_HOME}/state/.session-start-digest.${process.pid}.txt`;
+writeFileSync(digestSlot, "stale digest\n");
+chmodSync(digestSlot, 0o644);
 const handlers = new Map();
 const pi = {
   on(event, handler) { handlers.set(event, handler); },
   sendMessage() { throw new Error("session start must use provider preflight"); },
+};
+// The digest travels as a pointer to a private slot (docs/sessionstart-nudge.md
+// "Digest delivery is a pointer, not inline content"); read through it.
+const payloadOf = (message) => {
+  const content = message?.content ?? "";
+  const slot = /Session-start digest written to (\S+) \(/.exec(content);
+  return slot ? content + "\n" + readFileSync(slot[1], "utf8") : content;
 };
 const extension = await import(`${pathToFileURL(process.env.EXT).href}?large=${Date.now()}`);
 extension.default(pi);
@@ -968,208 +1008,21 @@ const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "large
 handlers.get("session_start")({ reason: "startup" }, ctx);
 const result = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
 if (!result?.message) throw new Error("expected one persistent preflight message");
-if (result.message.display !== false) throw new Error("session-start message must stay non-displayed");
-const content = result.message.content;
-if (content.length > 1024) throw new Error(`message content is not a short pointer: ${content.length} bytes`);
-if (content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("the full digest was inlined into the message");
+const publishedSlot = /Session-start digest written to (\S+) \(/.exec(result.message.content)?.[1];
+if (publishedSlot !== digestSlot) throw new Error("digest pointer did not name the process slot");
+if ((statSync(digestSlot).mode & 0o777) !== 0o600) throw new Error("digest slot was not repaired to mode 0600");
+const content = payloadOf(result.message);
+if (result.message.content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("digest was inlined instead of delivered by pointer");
+if (Buffer.byteLength(result.message.content, "utf8") > 1024) throw new Error("pointer message exceeded 1 KiB");
+if (!content.includes("PI_LARGE_DIGEST_PREFIX")) throw new Error("digest prefix was lost");
+if (!content.includes("PI SESSION-START DELIVERY TRUNCATED")) throw new Error("truncation marker was lost");
+if (content.includes("PI_LARGE_DIGEST_SUFFIX")) throw new Error("delivery exceeded its declared bound");
 if (!content.includes("FIRSTMATE_OP: v1 session-start:")) throw new Error("operational provenance was lost");
-if (!content.includes("PI SESSION-START DELIVERY TRUNCATED")) throw new Error("the pointer did not name the truncation");
-const named = /digest written to (\S+) \(/.exec(content);
-if (!named) throw new Error("the pointer did not name the digest file");
-if (named[1] !== `${process.env.FM_HOME}/state/.session-start-digest.${process.pid}.txt`) {
-  throw new Error(`the pointer named an unexpected digest file: ${named[1]}`);
-}
-writeFileSync(`${process.env.FM_HOME}/state/pointer-path`, named[1]);
 JS
   ) || status=$?
   expect_code 0 "$status" "Pi large session-start delivery"
   [ -z "$out" ] || fail "Pi large session-start delivery printed output: $out"
-
-  digest_file=$(cat "$fixture/state/pointer-path")
-  assert_present "$digest_file" "the full digest was not written to the private state file"
-  digest_content=$(cat "$digest_file")
-  assert_contains "$digest_content" "PI_LARGE_DIGEST_PREFIX" "the state file lost the digest prefix"
-  assert_not_contains "$digest_content" "PI_LARGE_DIGEST_SUFFIX" "the state file exceeded its declared 512 KiB bound"
-  assert_contains "$digest_content" "PI SESSION-START DELIVERY TRUNCATED" "the state file lost the truncation marker"
-  pass "Pi delivers only a short pointer message, with the full bounded digest written to a private single-slot file"
-}
-
-make_pi_digest_fixture() {
-  local fixture="$1"
-  mkdir -p "$fixture/.pi/extensions/lib" "$fixture/bin" "$fixture/state"
-  cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$fixture/.pi/extensions/"
-  cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$fixture/.pi/extensions/lib/"
-  cp "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$fixture/.pi/extensions/lib/"
-  cp "$ROOT/bin/fm-operational-input.sh" "$fixture/bin/"
-  cat > "$fixture/bin/fm-sessionstart-run.sh" <<'SH'
-#!/usr/bin/env bash
-printf 'DIGEST GENERATION %s %s\n' "$1" "$2"
-SH
-  cat > "$fixture/bin/fm-turnend-guard.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fixture/bin/"*.sh
-}
-
-test_pi_sessionstart_digest_file_is_a_single_overwritten_slot() {
-  local fixture out status=0 digest_file
-  command -v node >/dev/null 2>&1 || {
-    echo "skip: node not found for Pi digest single-slot test"
-    return 0
-  }
-  fixture="$TMP_ROOT/pi-digest-single-slot"
-  make_pi_digest_fixture "$fixture"
-
-  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
-    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
-    node --input-type=module 2>&1 <<'JS'
-import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-const handlers = new Map();
-const messages = [];
-const pi = {
-  on(event, handler) { handlers.set(event, handler); },
-  sendMessage(message) { messages.push(message); },
-};
-const extension = await import(`${pathToFileURL(process.env.EXT).href}?slot=${Date.now()}`);
-extension.default(pi);
-const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "slot" } };
-handlers.get("session_start")({ reason: "startup" }, ctx);
-const startupResult = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
-if (!startupResult?.message) throw new Error("expected a startup preflight message");
-await handlers.get("session_compact")({ reason: "compact" }, ctx);
-if (messages.length !== 1) throw new Error(`expected one compact message, got ${messages.length}`);
-const paths = [startupResult.message, messages[0]].map((message) => /digest written to (\S+) \(/.exec(message.content)?.[1]);
-if (paths[0] !== paths[1]) throw new Error(`the two pointers named different files: ${paths.join(" ")}`);
-if (paths[0] !== `${process.env.FM_HOME}/state/.session-start-digest.${process.pid}.txt`) {
-  throw new Error(`the pointer named an unexpected digest file: ${paths[0]}`);
-}
-writeFileSync(`${process.env.FM_HOME}/state/pointer-path`, paths[0]);
-JS
-  ) || status=$?
-  expect_code 0 "$status" "Pi repeated session-start digest writes"
-  [ -z "$out" ] || fail "Pi repeated session-start digest writes printed output: $out"
-
-  digest_file=$(cat "$fixture/state/pointer-path")
-  assert_present "$digest_file" "the digest file was not written"
-  assert_contains "$(cat "$digest_file")" "--source compact" \
-    "the second write (session_compact) did not overwrite the single slot"
-  assert_not_contains "$(cat "$digest_file")" "--source startup" \
-    "the digest file accumulated instead of staying a single overwritten slot"
-  pass "one Pi process reuses a single digest slot across session-start and compact"
-}
-
-test_pi_sessionstart_digest_slots_of_dead_processes_are_swept() {
-  local fixture out status=0 stale_file live_file remaining
-  command -v node >/dev/null 2>&1 || {
-    echo "skip: node not found for Pi digest sweep test"
-    return 0
-  }
-  fixture="$TMP_ROOT/pi-digest-sweep"
-  make_pi_digest_fixture "$fixture"
-
-  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
-    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
-    node --input-type=module 2>&1 <<'JS'
-import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-const handlers = new Map();
-const messages = [];
-const pi = {
-  on(event, handler) { handlers.set(event, handler); },
-  sendMessage(message) { messages.push(message); },
-};
-const extension = await import(`${pathToFileURL(process.env.EXT).href}?sweep-first=${Date.now()}`);
-extension.default(pi);
-const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "sweep-first" } };
-handlers.get("session_start")({ reason: "startup" }, ctx);
-const result = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
-if (!result?.message) throw new Error("expected a startup preflight message");
-const named = /digest written to (\S+) \(/.exec(result.message.content);
-if (!named) throw new Error("the first process did not name a digest file");
-writeFileSync(`${process.env.FM_HOME}/state/first-pointer-path`, named[1]);
-JS
-  ) || status=$?
-  expect_code 0 "$status" "Pi first-process session-start digest write"
-  [ -z "$out" ] || fail "Pi first-process session-start digest write printed output: $out"
-
-  stale_file=$(cat "$fixture/state/first-pointer-path")
-  assert_present "$stale_file" "the first process did not write its digest slot"
-
-  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
-    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
-    node --input-type=module 2>&1 <<'JS'
-import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-const handlers = new Map();
-const messages = [];
-const pi = {
-  on(event, handler) { handlers.set(event, handler); },
-  sendMessage(message) { messages.push(message); },
-};
-const extension = await import(`${pathToFileURL(process.env.EXT).href}?sweep-second=${Date.now()}`);
-extension.default(pi);
-const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "sweep-second" } };
-handlers.get("session_start")({ reason: "startup" }, ctx);
-const result = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
-if (!result?.message) throw new Error("expected a startup preflight message");
-const named = /digest written to (\S+) \(/.exec(result.message.content);
-if (!named) throw new Error("the second process did not name a digest file");
-writeFileSync(`${process.env.FM_HOME}/state/second-pointer-path`, named[1]);
-JS
-  ) || status=$?
-  expect_code 0 "$status" "Pi second-process session-start digest write"
-  [ -z "$out" ] || fail "Pi second-process session-start digest write printed output: $out"
-
-  live_file=$(cat "$fixture/state/second-pointer-path")
-  [ "$live_file" != "$stale_file" ] \
-    || fail "the two node processes reused one digest slot, so the sweep was never exercised"
-  assert_present "$live_file" "the second process did not write its own digest slot"
-  assert_absent "$stale_file" "the dead process's digest slot was left behind instead of swept"
-  remaining=$(find "$fixture/state" -name '.session-start-digest.*.txt' | wc -l | tr -d ' ')
-  [ "$remaining" = "1" ] \
-    || fail "expected exactly one live digest slot after the sweep, found $remaining"
-  pass "a later Pi process sweeps the digest slots of exited processes instead of accumulating them"
-}
-
-test_pi_unwritable_digest_still_delivers_an_operational_message() {
-  local fixture out status=0
-  command -v node >/dev/null 2>&1 || {
-    echo "skip: node not found for Pi unwritable digest test"
-    return 0
-  }
-  fixture="$TMP_ROOT/pi-digest-unwritable"
-  make_pi_digest_fixture "$fixture"
-
-  out=$(EXT="$fixture/.pi/extensions/fm-primary-turnend-guard.ts" \
-    FM_HOME="$fixture" FM_ROOT_OVERRIDE="$fixture" \
-    FM_STATE_OVERRIDE="$fixture/absent-state" \
-    node --input-type=module 2>&1 <<'JS'
-import { pathToFileURL } from "node:url";
-const handlers = new Map();
-const messages = [];
-const pi = {
-  on(event, handler) { handlers.set(event, handler); },
-  sendMessage(message) { messages.push(message); },
-};
-const extension = await import(`${pathToFileURL(process.env.EXT).href}?unwritable=${Date.now()}`);
-extension.default(pi);
-const ctx = { sessionManager: { getEntries: () => [], getSessionId: () => "unwritable" } };
-handlers.get("session_start")({ reason: "startup" }, ctx);
-const result = await handlers.get("before_agent_start")({ prompt: "test" }, ctx);
-if (!result?.message) throw new Error("expected a startup preflight message");
-const content = result.message.content;
-if (!content.includes("FIRSTMATE_OP: v1 session-start:")) throw new Error("operational provenance was lost");
-if (!content.includes("could not be written")) throw new Error("the message did not report the failed write");
-if (!content.includes("ENOENT")) throw new Error("the message did not name the underlying error");
-if (!content.includes("bin/fm-session-start.sh")) throw new Error("the message did not name the fallback command");
-if (content.includes("DIGEST GENERATION")) throw new Error("the digest was inlined as a fallback");
-JS
-  ) || status=$?
-  expect_code 0 "$status" "Pi unwritable session-start digest delivery"
-  [ -z "$out" ] || fail "Pi unwritable session-start digest delivery printed output: $out"
-  pass "an unwritable digest file still delivers an operational message naming the error and the fallback"
+  pass "Pi privately replaces its digest slot and loudly marks oversized preflight delivery"
 }
 
 test_run_resume_delegates_to_the_nudge() {
@@ -1242,6 +1095,52 @@ test_run_gate_and_scope_are_silent() {
   pass "run wrapper: ordinary ineligible opens stay silent-zero and Pi preflight gets an explicit silent stand-down"
 }
 
+test_run_creates_missing_state_on_a_fresh_primary() {
+  local root="$TMP_ROOT/run-fresh-primary" base="$TMP_ROOT/run-fresh-linked-base"
+  local linked="$TMP_ROOT/run-fresh-linked" out status=0
+  make_run_primary "$root"
+  rmdir "$root/state"
+  assert_absent "$root/state" "the fixture still had a state dir before the assertion began"
+
+  out=$(run_hook "$root" --source startup </dev/null) || status=$?
+  expect_code 0 "$status" "run wrapper startup on a fresh primary with no state dir"
+  assert_present "$root/state" "a fresh primary root did not get its state dir created"
+  assert_contains "$out" "$FULL_BANNER$root" \
+    "creating the state dir did not let a fresh primary's session start run"
+  assert_contains "$out" "lock acquired: harness pid" \
+    "creating the state dir did not let a fresh primary take the fleet lock"
+  assert_not_contains "$out" "$REEMIT_BANNER" \
+    "a fresh primary's first session was misrouted to a context re-emit"
+  assert_contains "$out" "NEXT STEP" "a fresh primary did not receive the complete digest"
+
+  # An unmarked linked task worktree stays ineligible: it must not have a state
+  # dir manufactured for it, so the existing scope refusal is unchanged.
+  fm_git_worktree "$base" "$linked" fm/run-fresh-linked
+  mkdir -p "$linked/bin"
+  : > "$linked/AGENTS.md"
+  assert_absent "$linked/state" "the linked fixture already had a state dir before the assertion began"
+  expect_silent_zero "linked worktree fresh state run" run_hook "$linked" --source startup
+  assert_absent "$linked/state" "an unmarked linked task worktree got a state dir created for it"
+  pass "run wrapper: a fresh primary checkout gets its missing state dir created, a linked worktree still does not"
+}
+
+test_run_reports_a_state_dir_it_cannot_create() {
+  local root="$TMP_ROOT/run-fresh-readonly" out err_file="$TMP_ROOT/run-fresh-readonly.err" status=0
+  make_run_primary "$root"
+  rmdir "$root/state"
+  chmod 0500 "$root"
+  out=$(run_hook "$root" --source startup </dev/null 2>"$err_file") || status=$?
+  chmod 0700 "$root"
+  expect_code 0 "$status" "run wrapper on a fresh primary whose state dir cannot be created"
+  [ -z "$out" ] || fail "a failed state dir creation must still stand down without a digest, got: $out"
+  assert_absent "$root/state" "a read-only fresh primary somehow got a state dir"
+  [ "$(wc -l <"$err_file")" -eq 1 ] || fail "expected exactly one stderr line, got: $(cat "$err_file")"
+  assert_contains "$(cat "$err_file")" \
+    "startup could not create the state directory $root/state: Permission denied" \
+    "a failed state dir creation did not say what failed and why"
+  pass "run wrapper: a fresh primary that cannot create its state dir says so on stderr, then stands down"
+}
+
 test_run_reports_a_failed_session_start_as_digest_text() {
   local root="$TMP_ROOT/run-unwritable" out status=0
   make_run_primary "$root"
@@ -1260,6 +1159,7 @@ test_unmarked_linked_worktree_is_silent
 test_linked_secondmate_primary_nudges
 test_missing_state_is_silent
 test_owned_lock_is_silent
+test_namespace_pid1_lock_holder_is_silent
 test_opencode_plugin_delivers_exact_nudge_once
 test_run_startup_runs_the_full_digest
 test_run_clear_and_compact_reemit
@@ -1272,11 +1172,10 @@ test_run_resume_delegates_to_the_nudge
 test_run_reads_source_from_the_hook_payload
 test_run_unknown_source_takes_the_helm
 test_run_gate_and_scope_are_silent
+test_run_creates_missing_state_on_a_fresh_primary
+test_run_reports_a_state_dir_it_cannot_create
 test_run_reports_a_failed_session_start_as_digest_text
 test_pi_startup_classifies_cli_continuations
 test_pi_sessionstart_generation_prerequisite
 test_pi_reload_releases_sessionstart_exit_listener
-test_pi_large_sessionstart_digest_is_a_pointer_not_inline_content
-test_pi_sessionstart_digest_file_is_a_single_overwritten_slot
-test_pi_sessionstart_digest_slots_of_dead_processes_are_swept
-test_pi_unwritable_digest_still_delivers_an_operational_message
+test_pi_large_sessionstart_digest_is_delivered_loudly
